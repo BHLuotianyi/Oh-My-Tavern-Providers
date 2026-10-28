@@ -83,13 +83,6 @@ export function parseEntryKey(key) {
     return { kind, provider, model };
 }
 
-/** Compare two refs (or entry keys) for identity. */
-export function refsEqual(a, b) {
-    const keyA = getEntryKey(a);
-    const keyB = getEntryKey(b);
-    return keyA !== '' && keyA === keyB;
-}
-
 function uniqueRefs(value, limit) {
     if (!Array.isArray(value)) {
         return [];

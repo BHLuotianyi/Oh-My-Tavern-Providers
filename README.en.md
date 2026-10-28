@@ -1,346 +1,248 @@
-# OMTP Model Hub (Oh-My-Tavern-Providers)
+[English](./README.en.md) | [简体中文](./README.md)
 
-A model-selection extension for SillyTavern 1.12.7+. It puts SillyTavern's native models, the other providers in the OMP catalog, and an optional local OpenAI-compatible gateway behind one searchable panel. Selections go through SillyTavern's own path whenever possible; only models that path cannot address use the gateway.
+<h1 align="center">OMTP Model Hub (Oh-My-Tavern-Providers)</h1>
 
-[简体中文](README.md)
+<div align="center">
 
-OMTP does not install, start, or invoke OMP. OMP (oh-my-pi) is only a source of catalog data and design reference. Both the client extension and the optional server plugin are implemented independently for SillyTavern.
+<h3>✨ A unified model hub for SillyTavern that brings 99 providers, 5,770+ chat models, OAuth sign-in, live quota tracking, and an 8-axis roleplay personality radar into one panel 🎭</h3>
 
-## Routing
+<p>
+  <a href="https://github.com/BHLuotianyi/Oh-My-Tavern-Providers/blob/main/LICENSE">
+    <img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" />
+  </a>
+  <img alt="SillyTavern >= 1.12.7" src="https://img.shields.io/badge/SillyTavern-%3E%3D1.12.7-10b981" />
+  <img alt="Node.js >= 18" src="https://img.shields.io/badge/Node.js-%3E%3D18.0.0-68a063?logo=node.js&logoColor=white" />
+  <img alt="Catalog: 99 Providers · 5,770 Models" src="https://img.shields.io/badge/Catalog-99_Providers_%C2%B7_5,770_Models-8b5cf6" />
+</p>
 
-Each catalog entry is routed in this order:
+<p>
+  <img src="assets/readme-banner.svg" width="100%" alt="OMTP Model Hub — Unified Model Hub for SillyTavern" />
+</p>
 
-1. The native control on the current SillyTavern page accepts the model ID: write SillyTavern's native settings.
-2. Otherwise, the provider has a gateway adapter: write the Custom OpenAI-compatible source and route through the local gateway.
-3. If neither applies: keep the entry visible but not selectable, with a reason (OAuth required, missing API key, no adapter).
+<p>
+This project is a part of <strong>SpaghettiTavern Saving Plan</strong>.<br/>
+<em>“We shall meet again at the far shore of the stars”</em>
+</p>
 
-| Badge | Source | Route | Server plugin | After removal |
-|---|---|---|---|---|
-| Native | A provider SillyTavern already supports, and the native control accepts the model | Native settings | No | Preserved |
-| Translated | An OMP provider mapped to an ST adapter, and the native control accepts the model | Native settings | No | Preserved |
-| OMTP | Catalog provider the native control cannot accept | Custom OpenAI source via the local gateway | Yes | Requires the plugin; stops working if it is removed |
-| Profile | Connection Manager extension | Invokes that extension's profile | No | Preserved |
+<p>
+Built for SillyTavern 1.12.7 through 1.19.0+, focused on <strong>native-first routing, local gateway fallback, quantifiable roleplay personality, and local-only encrypted credentials</strong>.
+</p>
 
-Native/Translated entries write `main_api`, `chat_completion_source` or `textgen_type`, and the model field. OMTP entries write `main_api=openai`, `chat_completion_source=custom`, `custom_url`, and `custom_model`; when gateway auth is on, they also write `custom_include_headers`. `custom_model` is set to `provider/model`, and `custom_url` points at the gateway's `/v1` URL.
+🛠️ <strong>Active development</strong>
 
-## Install
+</div>
 
-Requires SillyTavern >= 1.12.7 and Node.js >= 18.0.0. Fully compatible with SillyTavern 1.12.7 through 1.19.0+.
+---
 
-1. Place this repository at `SillyTavern/public/scripts/extensions/third-party/omtp-model-hub/`. The folder name must be `omtp-model-hub`; copy it, clone it, or symlink the repository.
-2. Optional: copy `server-plugin/` to `SillyTavern/plugins/omtp/`.
-3. Enable server plugins in `SillyTavern/config.yaml`:
+> [!NOTE]
+> **Zero external runtime dependencies**: OMTP does **not** install, spawn, or invoke any `omp` binary or Python environment.
+> [OMP (oh-my-pi)](https://github.com/can1357/oh-my-pi) serves strictly as the upstream model-catalog source and UX reference; both the SillyTavern client extension and the optional server plugin are standalone JavaScript / Node.js implementations.
 
+> [!TIP]
+> **Non-destructive & cleanly removable**: OMTP never modifies SillyTavern core files or mutates native `<select>` DOM options.
+> Natively supported models write directly to SillyTavern's own settings; before entering gateway mode, OMTP snapshots your existing Custom OpenAI fields and restores them automatically when you switch back or disable the extension.
+
+---
+
+## Start Here
+
+- 🚀 **Want to install and start chatting right away?** Jump to [30-Second Getting Started](#getting-started) and the [3-Minute Quick Tour](#quick-tour).
+- 💡 **Curious what makes it better than the native dropdowns?** See [Why It Stands Out](#why-it-stands-out) and [Key Features](#key-features).
+- 🔌 **Looking for the 24 plugin HTTP routes, 9 protocol adapters, and key encryption specs?** Read [docs/gateway.en.md](./docs/gateway.en.md).
+- 🛠️ **Building an extension/script with `globalThis.OMTP` or rebuilding the catalog?** Read [docs/developer.en.md](./docs/developer.en.md).
+- 🤝 **Want to contribute code or add a provider adapter?** Read [CONTRIBUTING.en.md](./CONTRIBUTING.en.md).
+
+```text
+OMTP Model Hub
+├── Unified Hub Modal (Alt+M): 99 providers / 5,770 chat models / fuzzy search / quick slots @1..@9
+├── Dual-Track Routing: zero-proxy native writes when ST supports the model, local 127.0.0.1:4100 gateway otherwise
+├── Roleplay Personality Radar: 8-axis AA-PersonalityBench radar + OMTP roleplay-weighted score
+├── Sign-in Center: OAuth PKCE / device code / Claude Pro·Max / Codex / Antigravity / API keys
+└── Live Quotas & Accounting: 16 subscription quota bars, top-bar per-chat token/cost chip, /omtp stats dashboard
+```
+
+---
+
+## About
+
+In stock SillyTavern, switching models means opening the API drawer, changing the main API, changing the chat-completion source, hunting through hundreds of unsorted `<select>` options, and manually adjusting reasoning effort.
+
+**OMTP Model Hub** replaces that workflow with a single searchable modal summoned anywhere via `Alt+M`:
+
+- **Native-first, zero proxy overhead**: Whenever a model is supported by one of SillyTavern's 44 native adapters (OpenAI, Anthropic, Google, DeepSeek, OpenRouter, xAI, etc.), OMTP writes directly to SillyTavern's native settings. Generation requests go straight from SillyTavern to the provider.
+- **Seamless local gateway fallback**: When a model isn't in SillyTavern's native dropdowns—or needs protocol translation (Google Antigravity / Gemini CLI OAuth, OpenAI Responses, AWS Bedrock Converse, Vertex AI)—OMTP points SillyTavern's Custom OpenAI source at its local loopback gateway (`127.0.0.1:4100/v1`).
+- **Roleplay-aware model selection**: Every evaluated model displays both its [AA-PersonalityBench](https://artificialanalysis.ai/evaluations/aa-personalitybench) mean percentile and a dedicated **OMTP Roleplay Score** right on the row (e.g., `Claude Opus 5.5`: `AA 77 · OMTP 82`).
+
+---
+
+## Why It Stands Out
+
+- **🎭 8-Axis Personality Radar Tuned for Roleplay & Creative Writing**
+  High coding benchmark scores don't guarantee great roleplay—many models preach, flatter the user (high sycophancy), or repeat clichés (slop). OMTP bundles 8-axis personality data (Expressiveness, Organization, Informativeness, Transparency, Warmth, Conviction, Imagination, Slop) for 41 models and computes a roleplay-weighted score:
+  $$\text{OMTP RP} = 26\%\text{Imagination} + 20\%\text{Warmth} + 18\%\text{Expressiveness} + 14\%\text{Non-Sycophancy} + 7\%\text{Transparency} + 6\%\text{Conviction} + 5\%\text{Informativeness} + 4\%\text{Organization} - 8\%\text{Slop}$$
+  Click any model to inspect its 8-axis radar chart in the details pane, or check **Only models with scores** to filter the catalog down to evaluated models.
+
+- **⚡ Automatic Dual-Track Routing**
+  You never have to manually flip between native APIs and custom endpoints. Clicking **Use model** runs a deterministic check:
+
+```mermaid
+flowchart LR
+    Pick([Select model / Alt+1..9 / Chat binding]) --> Check{Does ST's native control<br/>accept this model ID?}
+    Check -- "Yes (Native / Translated)" --> Native["Write ST native settings directly<br/>Zero proxy overhead · Preserved on uninstall"]
+    Check -- "No / Gateway-only OAuth" --> GW["Write ST Custom OpenAI source<br/>Point to local 127.0.0.1:4100/v1"]
+    GW --> Adapter["9 Protocol Adapters<br/>Anthropic / Gemini / Antigravity / Responses / Bedrock…"]
+```
+
+- **🔑 Unified Sign-in Center (Mirrors `omp /login`)**
+  - **OAuth PKCE & Device-Code Flows**: Sign in to Claude Pro/Max, Google Antigravity, Gemini CLI, OpenAI Codex, and Kilo directly from the **Sign-in** tab. OMTP opens the authorize page in a new tab, listens on the loopback callback port, and provides a paste box when running on a remote server.
+  - **Clear Credential States**: Stored keys render as masked dots and distinguish between `Signed in`, `Not signed in`, and `🔴 Key rejected · ****last4`.
+  - **Live Model Probing**: Click `🔄` on any provider (including local Ollama / LM Studio / vLLM) to query its live `/models` endpoint and tag discovered models with a `live` badge.
+
+- **📊 16 Subscription Quota Monitors + Per-Chat Token & Cost Ledger**
+  - **Usage Tab (`/usage`)**: Reads real-time 5-hour / weekly quota windows, reset countdowns, and prepaid balances from Claude Pro/Max, ChatGPT Codex, Antigravity/Gemini CLI, Z.AI/Zhipu, Kimi Code, MiniMax Token Plan, xAI SuperGrok, DeepSeek, and 8 more providers.
+  - **Top-Bar Token Chip**: Shows the active chat's running token count and estimated cost (`12.4k tok · $0.018`), preserving cached-input and reasoning/thoughts token breakdowns across Anthropic, Gemini, Bedrock, and Responses APIs.
+  - **Local Stats Dashboard (`/omtp stats`)**: Spawns a loopback dashboard server (default port `3847`) with KPI cards, a 60-day bar chart, per-model breakdown, and a per-chat session selector.
+
+---
+
+## Getting Started
+
+Requirements: **SillyTavern >= 1.12.7** and **Node.js >= 18.0.0**.
+
+### Step 1: Install the Client Extension (Required, 30 seconds)
+
+Clone this repository into SillyTavern's third-party extensions folder (**the directory name must be `omtp-model-hub`**):
+
+```bash
+cd SillyTavern/public/scripts/extensions/third-party/
+git clone https://github.com/BHLuotianyi/Oh-My-Tavern-Providers omtp-model-hub
+```
+
+> If you only use providers that SillyTavern already supports natively, reload SillyTavern and you're done!
+
+### Step 2: Install the Server Plugin (Recommended — unlocks all 99 providers, OAuth & usage stats)
+
+1. Copy (or symlink) `server-plugin/` to SillyTavern's `plugins/omtp/` directory:
+   ```bash
+   cp -r SillyTavern/public/scripts/extensions/third-party/omtp-model-hub/server-plugin SillyTavern/plugins/omtp
+   ```
+2. Enable server plugins in `SillyTavern/config.yaml`:
    ```yaml
    enableServerPlugins: true
    ```
+3. Restart the SillyTavern server and reload the page. A green **`🟢 Gateway: :4100`** pill in the hub header confirms the gateway is live.
 
-4. Restart SillyTavern and enable **OMTP Model Hub** in the Extensions panel.
+---
 
-With only the client extension, you can browse the catalog and use Native/Translated models, favorites, quick slots, and bindings. OMTP models, catalog refresh, local OMP import, and provider key management require the server plugin.
+## Quick Tour
 
-OMTP does not modify SillyTavern core files.
+1. **Open the Hub**: Press **`Alt+M`**, click the network icon in the top bar, or click the **OMTP Model Hub** button on SillyTavern's welcome prompt.
+2. **Add Keys or Sign In**: Switch to the **Sign-in** tab, search for your provider (`Anthropic`, `DeepSeek`, `OpenRouter`, etc.), and paste an API key or start OAuth sign-in. (*Keys already saved in SillyTavern's native settings are detected and reused automatically!*)
+3. **Pick a Model**: In the **All** tab, the left sidebar groups **33 first-party AI labs** above the divider and aggregators/cloud providers below. Click a model row and press **Use model** (or `Enter`).
+4. **Pin to Quick Slots**: Click **Save to quick bar** in the details pane, then click slot `1–9`. Press **`Alt+1` .. `Alt+9`** anytime to switch models instantly.
+5. **Bind to Chat or Character**: Click **Bind character** or **Bind chat** in the details pane so OMTP automatically switches to that model whenever you open that character or chat.
 
-## Usage
+---
 
-Open the hub from the diagram-project icon in the top bar, `Alt+M`, or **Switch model** in the API drawer. The hotkey is configurable.
+## Key Features
 
-### Slash commands
+### 🧭 Four Route Badges
 
-Four commands, modelled on `omp`:
+| Badge | Meaning | Needs Server Plugin? | After Uninstall |
+|---|---|---|---|
+| **Native** | Provider is natively supported by SillyTavern and the native control accepts the model ID | No | ✅ Preserved |
+| **Translated** | Catalog provider mapped to a native SillyTavern adapter (e.g. `minimax-cn`) | No | ✅ Preserved |
+| **OMTP** | Routed through the local `127.0.0.1:4100/v1` gateway via SillyTavern's Custom OpenAI source | **Yes** | Restores prior snapshot on disable |
+| **Profile** | Connection Manager extension profile | No | ✅ Preserved |
 
-| Command | Effect |
-|---|---|
-| `/omtp` | Open the hub |
-| `/model [selector]` | No argument: open the hub. With one: set the model **and** remember it as the default |
-| `/switch [selector]` | No argument: open the compact picker. With one: switch **session-only** |
-| `/effort [level]` | No argument: cycle the level. With one: set it |
-| `/omtp stats` | Start (or reuse) the local stats dashboard and open it in a new tab |
+### ⌨️ Slash Commands & Terminal-Style Quick Picker
 
-Selectors accept `provider/model`, a fuzzy id, `@1`-`@9` for a quick slot, `@fav`, and a `:level` suffix such as `opus:high`.
-
-`/switch` follows omp's `setModelTemporary`: the model applies immediately but the saved default selection is left untouched, so the next explicit `/model` or a reload returns to it. The picker is terminal-style — `↑↓` moves with wrap-around, `PgUp`/`PgDn`/`Home`/`End` jump, `Enter` applies, `Esc` clears the query and a second `Esc` closes.
-
-`/effort` cycles `auto → min → low → medium → high → max`, restricted to the levels the current model declares. Unknown values are rejected with the list of what is available, and a model without reasoning support says so.
-
-### Welcome page entry
-
-The first button in Tavern's welcome prompt (originally "API Connections", from `welcomePrompt.html`) is replaced with "OMTP Model Hub" and opens this extension directly; icon and label follow the UI language (`omtp_open_hub`). Every re-render of the welcome message is patched again via a MutationObserver, and disabling/removing the extension restores the original button. The native API connection entry stays available through the plug icon in the left drawer.
-
-### Sign-in
-
-The tab bar carries **All / Favorites / Recent / Profiles / Sign-in / Usage / About**. The **About** tab shows the extension version, the author (BHLuotianyi), the licence (GPL-3.0, linked to the GNU text), the server plugin and SillyTavern versions, the gateway address and the catalog counters (models / providers / generated date), together with what the extension does, where its data comes from and how credentials are kept local. Under the title it notes "This project is a part of SpaghettiTavern Saving Plan", followed by a highlighted "Reference project: OMP (oh-my-pi)" callout (MIT, linking upstream) that credits OMP for the gateway, sign-in flow, usage pages and stats dashboard design. The page closes with an italic line: "We shall meet again at the far shore of the stars".
-
-### OAuth client credentials
-
-The repository ships **no** OAuth client ids or secrets. Catalog entries reference environment variable names only (`OMTP_GOOGLE_ANTIGRAVITY_CLIENT_ID`, …); the values are read locally at runtime, in this order:
-
-1. environment variables (see each entry's `env` array; `OMTP_<PROVIDER>_CLIENT_ID` / `OMTP_<PROVIDER>_CLIENT_SECRET`);
-2. `data/omtp/oauth-clients.json`:
-
-```json
-{
-  "google-antigravity": { "clientId": "…", "clientSecret": "…" },
-  "openai-codex": { "clientId": "…" }
-}
-```
-
-Keep that file at mode `600`; it is git-ignored. Missing values produce a clear error for that provider's OAuth login/refresh only — API-key sign-in, gateway routing and model lists are unaffected. These ids are public application identifiers (and an installed-app client secret is not confidential per RFC 8252 §8.1), but they stay out of the tree to keep scanners and forks clean.
-
-The **Sign-in** tab is OMTP's `/login`: one row per provider with its state (`Signed in · account`, `Not signed in`, `Key rejected · ****last4`) and a single action. States always carry the credential fingerprint and a stored key shows as dots in the field, so "no key" and "rejected key" never look alike. Rows are ordered by login kind (OAuth → device code → custom hook → API key), then by name, and the hub's search box filters this roster directly (name, id and login kind) with an empty-state hint.
-
-- Providers whose OMP policy is `oauth-code` run a real PKCE flow: OMTP opens a loopback listener on the policy's callback port, shows the authorize URL, and accepts a pasted redirect URL or code when the browser cannot reach this machine.
-- `device-code` providers show the verification URL and the user code, then poll until the grant completes.
-- `api-key` providers get a key field plus a link to their console.
-- Clicking Sign in opens the authorize page in a new tab right away: the tab is opened synchronously on the click and navigated once the server returns the URL, so popup blockers do not eat it. When the browser blocks it anyway, the link stays clickable.
-- The callback completion/failure page follows the client's language (the client passes `navigator.language` when starting the flow; `Accept-Language` is the fallback).
-- Policies that need provider-specific code are implemented as hooks in `server-plugin/lib/custom-logins/`: `openai-codex-device` (Codex headless device flow, credential stored under `openai-codex`), `kilo` (Kilo device flow) and `kimi-fingerprint` (Kimi CLI request headers). The rest (Cursor, GitHub Copilot, Devin, Cloudflare, Snowflake, …) still say so and point at the OMP import.
-### Token statistics and estimated cost
-
-A small badge in the chat top bar (`95 token · $0.000146`) shows this chat's running token count and estimated cost; hover for the input/cached/output/reasoning breakdown, click to open the usage page. It refreshes 0.6s after each `generation_ended` and resets when the chat changes. Only requests routed through the OMTP gateway are counted.
-
-The gateway records every completion into `data/omtp/usage-stats.json` (modelled on OMP's run collector): uncached input, cache reads, cache writes, output, reasoning output, request count and an estimated cost. The Usage tab starts with:
-
-- **This chat**: requests / input / cached / output / reasoning / cost, attributed per chat — the gateway tags every record with the `X-OMTP-Chat` header the extension keeps in sync with the open chat, so switching chats (and reloading) shows that chat's own totals.
-- **All time**: the same counters since installation.
-- **Per model**: the 8 busiest models of the session (falling back to all-time), with their own token breakdown and cost.
-
-Adapters now preserve the provider's cache and reasoning breakdown: Gemini `cachedContentTokenCount` / `thoughtsTokenCount`, Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`, Bedrock `cacheReadInputTokens` / `cacheWriteInputTokens`, Responses API `input_tokens_details.cached_tokens` — all mapped onto OpenAI's `prompt_tokens_details.cached_tokens` / `cache_write_tokens` and `completion_tokens_details.reasoning_tokens`. A zero in the cached column therefore means the provider reported no cache hits (Gemini's implicit cache needs a ≥1024-token shared prefix and must be reported upstream), not that we dropped the number.
-
-### Local stats dashboard (mirrors `omp stats`)
-
-`/omtp stats` starts a loopback-only HTTP server (port `3847` by default, an ephemeral port when that port is taken) and opens the page in a new tab — a local server serving a stats page, exactly like `omp stats`. The page refreshes every 5 seconds and shows KPI cards (requests, uncached input, cache hits with hit rate, output, reasoning when present, estimated cost) for a selectable range (this chat / last 24 h / since install / all time), a 60-day daily bar chart, a per-model table and a per-chat table with the current chat highlighted and marked ●.
-
-With the range set to "this chat" a session picker appears: it lists every recorded chat (sorted by cost, with request count and cost), and picking one — or clicking a row in the per-chat table — switches the cards and model table to that chat.
-
-Labels follow SillyTavern's UI language (`/omtp stats` forwards `document.documentElement.lang` as `?lang=`, falling back to the browser locale), with built-in English and Chinese dictionaries. The tab icon is an inline SVG data URI (blue square with bars); no external favicon is used.
-
-`server-plugin/lib/stats-server.mjs` owns the server: `ensureStatsServer()` reuses a live instance (identified by the `x-omtp-stats-dashboard` response header), shuts down after 30 idle minutes, and is closed by the plugin's `exit()`; the numbers come from `UsageStats.snapshot()` and the new `UsageStats.dashboard()`.
-
-Costs use each model's `cost` from the catalog (per-million input / output / cacheRead / cacheWrite, inherited from OMP's `models.json`); cache reads are priced at the cache rate. Both streaming and non-streaming replies are counted: the gateway taps the response stream and takes the last `usage` object from SSE `data:` frames or the JSON body.
-
-Endpoint: `GET /api/plugins/omtp/stats` (`?since=<ISO>` limits to what happened after that moment, used for "this chat").
-
-### Usage (mirrors `omp usage`)
-
-The **Usage** tab lists quota consumption per provider, read from each provider's own usage endpoint (`server-plugin/lib/usage.mjs`, modelled on OMP's `packages/ai/src/usage/*`). `/usage` opens that page directly (it switches tabs when the hub is already open).
-
-| Provider | Endpoint | Data |
+| Command | Effect | Example |
 |---|---|---|
-| Google Antigravity / Gemini CLI | `POST /v1internal:retrieveUserQuotaSummary` | weekly / 5-hour windows per model family |
-| OpenAI Codex / ChatGPT plans | `GET chatgpt.com/backend-api/wham/usage` | primary/secondary windows + plan |
-| Anthropic Claude Pro/Max | `GET api.anthropic.com/api/oauth/usage` | 5-hour / 7-day / per-model + extra-usage balance |
-| Z.AI / Zhipu coding plans | `GET api.z.ai/api/monitor/usage/quota/limit` | token / time / credit windows (raw token, no `Bearer`) |
-| Kimi Code | `GET api.kimi.com/coding/v1/usages` | used/remaining per window |
-| MiniMax Token Plan (intl/CN) | `GET {api.minimax.io|api.minimaxi.com}/v1/token_plan/remains` | 5-hour / weekly per model |
-| xAI (SuperGrok) | `GET cli-chat-proxy.grok.com/v1/billing?format=credits` | weekly credits / monthly included / on-demand |
-| GitHub Copilot | `GET api.github.com/copilot_internal/user` | premium / chat / completions + reset date |
-| OpenCode Go | `GET opencode.ai/zen/go/v1/usage` | 5-hour / weekly / monthly (needs a Go subscription) |
-| Cursor | `GET api2.cursor.sh/auth/usage` | billing-cycle request quota (API-key accounts) |
-| Command Code | `GET api.commandcode.ai/alpha/billing/credits` (+`/alpha/whoami`) | 5-hour / weekly windows + credits |
-| ClinePass | `GET api.cline.bot/api/v1/users/me/plan/usage-limits` | 5-hour / weekly / monthly windows |
-| Synthetic | `GET api.synthetic.new/v2/quotas` | rolling 5-hour / weekly windows |
-| Umans | `GET api.code.umans.ai/v1/usage` | request window / burst ceiling |
-| Charm Hyper | `GET hyper.charm.land/v1/credits` | credit balance |
-| DeepSeek | `GET api.deepseek.com/user/balance` | account balance per currency |
+| `/omtp` | Open the OMTP Model Hub modal | `/omtp` |
+| `/model [selector]` | Switch model **and** save it as the default (no arg: open hub) | `/model anthropic/claude-opus-5-5:high` |
+| `/switch [selector]` | Switch model **for this session only** (no arg: open compact keyboard picker) | `/switch @2` · `/switch gemini-4-argon` |
+| `/effort [level]` | Cycle or set reasoning effort (`auto`, `min`, `low`, `medium`, `high`, `max`) | `/effort high` |
+| `/usage` | Open the Usage & Quotas tab directly | `/usage` |
+| `/omtp stats` | Start (or reuse) the local stats dashboard and open it in a new tab | `/omtp stats` |
 
-- SillyTavern no longer shows "no connection" after a reload: on startup, if the gateway is active, the extension probes it once and marks the connection as Connected.
-- Each window shows its name, used percentage, a bar, and a reset countdown; bars turn amber at 70% and red at 90%.
-- Readings are cached for 60 seconds; the footer's "Refresh" button forces a new read.
-- Providers without credentials, or without a usage endpoint, are omitted (as in omp) instead of guessed; a rejected credential reads "Credentials rejected (HTTP 401)".
-- Not implemented: OpenCode Zen (no usage endpoint), the GitHub Copilot API-key billing path, Devin (Connect/protobuf), Ollama (no standalone quota API).
+### 🛠️ Power-User Controls
 
-### AA-PersonalityBench scores and radar
+- **Per-Model Reasoning Memory**: Reasoning levels set via the details pane or `/effort` are remembered per model (`Claude Opus 5.5`, `DeepSeek V4.1 Flash 1017`, `Gemini 4 Argon`, etc.) and written to `openai_reasoning_effort` when active.
+- **Extra Body JSON**: Attach a custom JSON object to any model entry to merge custom sampling or vendor parameters at generation time; routing keys (`model`, `messages`, `prompt`, `stream`) are protected.
+- **Mainstream & Scored Filters**: Toggle **Show non-mainstream providers** (whitelists 52 mainstream providers), **Only models with scores**, and **Translated provider names** (in non-English UIs).
+- **Local OMP Import**: Import a local `oh-my-pi` catalog overlay and optionally import stored API keys and OAuth sessions (`google-antigravity`, `google-gemini-cli`, `anthropic`) from `~/.omp/agent/agent.db`.
 
-Model cards and the details pane surface [AA-PersonalityBench](https://artificialanalysis.ai/evaluations/aa-personalitybench) data from Artificial Analysis:
+---
 
-- Two chips sit next to a model name: `AA 59` is the mean of the eight index percentiles, and `OMTP 62` is a weighted score for roleplay/creative writing (no extra radar).
-- The `OMTP` score uses fixed weights: imagination 26% · warmth 20% · expressiveness 18% · non-sycophancy 14% · transparency 7% · conviction 6% · informativeness 5% · organization 4%, minus 8% of slop (`src/personality.js#RP_WEIGHTS`). Transparency matters less overall, but its non-sycophancy half gets its own 14%.
-- The `↗` next to the section title opens the AA-PersonalityBench page.
-- The details pane draws an eight-axis radar (Expressiveness, Organization, Informativeness, Transparency, Warmth, Conviction, Imagination, Slop) plus a bar per index.
-- Data comes from the public evaluation page (41 models) and is bundled as `catalog/personality.json`. AA's free API needs an account and must not be called from client code, so nothing is fetched at runtime.
-- AA publishes index percentiles for a subset of models; the rest are derived with AA's documented method (mean trait z-score per index, sycophantic inverted in Transparency, percentile ranked across all 41) and the panel says so. The derivation matches all 88 published values within 0.95.
+## Privacy & Security
 
-Refresh the snapshot (page cached under `.cache/`):
+- **Local AES-256-GCM KeyStore**: Provider API keys, OAuth tokens, and custom provider configs are encrypted with AES-256-GCM (`data/omtp/master.key`, mode `0600`) inside `data/omtp/providers.json`. Management endpoints only ever return the key source and last 4 characters.
+- **No Shipped OAuth Secrets**: The repository contains zero OAuth client secrets. Supply your own via `OMTP_<PROVIDER>_CLIENT_ID` environment variables or `data/omtp/oauth-clients.json` (mode `0600`, git-ignored).
+- **Zero Telemetry, Loopback Only**: The gateway binds strictly to `127.0.0.1` and connects directly to upstream provider endpoints.
 
-```bash
-npm run personality          # re-scrape and rewrite catalog/personality.json
-npm run personality:verify   # only check the derivation against published values
-```
+---
 
-> A GitHub Action or Cloudflare Worker can regenerate this snapshot later and act as OMTP's official data source.
+## FAQ
 
-- Quick bar: press **Save to quick bar** on a model card, then left-click any slot 1–9 to place or overwrite it (another slot holding the same model is cleared automatically); right-click clears a slot. Without a pending save, left-clicking a filled slot switches to that model and moves both panes to it (its provider selected on the left, its row scrolled into view and flashed on the right). `Alt+digit` switches, `Alt+Shift+digit` places the selected model.
-- `/effort` and SillyTavern's own Reasoning Effort dropdown write the same field (`oai_settings.reasoning_effort`): the command updates the dropdown, and a manual change there wins for the next cycle. With no usable model (none selected, no credential, model without reasoning support) the command no longer errors — it drives that dropdown directly.
-- On the Sign-in tab the search box filters both the roster and the provider column (name/id); clicking a provider reveals and highlights its row instead of jumping back to the All tab.
-- Switching a model now confirms with a toast ("Now using …"), the row of the model actually in use carries a green bubble, and the footer only reports the usable-model count.
-- The filters in the tab row keep a fixed order: "translated provider names" (non-English UIs only) → "only models with scores" → "show non-mainstream providers". The two always-present boxes therefore stay adjacent and right-aligned in every language, with "show non-mainstream providers" always rightmost.
-- "Only models with scores" (off by default) keeps just the models that have AA-PersonalityBench data; a provider you opened explicitly is unaffected.
-- In non-English UIs a second checkbox, "显示供应商翻译名 / Translated provider names" (on by default), switches provider names to their Chinese form. Only providers with an official Chinese name are translated (DeepSeek→深度求索, Moonshot→月之暗面, Z.AI→智谱国际版, Zhipu→智谱, Xiaomi, SiliconFlow, Qwen, Qianfan, StepFun, NVIDIA, local runtimes); everything else keeps its English name and only the region/qualifier is translated (Cn/China→中国, Singapore→新加坡, Europe→欧洲, International→国际版). See `src/provider-names.js`.
-- The "显示非主流供应商 / Show non-mainstream providers" checkbox next to the search box: uncheck it to keep only whitelisted first-party labs, community aggregators (OpenRouter, SiliconFlow, Command Code, OpenCode), coding subscriptions, major clouds and local runtimes (`src/constants.js#MAINSTREAM_PROVIDERS`, 51 of 99). A provider you opened explicitly stays visible.
-- A stored key renders as dots inside the field (never the plaintext, and never resubmitted): pressing Save untouched says "that is the stored key", and only an edit replaces it.
-- Tokens are stored in the encrypted key store as structured credentials, refreshed with the provider's token endpoint, and used by the gateway.
+<details>
+<summary><b>Q1: Do I need Python or an existing OMP (oh-my-pi) installation?</b></summary>
+<br/>
+No. OMTP is a pure JavaScript / Node.js extension and plugin for SillyTavern with the 99-provider catalog and personality snapshot bundled out of the box.
+</details>
 
-The model details pane no longer manages credentials; it links to this tab.
+<details>
+<summary><b>Q2: Why is a model visible in search but disabled?</b></summary>
+<br/>
+The details pane shows the exact reason:
+<ol>
+  <li><b>Missing credentials</b>: Click <b>Open sign-in</b> in the details card to add an API key or complete OAuth sign-in.</li>
+  <li><b>Server plugin not running</b>: Models badged <code>OMTP</code> require the server plugin (see Step 2 above).</li>
+  <li><b>Proprietary client protocol</b>: Providers that only speak proprietary agent/IDE protocols (e.g., Cursor, Devin, GitHub Copilot) cannot be driven headlessly and are shown with an explanation.</li>
+</ol>
+</details>
 
-### Search and filtering
+<details>
+<summary><b>Q3: Where did SillyTavern's native API selector go, and how do I restore it?</b></summary>
+<br/>
+OMTP hides <code>#main-API-selector-block</code> via a CSS class on <code>&lt;body&gt;</code> without removing any DOM nodes. Click <b>Show native API selector</b> in the API drawer or uncheck <b>Hide native API selector</b> in extension settings anytime.
+</details>
 
-The search box matches model names, provider names, and `provider/model`. Results rank in this order: exact `provider/model` or exact model ID, favorites, recents, then substring/fuzzy matches. The tabs switch between All, Favorites, Recent, and Profiles; the left column filters by provider. The column mirrors OMP's provider universe (99 providers, including local runtimes such as Ollama/LM Studio/vLLM and OAuth-only plans), so providers without a bundled model list appear too and fill in from the live probe on first click. The column is split in two by a thin rule: first-party AI labs on top (Anthropic, OpenAI / ChatGPT plans, Google, xAI, DeepSeek, Mistral, Meta, Moonshot, Z.AI, MiniMax, Qwen/Alibaba, Xiaomi, NVIDIA, Perplexity, StepFun, …; `src/constants.js#LAB_PROVIDERS`), aggregators, clouds and local runtimes below. Each part is ordered green (signed in) → red (the provider rejected the stored key, detected by the startup probe and by any failed refresh) → hollow (no credentials), alphabetical within a state. Search results are grouped by provider, each section header showing the match count and a "🔄 Refresh live models" button, in ranking order (best match first). Searching narrows the provider column to the providers that own a match, and filters inside the selected provider (telling you how many matches live elsewhere). Choosing a provider replaces the list with that provider's models and selects its first model (highlight plus details pane); Recent and Favorites only appear on the All view.
+<details>
+<summary><b>Q4: Why are image, audio, and embedding models excluded?</b></summary>
+<br/>
+OMTP is dedicated to chat and roleplay text generation in SillyTavern; the catalog build pipeline keeps only <code>kind: 'chat'</code> models so thousands of embedding/TTS entries don't clutter search.
+</details>
 
-With an entry selected, the details pane offers:
+---
 
-- **Use model** switches immediately. It refuses to switch during generation.
-- **Favorite**, **Quick slot**, **Bind chat**, **Bind character**.
-- **Edit extra body**: stores a JSON object for the entry and merges it into the request body at generation time. `model`, `messages`, `prompt`, `stream`, and API routing keys are managed by OMTP and cannot be overridden.
-- **Provider settings** jumps to that provider's row in the hub's **Providers** tab.
-- Providers that support both a subscription login and an API key (Anthropic Claude Pro/Max, GitHub Copilot, …) show both: an OAuth section plus the key field. When the credential only exists in the gateway (an imported OAuth session), those models route through the gateway instead of SillyTavern's native adapter.
-- **Get API key** opens the provider's console page where a key is created (shown for the providers that publish one).
-- **Copy selector** copies `provider/model` for OMTP entries and the model/profile ID for others.
+## Documentation
 
-### Quick slots and shortcuts
-
-Nine quick slots sit at the top of the panel. `Alt+1..9` switches to a slot, `Alt+Shift+1..9` assigns the current selection to a slot, and right-clicking a slot clears it.
-
-### Bindings
-
-Chat bindings live in the current chat's `chat_metadata.omtp` and travel with the chat. Character bindings are stored per avatar in extension settings. On chat changes, a chat binding wins over a character binding; character bindings do not apply in group chats. Auto-apply is on by default and can be disabled in settings.
-
-### Reasoning effort
-
-The detail pane stores reasoning effort (`auto`, `min`, `low`, `medium`, `high`, `max`) per entry. It writes `openai_reasoning_effort` only when `main_api=openai`; other APIs ignore it.
-
-### Gateway mode
-
-Gateway providers are always listed: unlocked providers (usable credentials, or keyless) sit above the separator with their model counts, locked ones below it. Selecting a gateway model writes SillyTavern's Custom (OpenAI-compatible) source. Before selecting one, check that:
-
-- the server plugin is running;
-- the provider has usable credentials (or is keyless);
-- you accept that the selection stops working if the server plugin is removed.
-
-Otherwise the entry shows why it is unavailable and **Use model** stays disabled.
-
-### Selector strings
-
-The search box does not parse `@` syntax. These forms are for `globalThis.OMTP.switchTo()` and other extensions:
-
-```js
-await OMTP.switchTo('provider/model');
-await OMTP.switchTo('@1');
-await OMTP.switchTo('@fav');
-await OMTP.switchTo('provider/model:high');
-```
-
-Supported: `provider/model` (split at the first `/`; the model ID itself may contain `/`), `@1`–`@9`, `@fav`/`@favorites`, `@recent`/`@recents`, bare model IDs, and `:auto`/`:min`/`:low`/`:medium`/`:high`/`:max` reasoning suffixes. `@fav` and `@recent` use the first entry that is still available.
-
-## Native selector
-
-The native SillyTavern API selector is hidden by default. This only adds `omtp-hide-native-api-selector` to `<body>`, and CSS hides `#main-API-selector-block`; no native control is removed, reparented, or rebuilt.
-
-To restore it:
-
-- uncheck **Hide native API selector** in settings;
-- or click **Show native API selector** in the API drawer;
-- or disable/delete the extension and reload the page, after which the class is gone and the native selector returns.
-
-The API drawer, keys, provider settings, Connection Profiles, and slash commands remain functional.
-
-## Switching and recovery
-
-Native/Translated selections are written directly to SillyTavern settings and remain valid after OMTP is removed.
-
-The first switch from non-gateway to gateway mode snapshots the current Custom source fields. Leaving gateway mode restores that snapshot; disabling, cleaning, or deleting the extension makes the cleanup hook try to restore the last native selection or the saved Custom state.
-
-Gateway selections live in SillyTavern's Custom source. They stop working when the server plugin is removed. If only the client extension is removed, the fields remain and may keep working, but OMTP no longer manages them. If the extension folder is deleted without running the cleanup hook, switch back to the native API selector manually or restore the Custom source fields yourself.
-
-## Server plugin
-
-The server plugin is optional. When enabled, it starts with SillyTavern by default and exposes an OpenAI-compatible gateway on `127.0.0.1`. It does not start any OMP process or binary.
-
-The default URL is `http://127.0.0.1:4100/v1`. If the port is busy, it falls back within `4100`–`4110`. Bearer auth is on by default.
-
-| Endpoint | Purpose | Auth |
-|---|---|---|
-| `GET /health` | Health check | None |
-| `GET /v1/models` | List gateway-accessible `provider/model` entries | Bearer by default |
-| `POST /v1/chat/completions` | Chat completions, streaming and non-streaming | Bearer by default |
-
-The settings panel can change the client-side gateway URL, toggle auto-start and token auth, and restart the gateway. The client prefers the actual URL returned by the plugin's `/status` endpoint, so port fallback does not require a client change.
-
-### State and keys
-
-State lives under `$DATA_ROOT/omtp`; SillyTavern usually points `DATA_ROOT` at `SillyTavern/data`, so the common path is `SillyTavern/data/omtp/`.
-
-| File | Contents |
+| Guide | Contents |
 |---|---|
-| `config.json` | `autoStart`, `port`, `requireAuth` |
-| `gateway-token` | Generated Bearer token |
-| `providers.json` | Encrypted provider configs (including API keys) |
-| `master.key` | AES-256-GCM key for `providers.json` |
-| `catalog.json` | Refreshed catalog |
-| `imported-catalog.json` | Overlay from local OMP import |
+| 🔌 [**Gateway & Server Plugin Reference (docs/gateway.en.md)**](./docs/gateway.en.md) | Listener ports & auth, all 24 plugin HTTP routes, 9 protocol adapters, 16 quota endpoints, `data/omtp/` files |
+| 🛠️ [**Developer API & Build Guide (docs/developer.en.md)**](./docs/developer.en.md) | `globalThis.OMTP` methods & events, selector grammar, catalog & personality build scripts, local mock server |
+| 🧪 [**End-to-End Verification Checklist (tests/e2e/README.md)**](./tests/e2e/README.md) | Manual verification walkthrough for native routing, gateway streaming, bindings, and teardown rollback |
+| 🤝 [**Contributing & Architecture Guide (CONTRIBUTING.en.md)**](./CONTRIBUTING.en.md) | Repository layout, standalone layer contracts, quality guardrails, style & PR workflow |
+| 📚 [**OMP Model Selection Notes (model-selection-omp/)**](./model-selection-omp/README.md) | Upstream `oh-my-pi` selector architecture reference notes |
 
-Provider keys resolve in this order: OMTP key store → SillyTavern secrets (default user) → catalog environment variables. The HTTP API never returns provider keys in plaintext; the settings page shows only the source and last four characters.
+---
 
-### Protocol adapters
+## Credits & License
 
-| Adapter | Upstream protocol |
-|---|---|
-| `openai` | OpenAI Chat Completions and compatible APIs |
-| `anthropic` | Anthropic Messages |
-| `google` | Google Generative AI |
-| `google-vertex` | Google Vertex AI |
-| `responses` | OpenAI Responses |
-| `azure-responses` | Azure OpenAI Responses |
-| `bedrock` | Amazon Bedrock Converse (static AWS credentials; streaming responses are synthesized) |
-| `ollama` | Ollama chat |
+<table>
+<tr>
+  <td><a href="https://github.com/can1357/oh-my-pi"><b>OMP (oh-my-pi)</b></a></td>
+  <td>✨ The gateway, sign-in flows (<code>/login</code>), usage pages (<code>/usage</code>), and stats dashboard (<code>stats</code>) follow OMP's design; the bundled catalog is derived from OMP's MIT-licensed <code>models.json</code> (see <a href="./NOTICE">NOTICE</a>).</td>
+</tr>
+<tr>
+  <td><a href="https://artificialanalysis.ai/evaluations/aa-personalitybench"><b>AA-PersonalityBench</b></a></td>
+  <td>📊 8-axis model personality evaluation data by Artificial Analysis.</td>
+</tr>
+<tr>
+  <td><a href="https://github.com/SillyTavern/SillyTavern"><b>SillyTavern</b></a></td>
+  <td>🍺 The open-source frontend LLM tavern interface.</td>
+</tr>
+</table>
 
-Providers that only support OAuth/agent protocols do not use the gateway: Cursor, Devin, GitLab Duo, GitLab Duo Agent, OpenAI Codex, Gemini CLI, Antigravity, GitHub Copilot, and xAI Grok OAuth. They appear with an unavailable reason and cannot be selected.
-
-### Custom providers
-
-The Providers section can add a custom provider with an id, adapter, base URL, models JSON, and optional API key. Once saved, it can be tested; custom providers merge into the catalog, and their models appear in the gateway's `/v1/models` when credentials are available. Advanced settings override headers and extraConfig.
-
-### Multi-user
-
-The gateway targets SillyTavern's default single-user mode. With multi-user accounts enabled, gateway provider keys are shared (the key store is global, and ST secrets are read from the default user's directory); there is no per-user isolation.
-
-## Catalog
-
-The bundled catalog is a snapshot of OMP's model data, generated by `tools/build-catalog.mjs` and written to both the client and server copies.
-
-```bash
-node tools/build-catalog.mjs --omp-root /path/to/oh-my-pi
-node tools/validate-catalog.mjs
-```
-
-`--omp-root` points at an OMP checkout containing `packages/catalog/src/models.json` and `packages/catalog/src/compat/rules.json`. The build validates provider count, model count, native adapter keys, and that every provider has an adapter or an unavailable reason; `validate-catalog.mjs` also checks provider-map coverage.
-
-The current snapshot has 79 providers and 5,710 chat models. Only `kind: chat` is kept; image, speech, embedding, and other non-chat models are excluded. Providers with no chat models stay in the catalog but produce no panel entries.
-
-**Refresh catalog** accepts `http:`/`https:` URLs; leaving it blank fetches from OMP upstream. Validation or network failures keep the current catalog. **Import local OMP** in settings reads a given checkout and writes an overlay (`imported-catalog.json`), with an optional toggle to securely import API-key credentials from `~/.omp/agent/agent.db` into OMTP's encrypted key store; it never overwrites the bundled catalog and never executes `omp`.
-
-## Development
-
-```bash
-npm test                 # node --test tests/unit
-npm run validate         # validate the bundled catalog
-npm run mock             # mock OpenAI provider on 127.0.0.1:4199
-```
-
-The mock provider serves an `echo` model and replies `pong` to requests containing `ping`. Add a custom provider in the hub's Providers tab with id `mock`, adapter `openai`, base URL `http://127.0.0.1:4199/v1`, model `echo`, and any non-empty key to exercise the gateway without a real API.
-
-Manual end-to-end checks are in `tests/e2e/README.md`. The selector/resolution notes in `model-selection-omp/` describe OMP; they are reference material, not OMTP runtime documentation.
-
-## Limitations
-
-- Chat models only. The catalog excludes non-chat modalities, and the panel only lists catalog models, so SillyTavern native multi-select features such as AI Horde are not exposed there.
-- Native `<select>` options are never modified. A model absent from the native control either uses the gateway or is marked unavailable.
-- Gateway selections depend on the server plugin; they stop working when the plugin is removed. Native/Translated selections are unaffected.
-- OAuth/agent protocols and multi-user gateway key isolation are not implemented.
-- The bundled catalog is a point-in-time snapshot; use catalog refresh or local OMP import for newer models.
-
-## License
-
-GPL-3.0 (GNU General Public License v3.0), © 2026 BHLuotianyi. Author: [BHLuotianyi](https://github.com/BHLuotianyi).
-
-The bundled catalog is derived from OMP's MIT-licensed data; see `NOTICE`.
+Released under the [**GNU General Public License v3.0 (GPL-3.0)**](./LICENSE), © 2026 [BHLuotianyi](https://github.com/BHLuotianyi).

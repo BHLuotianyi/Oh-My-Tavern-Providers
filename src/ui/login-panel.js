@@ -12,6 +12,7 @@ import { apiKeyUrlFor } from '../provider-links.js';
 import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
 import { getSettings } from '../store.js';
 import { tr, trf } from './dom.js';
+import { el } from './helpers.js';
 import { openCustomProviderEditor } from './settings.js';
 
 /** Providers with a login flow come first, like omp's `/login` roster. */
@@ -32,13 +33,6 @@ let onChanged = null;
 let roster = [];
 /** Current search text from the hub's search box. */
 let filterText = '';
-
-function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-}
 
 async function api(path, init = {}) {
     const headers = { ...getRequestHeaders(), ...(init.headers || {}) };
@@ -272,19 +266,33 @@ function renderKeyEntry(provider) {
     return wrap;
 }
 
+function setRowButtonsDisabled(actions, disabled) {
+    actions.querySelectorAll('button').forEach((button) => {
+        button.disabled = disabled;
+    });
+}
+
+/**
+ * Open the placeholder tab synchronously: a popup created after `await` is
+ * blocked. The authorize URL only exists once the server answers, so the
+ * placeholder tab is navigated instead of opening a fresh one.
+ */
+function openLoginPopup() {
+    try {
+        const popup = window.open('about:blank', '_blank');
+        if (popup) {
+            popup.opener = null;
+        }
+        return popup;
+    } catch {
+        return null;
+    }
+}
+
 async function startLogin(provider, row, actions) {
     const id = String(provider.id);
-    actions.querySelectorAll('button').forEach((button) => { button.disabled = true; });
-    // Open the tab synchronously: a popup created after `await` is blocked.
-    // The authorize URL only exists once the server answers, so we navigate
-    // the placeholder tab instead of opening a fresh one.
-    let popup = null;
-    try {
-        popup = window.open('about:blank', '_blank');
-        if (popup) popup.opener = null;
-    } catch {
-        popup = null;
-    }
+    setRowButtonsDisabled(actions, true);
+    const popup = openLoginPopup();
     const panel = el('div', 'omtp-login-flow');
     row.append(panel);
     panel.textContent = tr('omtp_login_starting', 'Starting…');
@@ -300,69 +308,79 @@ async function startLogin(provider, row, actions) {
                 // The browser can still refuse; the link below stays visible.
             }
         }
-        panel.replaceChildren();
-        panel.append(el('div', 'omtp-login-instruction', started.instructions || tr('omtp_login_browser_hint', 'Complete the login in your browser.')));
-        if (started.url) {
-            if (!popup) {
-                panel.append(el('div', 'omtp-login-hint', tr('omtp_login_popup_blocked', 'The browser blocked the sign-in tab — open it below.')));
-            }
-            const link = el('a', 'omtp-login-url', started.url);
-            link.href = started.url;
-            link.target = '_blank';
-            link.rel = 'noopener noreferrer';
-            panel.append(link);
-        }
-        if (started.userCode) {
-            panel.append(el('div', 'omtp-login-usercode', started.userCode));
-        }
-        if (started.kind === 'oauth-code') {
-            const paste = el('div', 'omtp-login-paste');
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.placeholder = tr('omtp_login_paste_placeholder', 'Paste the redirect URL or authorization code');
-            const submit = el('button', 'menu_button', tr('omtp_login_paste_submit', 'Submit'));
-            submit.type = 'button';
-            submit.addEventListener('click', async () => {
-                submit.disabled = true;
-                try {
-                    const result = await api(`/providers/${encodeURIComponent(id)}/login/${encodeURIComponent(started.id)}/code`, {
-                        method: 'POST',
-                        body: JSON.stringify({ code: input.value }),
-                    });
-                    if (result.status === 'done') {
-                        finishLogin(id, row, panel, result, popup);
-                    } else {
-                        panel.append(el('div', 'omtp-login-error', result.error || 'Login failed'));
-                    }
-                } catch (error) {
-                    panel.append(el('div', 'omtp-login-error', String(error.message || error)));
-                } finally {
-                    submit.disabled = false;
-                }
-            });
-            paste.append(input, submit);
-            panel.append(paste);
-        }
-
-        const cancel = el('button', 'menu_button', tr('omtp_login_cancel', 'Cancel'));
-        cancel.type = 'button';
-        cancel.addEventListener('click', async () => {
-            stopPolling(id);
-            try {
-                popup?.close();
-            } catch {
-                // the browser may refuse to close a cross-origin tab
-            }
-            await api(`/providers/${encodeURIComponent(id)}/login/${encodeURIComponent(started.id)}`, { method: 'DELETE' }).catch(() => {});
-            panel.remove();
-            actions.querySelectorAll('button').forEach((button) => { button.disabled = false; });
-        });
-        panel.append(cancel);
-
-        pollSession(id, started.id, row, panel, popup);
+        renderLoginFlow(id, started, panel, popup, actions);
+        pollSession(id, started.id, panel, popup);
     } catch (error) {
         panel.replaceChildren(el('div', 'omtp-login-error', String(error.message || error)));
     }
+}
+
+/** Fill the flow panel: instruction, authorize link, device code, paste box and Cancel. */
+function renderLoginFlow(id, started, panel, popup, actions) {
+    panel.replaceChildren();
+    panel.append(el('div', 'omtp-login-instruction', started.instructions || tr('omtp_login_browser_hint', 'Complete the login in your browser.')));
+    if (started.url) {
+        if (!popup) {
+            panel.append(el('div', 'omtp-login-hint', tr('omtp_login_popup_blocked', 'The browser blocked the sign-in tab — open it below.')));
+        }
+        const link = el('a', 'omtp-login-url', started.url);
+        link.href = started.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        panel.append(link);
+    }
+    if (started.userCode) {
+        panel.append(el('div', 'omtp-login-usercode', started.userCode));
+    }
+    if (started.kind === 'oauth-code') {
+        panel.append(buildPasteBox(id, started.id, panel, popup));
+    }
+
+    const cancel = el('button', 'menu_button', tr('omtp_login_cancel', 'Cancel'));
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => cancelLogin(id, started.id, panel, popup, actions));
+    panel.append(cancel);
+}
+
+function buildPasteBox(id, sessionId, panel, popup) {
+    const paste = el('div', 'omtp-login-paste');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = tr('omtp_login_paste_placeholder', 'Paste the redirect URL or authorization code');
+    const submit = el('button', 'menu_button', tr('omtp_login_paste_submit', 'Submit'));
+    submit.type = 'button';
+    submit.addEventListener('click', async () => {
+        submit.disabled = true;
+        try {
+            const result = await api(`/providers/${encodeURIComponent(id)}/login/${encodeURIComponent(sessionId)}/code`, {
+                method: 'POST',
+                body: JSON.stringify({ code: input.value }),
+            });
+            if (result.status === 'done') {
+                finishLogin(id, panel, result, popup);
+            } else {
+                panel.append(el('div', 'omtp-login-error', result.error || 'Login failed'));
+            }
+        } catch (error) {
+            panel.append(el('div', 'omtp-login-error', String(error.message || error)));
+        } finally {
+            submit.disabled = false;
+        }
+    });
+    paste.append(input, submit);
+    return paste;
+}
+
+async function cancelLogin(id, sessionId, panel, popup, actions) {
+    stopPolling(id);
+    try {
+        popup?.close();
+    } catch {
+        // the browser may refuse to close a cross-origin tab
+    }
+    await api(`/providers/${encodeURIComponent(id)}/login/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }).catch(() => {});
+    panel.remove();
+    setRowButtonsDisabled(actions, false);
 }
 
 function stopPolling(providerId) {
@@ -373,13 +391,13 @@ function stopPolling(providerId) {
     activeSessions.delete(providerId);
 }
 
-function pollSession(providerId, sessionId, row, panel, popup = null) {
+function pollSession(providerId, sessionId, panel, popup = null) {
     stopPolling(providerId);
     const timer = setInterval(async () => {
         try {
             const status = await api(`/providers/${encodeURIComponent(providerId)}/login/${encodeURIComponent(sessionId)}`);
             if (status.status === 'done') {
-                finishLogin(providerId, row, panel, status, popup);
+                finishLogin(providerId, panel, status, popup);
             } else if (status.status === 'error') {
                 stopPolling(providerId);
                 panel.append(el('div', 'omtp-login-error', status.error || 'Login failed'));
@@ -391,7 +409,7 @@ function pollSession(providerId, sessionId, row, panel, popup = null) {
     activeSessions.set(providerId, { timer });
 }
 
-function finishLogin(providerId, row, panel, status, popup = null) {
+function finishLogin(providerId, panel, status, popup = null) {
     stopPolling(providerId);
     panel.replaceChildren(el('div', 'omtp-login-success', trf('omtp_login_success', 'Signed in${0}', status.account ? ` · ${status.account}` : '')));
     onChanged?.();

@@ -12,7 +12,7 @@ import {
 } from './lib/config.mjs';
 import { KeyStore, KeyStoreUnreadableError } from './lib/key-store.mjs';
 import { CatalogService } from './lib/catalog-service.mjs';
-import { GatewayServer, buildGatewayContext } from './lib/gateway-server.mjs';
+import { GatewayServer, asyncHandler, buildGatewayContext } from './lib/gateway-server.mjs';
 import { buildModelsProbe, buildProviderContext, isSupportedAdapter, SUPPORTED_ADAPTERS } from './lib/provider-config.mjs';
 import { parseStructuredCredential } from './lib/oauth.mjs';
 import { importFromOmp } from './lib/import-omp.mjs';
@@ -163,6 +163,41 @@ function clearAuthFailure(providerId) {
 }
 
 /**
+ * Human-readable tail of a stored key: structured credentials expose their
+ * account email when known, otherwise the last four characters.
+ * @param {{apiKey?:string}} resolved
+ * @returns {string}
+ */
+function describeLast4(resolved) {
+    if (!resolved.apiKey) return '';
+    const structured = parseStructuredCredential(resolved.apiKey);
+    if (structured?.email) return structured.email;
+    if (structured?.access) return structured.access.slice(-4);
+    return resolved.apiKey.slice(-4);
+}
+
+/**
+ * Catalog-shaped stand-in for a provider that only exists in the key store.
+ * @param {string} providerId
+ * @param {{label?:string, baseUrl?:string, authKind?:string, adapter?:string|null, custom?:boolean, models?:any[]}} [source]
+ * @returns {any}
+ */
+function syntheticProvider(providerId, source = {}) {
+    return {
+        id: providerId,
+        label: source.label || providerId,
+        baseUrl: source.baseUrl || '',
+        api: 'custom',
+        envVars: [],
+        authKind: source.authKind || 'api-key',
+        stAdapter: null,
+        gatewayAdapter: source.adapter || null,
+        custom: Boolean(source.custom),
+        models: source.models || [],
+    };
+}
+
+/**
  * @param {string} providerId
  * @param {KeyStore} keyStore
  * @param {CatalogService} catalogService
@@ -172,18 +207,13 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
     const provider = await catalogService.getProvider(providerId);
     const { config, unreadable } = await keyStore.getConfigSafe(providerId);
     if (!provider && !unreadable && Object.keys(config).length === 0) return null;
-    const synthetic = provider || {
-        id: providerId,
-        label: config.label || providerId,
-        baseUrl: config.baseUrl || '',
-        api: 'custom',
-        envVars: [],
-        authKind: 'api-key',
-        stAdapter: null,
-        gatewayAdapter: config.adapter || null,
-        custom: Boolean(config.custom),
-        models: config.models || [],
-    };
+    const synthetic = provider || syntheticProvider(providerId, {
+        label: config.label,
+        baseUrl: config.baseUrl,
+        adapter: config.adapter,
+        custom: config.custom,
+        models: config.models,
+    });
     let resolved;
     try {
         resolved = await keyStore.resolveProvider(synthetic);
@@ -210,13 +240,7 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
         custom: Boolean(resolved.custom || synthetic.custom),
         hasKey: resolved.keySource !== 'none',
         keySource: resolved.keySource,
-        last4: (() => {
-            if (!resolved.apiKey) return '';
-            const structured = parseStructuredCredential(resolved.apiKey);
-            if (structured?.email) return structured.email;
-            if (structured?.access) return structured.access.slice(-4);
-            return resolved.apiKey.slice(-4);
-        })(),
+        last4: describeLast4(resolved),
         available: Boolean(resolved.available) && !authFailures.has(providerId),
         modelCount: Array.isArray(resolved.models) ? resolved.models.length : 0,
         unreadable,
@@ -232,16 +256,6 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
         ),
         keyInvalidReason: authFailures.get(providerId)?.message ?? null,
         unsupportedReason: synthetic.unsupportedReason || authFailures.get(providerId)?.message || null,
-    };
-}
-
-/**
- * @param {(req:any, res:any) => Promise<any>} fn
- * @returns {any}
- */
-function asyncRoute(fn) {
-    return (req, res, next) => {
-        Promise.resolve(fn(req, res)).catch(next);
     };
 }
 
@@ -263,6 +277,71 @@ function extractModelIds(value) {
 /** Successful live model lists, keyed by provider id. */
 const liveModelsCache = new Map();
 const LIVE_MODELS_TTL = 300_000;
+
+/**
+ * Call a provider's live model listing: the adapter's `listModels` when it has
+ * one, otherwise the provider's models endpoint. Never throws for
+ * provider-level failures; auth rejections are remembered so the UI can tell
+ * a working key from a dead one.
+ *
+ * @param {any} resolved resolved provider config
+ * @param {any} adapter gateway adapter, or null
+ * @param {any} provider catalog-shaped provider
+ * @param {{model?:string, keyStore?:any, persist?:boolean}} [options]
+ *   `keyStore` builds the ctx through the gateway path (refreshing OAuth
+ *   credentials); `persist: false` skips recording auth rejections.
+ * @returns {Promise<{models:any[], httpStatus?:number}|{skipped:true}|{error:string, httpStatus?:number}>}
+ */
+async function probeProvider(resolved, adapter, provider, { model = '', keyStore = null, persist = true } = {}) {
+    const signal = AbortSignal.timeout(20_000);
+    try {
+        let rawModels;
+        let httpStatus;
+        if (adapter && typeof adapter.listModels === 'function') {
+            const ctx = keyStore
+                ? await buildGatewayContext(resolved, keyStore, model, signal, provider)
+                : buildProviderContext(resolved, model, signal, provider);
+            rawModels = await adapter.listModels(ctx);
+        } else {
+            const probe = buildModelsProbe(resolved);
+            if (!probe) return { skipped: true };
+            const response = await fetch(probe.url, { headers: probe.headers, signal });
+            if (!response.ok) {
+                if (persist && looksLikeAuthFailure(response.status, '')) {
+                    recordAuthFailure(resolved.id, response.status, `HTTP ${response.status}`);
+                }
+                return { error: `HTTP ${response.status}`, httpStatus: response.status };
+            }
+            httpStatus = response.status;
+            const text = await response.text();
+            try {
+                rawModels = JSON.parse(text);
+            } catch {
+                rawModels = [];
+            }
+        }
+        return { models: describeModels(rawModels), httpStatus };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const status = Number(/\(HTTP (\d{3})\)/.exec(message)?.[1] || /^HTTP (\d{3})$/.exec(message)?.[1] || 0);
+        if (persist && looksLikeAuthFailure(status, message)) {
+            recordAuthFailure(resolved.id, status, message);
+        }
+        return { error: message };
+    }
+}
+
+/**
+ * Normalize a model listing into `{id, name}` objects.
+ * @param {any} rawModels
+ * @returns {any[]}
+ */
+function describeModels(rawModels) {
+    const ids = extractModelIds(rawModels);
+    return Array.isArray(rawModels)
+        ? rawModels.map((m) => (typeof m === 'string' ? { id: m, name: m } : { id: m.id, name: m.name || m.id, ...m }))
+        : ids.map((id) => ({ id, name: id }));
+}
 
 /**
  * Fetch a provider's live model list. Successful results are cached; auth
@@ -289,60 +368,22 @@ async function probeProviderModels(current, providerId, { refresh = false } = {}
         return { ok: false, available: false, error: 'No credentials configured', models: [] };
     }
 
-    const provider = (await current.catalogService.getProvider(providerId)) || {
-        id: providerId,
+    const provider = (await current.catalogService.getProvider(providerId)) || syntheticProvider(providerId, {
         label: status.label,
         baseUrl: status.baseUrl,
-        api: 'custom',
-        envVars: [],
         authKind: status.authKind,
-        gatewayAdapter: status.adapter,
-        models: [],
-    };
-
+        adapter: status.adapter,
+    });
     const resolved = await current.keyStore.resolveProvider(provider);
     const adapter = await getAdapter(resolved.adapter);
-
-    try {
-        let rawModels = [];
-        if (adapter && typeof adapter.listModels === 'function') {
-            const ctx = await buildGatewayContext(resolved, current.keyStore, '', AbortSignal.timeout(20_000), provider);
-            rawModels = await adapter.listModels(ctx);
-        } else {
-            const probe = buildModelsProbe(resolved);
-            if (probe) {
-                const response = await fetch(probe.url, {
-                    headers: probe.headers,
-                    signal: AbortSignal.timeout(20_000),
-                });
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-                const text = await response.text();
-                try {
-                    rawModels = JSON.parse(text);
-                } catch {
-                    rawModels = [];
-                }
-            }
-        }
-
-        const modelIds = extractModelIds(rawModels);
-        const detailedModels = Array.isArray(rawModels)
-            ? rawModels.map((m) => (typeof m === 'string' ? { id: m, name: m } : { id: m.id, name: m.name || m.id, ...m }))
-            : modelIds.map((id) => ({ id, name: id }));
-
-        liveModelsCache.set(providerId, { models: detailedModels, at: Date.now() });
-        clearAuthFailure(providerId);
-        return { ok: true, models: detailedModels, at: Date.now() };
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const code = Number(/\(HTTP (\d{3})\)/.exec(message)?.[1] || /^HTTP (\d{3})$/.exec(message)?.[1] || 0);
-        if (looksLikeAuthFailure(code, message)) {
-            recordAuthFailure(providerId, code, message);
-        }
-        return { ok: false, error: message, models: [] };
+    const probe = await probeProvider(resolved, adapter, provider, { keyStore: current.keyStore });
+    if (probe.error) {
+        return { ok: false, error: probe.error, models: [] };
     }
+    clearAuthFailure(providerId);
+    const models = probe.models || [];
+    liveModelsCache.set(providerId, { models, at: Date.now() });
+    return { ok: true, models, at: Date.now() };
 }
 
 /**
@@ -378,8 +419,8 @@ async function validateKeyedProviders(current) {
 /**
  * @param {any} router
  */
-function registerRoutes(router) {
-    router.get('/status', asyncRoute(async (req, res) => {
+function registerProviderRoutes(router) {
+    router.get('/status', asyncHandler(async (req, res) => {
         const current = requireState();
         const catalog = await current.catalogService.stats().catch(() => ({
             version: 'unknown',
@@ -396,19 +437,19 @@ function registerRoutes(router) {
         });
     }));
 
-    router.get('/catalog', asyncRoute(async (req, res) => {
+    router.get('/catalog', asyncHandler(async (req, res) => {
         const current = requireState();
         res.json(await current.catalogService.getCatalog());
     }));
 
-    router.post('/catalog/refresh', asyncRoute(async (req, res) => {
+    router.post('/catalog/refresh', asyncHandler(async (req, res) => {
         const current = requireState();
         const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
         const result = await current.catalogService.refresh(url);
         res.status(result.ok ? 200 : 400).json(result);
     }));
 
-    router.get('/providers', asyncRoute(async (req, res) => {
+    router.get('/providers', asyncHandler(async (req, res) => {
         const current = requireState();
         const providers = await current.catalogService.getProviders();
         /** @type {string[]} */
@@ -426,7 +467,7 @@ function registerRoutes(router) {
         res.json({ providers: list });
     }));
 
-    router.post('/providers/:id/key', asyncRoute(async (req, res) => {
+    router.post('/providers/:id/key', asyncHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
@@ -438,7 +479,7 @@ function registerRoutes(router) {
         res.json({ ok: true, provider: status });
     }));
 
-    router.delete('/providers/:id/key', asyncRoute(async (req, res) => {
+    router.delete('/providers/:id/key', asyncHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         await current.keyStore.clearProviderKey(providerId);
@@ -448,7 +489,7 @@ function registerRoutes(router) {
         res.json({ ok: true, provider: status });
     }));
 
-    router.post('/providers/:id/config', asyncRoute(async (req, res) => {
+    router.post('/providers/:id/config', asyncHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -476,7 +517,7 @@ function registerRoutes(router) {
         res.json({ ok: true, provider: status });
     }));
 
-    router.delete('/providers/:id/config', asyncRoute(async (req, res) => {
+    router.delete('/providers/:id/config', asyncHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         const removed = await current.keyStore.deleteProviderConfig(providerId);
@@ -484,7 +525,7 @@ function registerRoutes(router) {
         res.json({ ok: true, removed, id: providerId });
     }));
 
-    router.post('/providers/:id/test', asyncRoute(async (req, res) => {
+    router.post('/providers/:id/test', asyncHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
@@ -497,80 +538,56 @@ function registerRoutes(router) {
             res.json({ ok: false, error: 'Provider has no API key' });
             return;
         }
-        const provider = await current.catalogService.getProvider(providerId) || {
-            id: providerId,
+        const provider = (await current.catalogService.getProvider(providerId)) || syntheticProvider(providerId, {
             label: status.label,
             baseUrl: status.baseUrl,
-            api: 'custom',
-            envVars: [],
             authKind: status.authKind,
-            gatewayAdapter: status.adapter,
-            models: [],
-        };
+            adapter: status.adapter,
+        });
         const resolved = await current.keyStore.resolveProvider(provider);
         const model = resolved.models?.[0]?.id || provider.defaultModel || '';
         const adapter = await getAdapter(resolved.adapter);
-        try {
-            if (adapter && typeof adapter.listModels === 'function') {
-                const models = await adapter.listModels(buildProviderContext(resolved, model, AbortSignal.timeout(20_000), provider));
-                clearAuthFailure(providerId);
-                res.json({ ok: true, models: extractModelIds(models).slice(0, 20) });
-                return;
-            }
-            const probe = buildModelsProbe(resolved);
-            if (!probe) {
-                res.json({ ok: true, skipped: true, message: 'Adapter does not expose a model listing endpoint' });
-                return;
-            }
-            const response = await fetch(probe.url, {
-                headers: probe.headers,
-                signal: AbortSignal.timeout(20_000),
-            });
-            const text = await response.text();
-            let parsed = null;
-            try {
-                parsed = JSON.parse(text);
-            } catch {
-                parsed = null;
-            }
-            if (!response.ok) {
-                if (looksLikeAuthFailure(response.status, '')) {
-                    recordAuthFailure(providerId, response.status, `HTTP ${response.status}`);
-                }
-                res.json({ ok: false, status: response.status, error: `HTTP ${response.status}` });
-                return;
-            }
-            clearAuthFailure(providerId);
-            res.json({ ok: true, status: response.status, models: extractModelIds(parsed).slice(0, 20) });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const status = Number(/\(HTTP (\d{3})\)/.exec(message)?.[1] || 0);
-            if (looksLikeAuthFailure(status, message)) {
-                recordAuthFailure(providerId, status, message);
-            }
-            res.json({ ok: false, error: message });
+        const probe = await probeProvider(resolved, adapter, provider, { model });
+        if (probe.skipped) {
+            res.json({ ok: true, skipped: true, message: 'Adapter does not expose a model listing endpoint' });
+            return;
         }
+        if (probe.error) {
+            res.json({ ok: false, ...(probe.httpStatus ? { status: probe.httpStatus } : {}), error: probe.error });
+            return;
+        }
+        clearAuthFailure(providerId);
+        res.json({ ok: true, ...(probe.httpStatus ? { status: probe.httpStatus } : {}), models: extractModelIds(probe.models).slice(0, 20) });
     }));
 
-    router.get('/providers/:id/models', asyncRoute(async (req, res) => {
+    router.get('/providers/:id/models', asyncHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         const refresh = req.query?.refresh === 'true';
         res.json(await probeProviderModels(current, providerId, { refresh }));
     }));
+}
 
-    /* ---------------- OAuth login (mirrors omp's /login) ---------------- */
+/**
+ * Login policy for a provider, or null when it has no login flow.
+ * @param {any} current
+ * @param {string} providerId
+ * @returns {Promise<any|null>}
+ */
+async function loginPolicyFor(current, providerId) {
+    const provider = await current.catalogService.getProvider(providerId);
+    if (!provider?.authLogin) return null;
+    // `result` decides whether the flow yields a durable key or a session.
+    return { ...provider.authLogin, result: provider.authResult || '' };
+}
 
-    const loginPolicyFor = async (current, providerId) => {
-        const provider = await current.catalogService.getProvider(providerId);
-        if (!provider?.authLogin) return null;
-        // `result` decides whether the flow yields a durable key or a session.
-        return { ...provider.authLogin, result: provider.authResult || '' };
-    };
-
+/**
+ * @param {any} router
+ */
+function registerStatsRoutes(router) {
     /* ---------------- Token accounting (mirrors `omp` run summaries) ---------------- */
 
-    router.get('/stats', asyncRoute(async (req, res) => {
+    router.get('/stats', asyncHandler(async (req, res) => {
         const current = requireState();
         const since = typeof req.query?.since === 'string' ? req.query.since : null;
         const chat = typeof req.query?.chat === 'string' ? req.query.chat : '';
@@ -581,7 +598,7 @@ function registerRoutes(router) {
 
     // `omp stats` serves a local page; so does this. The dashboard binds to
     // loopback only and shuts itself down after a half hour of silence.
-    router.get('/stats/server', asyncRoute(async (req, res) => {
+    router.get('/stats/server', asyncHandler(async (req, res) => {
         const current = requireState();
         const chat = typeof req.query?.chat === 'string' ? req.query.chat : '';
         const lang = typeof req.query?.lang === 'string' ? req.query.lang : '';
@@ -589,13 +606,13 @@ function registerRoutes(router) {
         res.json({ ok: true, url, port, reused });
     }));
 
-    router.get('/stats/server/status', asyncRoute(async (_req, res) => {
+    router.get('/stats/server/status', asyncHandler(async (_req, res) => {
         res.json({ ok: true, server: statsServerStatus() });
     }));
 
     /* ---------------- Usage / quota (mirrors `omp usage`) ---------------- */
 
-    router.get('/usage', asyncRoute(async (req, res) => {
+    router.get('/usage', asyncHandler(async (req, res) => {
         const current = requireState();
         const refresh = req.query?.refresh === 'true';
         const catalog = await current.catalogService.getCatalog();
@@ -622,8 +639,15 @@ function registerRoutes(router) {
         rows.sort((a, b) => String(a.label || a.id).localeCompare(String(b.label || b.id)));
         res.json({ ok: true, fetchedAt: new Date().toISOString(), providers: rows });
     }));
+}
 
-    router.post('/providers/:id/login', asyncRoute(async (req, res) => {
+/**
+ * @param {any} router
+ */
+function registerLoginRoutes(router) {
+    /* ---------------- OAuth login (mirrors omp's /login) ---------------- */
+
+    router.post('/providers/:id/login', asyncHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         const policy = await loginPolicyFor(current, providerId);
@@ -636,7 +660,7 @@ function registerRoutes(router) {
         res.json({ ok: true, ...started });
     }));
 
-    router.get('/providers/:id/login/:session', asyncRoute(async (req, res) => {
+    router.get('/providers/:id/login/:session', asyncHandler(async (req, res) => {
         const session = getSession(req.params.session);
         if (!session || session.providerId !== String(req.params.id || '')) {
             throw new HttpError(404, 'Unknown or expired login session', 'unknown_session');
@@ -647,19 +671,19 @@ function registerRoutes(router) {
         res.json({ ok: true, ...describeSession(session) });
     }));
 
-    router.post('/providers/:id/login/:session/code', asyncRoute(async (req, res) => {
+    router.post('/providers/:id/login/:session/code', asyncHandler(async (req, res) => {
         const code = typeof req.body?.code === 'string' ? req.body.code : '';
         const session = await submitCode(req.params.session, code);
         if (session.status === 'done') clearAuthFailure(session.providerId);
         res.json({ ok: session.status === 'done', ...describeSession(session) });
     }));
 
-    router.delete('/providers/:id/login/:session', asyncRoute(async (req, res) => {
+    router.delete('/providers/:id/login/:session', asyncHandler(async (req, res) => {
         const removed = cancelLogin(req.params.session);
         res.json({ ok: true, canceled: removed });
     }));
 
-    router.post('/providers/:id/logout', asyncRoute(async (req, res) => {
+    router.post('/providers/:id/logout', asyncHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         await current.keyStore.clearProviderKey(providerId);
@@ -668,25 +692,30 @@ function registerRoutes(router) {
         const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
         res.json({ ok: true, provider: status });
     }));
+}
 
-    router.get('/gateway/token', asyncRoute(async (req, res) => {
+/**
+ * @param {any} router
+ */
+function registerConfigRoutes(router) {
+    router.get('/gateway/token', asyncHandler(async (req, res) => {
         const current = requireState();
         const token = await ensureGatewayToken(current.root);
         res.json({ token });
     }));
 
-    router.post('/gateway/restart', asyncRoute(async (req, res) => {
+    router.post('/gateway/restart', asyncHandler(async (req, res) => {
         const current = requireState();
         const status = await current.gateway.restart();
         res.json(status);
     }));
 
-    router.get('/config', asyncRoute(async (req, res) => {
+    router.get('/config', asyncHandler(async (req, res) => {
         const current = requireState();
         res.json(await loadConfig(current.root));
     }));
 
-    router.post('/config', asyncRoute(async (req, res) => {
+    router.post('/config', asyncHandler(async (req, res) => {
         const current = requireState();
         const body = req.body && typeof req.body === 'object' ? req.body : {};
         /** @type {Record<string, any>} */
@@ -704,8 +733,13 @@ function registerRoutes(router) {
         }
         res.json({ config, gateway: status });
     }));
+}
 
-    router.post('/import/omp', asyncRoute(async (req, res) => {
+/**
+ * @param {any} router
+ */
+function registerImportRoutes(router) {
+    router.post('/import/omp', asyncHandler(async (req, res) => {
         const current = requireState();
         const body = req.body && typeof req.body === 'object' ? req.body : {};
         const credentials = Boolean(body.credentials);
@@ -728,6 +762,17 @@ function registerRoutes(router) {
         }
         res.json(result);
     }));
+}
+
+/**
+ * @param {any} router
+ */
+function registerRoutes(router) {
+    registerProviderRoutes(router);
+    registerStatsRoutes(router);
+    registerLoginRoutes(router);
+    registerConfigRoutes(router);
+    registerImportRoutes(router);
 
     router.use((req, res) => {
         res.status(404).json({

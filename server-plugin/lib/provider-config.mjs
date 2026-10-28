@@ -6,7 +6,7 @@
  *    available, custom, models }`.
  */
 
-export const ADAPTER_BY_API = new Map([
+const ADAPTER_BY_API = new Map([
     ['openai-completions', 'openai'],
     ['openrouter', 'openai'],
     ['anthropic-messages', 'anthropic'],
@@ -41,7 +41,7 @@ const DEFAULT_VERTEX_REGION = 'us-central1';
  * @param {string|null|undefined} api
  * @returns {string|null}
  */
-export function adapterForApi(api) {
+function adapterForApi(api) {
     return ADAPTER_BY_API.get(String(api || '')) ?? null;
 }
 
@@ -55,7 +55,6 @@ export function isSupportedAdapter(adapter) {
 
 /**
  * @param {string} value
- * @param {string} suffix
  * @returns {string}
  */
 function trimTrailingSlash(value) {
@@ -92,7 +91,7 @@ export function isKeylessProvider(catalogProvider) {
  * @param {Record<string, any>} extraConfig
  * @returns {boolean}
  */
-export function hasAdapterCredentials(adapter, apiKey, extraConfig = {}) {
+function hasAdapterCredentials(adapter, apiKey, extraConfig = {}) {
     if (apiKey) return true;
     switch (adapter) {
         case 'google-vertex':
@@ -111,7 +110,7 @@ export function hasAdapterCredentials(adapter, apiKey, extraConfig = {}) {
  * @param {Record<string, any>} extraConfig
  * @returns {Record<string, string>}
  */
-export function defaultHeadersFor(adapter, apiKey, extraConfig = {}) {
+function defaultHeadersFor(adapter, apiKey, extraConfig = {}) {
     switch (adapter) {
         case 'openai':
         case 'responses':
@@ -258,14 +257,3 @@ export function buildModelsProbe(providerConfig) {
             return null;
     }
 }
-
-/**
- * @param {string} value
- * @returns {string}
- */
-export function stripTrailingSlash(value) {
-    return trimTrailingSlash(value);
-}
-
-export const AZURE_DEFAULT_API_VERSION = DEFAULT_AZURE_API_VERSION;
-export const VERTEX_DEFAULT_REGION = DEFAULT_VERTEX_REGION;

@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="100%" height="100%" font-family="system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f19" />
+      <stop offset="50%" stop-color="#111827" />
+      <stop offset="100%" stop-color="#1e1b4b" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#60a5fa" />
+      <stop offset="50%" stop-color="#a78bfa" />
+      <stop offset="100%" stop-color="#f472b6" />
+    </linearGradient>
+    <linearGradient id="cardBg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1f2937" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.96" />
+    </linearGradient>
+    <linearGradient id="radarFill" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.38" />
+      <stop offset="100%" stop-color="#ec4899" stop-opacity="0.32" />
+    </linearGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#ffffff" stroke-width="0.6" stroke-opacity="0.045" />
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="320" rx="20" fill="url(#bg)" />
+  <rect width="1200" height="320" rx="20" fill="url(#grid)" />
+
+  <!-- Ambient glows -->
+  <circle cx="190" cy="70" r="180" fill="#3b82f6" fill-opacity="0.14" />
+  <circle cx="960" cy="250" r="210" fill="#8b5cf6" fill-opacity="0.16" />
+  <circle cx="620" cy="60" r="130" fill="#ec4899" fill-opacity="0.09" />
+
+  <!-- Left Column: Brand Logo + Title + Subtitle + Feature Chips -->
+  <g transform="translate(52, 46)">
+    <!-- Brand Icon Box -->
+    <rect x="0" y="0" width="60" height="60" rx="14" fill="#1e1b4b" stroke="url(#accent)" stroke-width="2" />
+    <circle cx="18" cy="18" r="4.5" fill="#60a5fa" />
+    <circle cx="42" cy="18" r="4.5" fill="#a78bfa" />
+    <circle cx="30" cy="42" r="5" fill="#f472b6" />
+    <path d="M 21 21 L 28 38 M 39 21 L 32 38 M 22.5 18 L 37.5 18" stroke="#cbd5e1" stroke-width="2" stroke-linecap="round" />
+
+    <!-- Pill Badge next to icon -->
+    <rect x="76" y="14" width="312" height="32" rx="16" fill="#1e293b" stroke="#334155" stroke-width="1" />
+    <circle cx="94" cy="30" r="5" fill="#34d399" />
+    <text x="108" y="35" fill="#e2e8f0" font-size="13.5" font-weight="600">SillyTavern 1.12.7+ · 零核心侵入扩展</text>
+
+    <!-- Main Title -->
+    <text x="0" y="114" fill="#f8fafc" font-size="44" font-weight="bold">OMTP Model Hub</text>
+    <text x="380" y="114" fill="#a78bfa" font-size="20" font-weight="600">Oh-My-Tavern-Providers</text>
+    <rect x="0" y="126" width="240" height="4" rx="2" fill="url(#accent)" />
+
+    <!-- Subtitle -->
+    <text x="0" y="158" fill="#cbd5e1" font-size="16.5">99 家服务商 · 5,770+ 聊天模型 · OAuth 订阅直连 · 实时额度与 RP 人格八维雷达</text>
+
+    <!-- Feature Chips with Vector Icons -->
+    <g transform="translate(0, 184)" font-size="13" font-weight="600">
+      <rect x="0" y="0" width="144" height="36" rx="8" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2" stroke-opacity="0.65" />
+      <rect x="12" y="10" width="16" height="16" rx="3" fill="none" stroke="#60a5fa" stroke-width="1.6" />
+      <path d="M 16 18 L 24 18 M 20 14 L 20 22" stroke="#60a5fa" stroke-width="1.6" stroke-linecap="round" />
+      <text x="36" y="23" fill="#93c5fd">Alt+M 呼出</text>
+
+      <rect x="154" y="0" width="166" height="36" rx="8" fill="#0f172a" stroke="#8b5cf6" stroke-width="1.2" stroke-opacity="0.65" />
+      <path d="M 168 24 L 176 12 L 184 24 Z" fill="none" stroke="#a78bfa" stroke-width="1.6" stroke-linejoin="round" />
+      <text x="192" y="23" fill="#c4b5fd">原生直写 + 网关</text>
+
+      <rect x="330" y="0" width="162" height="36" rx="8" fill="#0f172a" stroke="#ec4899" stroke-width="1.2" stroke-opacity="0.65" />
+      <polygon points="346,11 353,16 351,24 341,24 339,16" fill="none" stroke="#f472b6" stroke-width="1.6" />
+      <text x="362" y="23" fill="#f9a8d4">RP 人格八维评分</text>
+
+      <rect x="502" y="0" width="154" height="36" rx="8" fill="#0f172a" stroke="#10b981" stroke-width="1.2" stroke-opacity="0.65" />
+      <path d="M 516 24 L 516 17 M 522 24 L 522 12 M 528 24 L 528 15" stroke="#34d399" stroke-width="2" stroke-linecap="round" />
+      <text x="538" y="23" fill="#6ee7b7">实时额度与统计</text>
+    </g>
+  </g>
+
+  <!-- Right Column: Hub Preview Card + 8-Axis Radar -->
+  <g transform="translate(724, 40)">
+    <rect x="0" y="0" width="428" height="240" rx="14" fill="url(#cardBg)" stroke="#334155" stroke-width="1.2" />
+    <!-- Window Header -->
+    <circle cx="20" cy="20" r="5" fill="#f87171" />
+    <circle cx="36" cy="20" r="5" fill="#fbbf24" />
+    <circle cx="52" cy="20" r="5" fill="#34d399" />
+    <text x="72" y="24" fill="#94a3b8" font-size="12" font-weight="600">/model · /switch · /effort · /usage</text>
+    <rect x="346" y="10" width="68" height="20" rx="10" fill="#064e3b" />
+    <circle cx="358" cy="20" r="3.5" fill="#34d399" />
+    <text x="368" y="24" fill="#6ee7b7" font-size="11" font-weight="600">:4100</text>
+    <line x1="0" y1="38" x2="428" y2="38" stroke="#334155" stroke-width="1" />
+
+    <!-- Left half of card: Model rows -->
+    <g transform="translate(14, 50)">
+      <!-- Row 1: Claude Opus 5.5 (AA 77 · OMTP 82 · Native) -->
+      <rect x="0" y="0" width="256" height="52" rx="8" fill="#064e3b" fill-opacity="0.38" stroke="#10b981" stroke-width="1.2" />
+      <circle cx="14" cy="18" r="4.5" fill="#34d399" />
+      <text x="24" y="21" fill="#f8fafc" font-size="11.5" font-weight="600">Claude Opus 5.5</text>
+      <rect x="119" y="9" width="38" height="16" rx="8" fill="#1e293b" stroke="#60a5fa" stroke-width="0.8" />
+      <text x="138" y="20" fill="#93c5fd" font-size="9" font-weight="600" text-anchor="middle">AA 77</text>
+      <rect x="160" y="9" width="46" height="16" rx="8" fill="#312e81" stroke="#8b5cf6" stroke-width="0.8" />
+      <text x="183" y="20" fill="#c4b5fd" font-size="9" font-weight="600" text-anchor="middle">OMTP 82</text>
+      <rect x="209" y="9" width="40" height="16" rx="4" fill="#1e3a8a" />
+      <text x="229" y="20" fill="#93c5fd" font-size="9" font-weight="600" text-anchor="middle">Native</text>
+      <text x="24" y="39" fill="#94a3b8" font-size="10">Anthropic · claude-opus-5-5 · 1M</text>
+
+      <!-- Row 2: DeepSeek V4.1 Flash 1017 (AA 58 · OMTP 47 · OMTP) -->
+      <g transform="translate(0, 62)">
+        <rect x="0" y="0" width="256" height="52" rx="8" fill="#0f172a" fill-opacity="0.75" stroke="#334155" stroke-width="1" />
+        <circle cx="14" cy="18" r="4.5" fill="#34d399" />
+        <text x="24" y="21" fill="#e2e8f0" font-size="10.8" font-weight="600">DeepSeek V4.1 Flash 1017</text>
+        <rect x="165" y="9" width="45" height="16" rx="8" fill="#312e81" stroke="#8b5cf6" stroke-width="0.8" />
+        <text x="187.5" y="20" fill="#c4b5fd" font-size="9" font-weight="600" text-anchor="middle">OMTP 47</text>
+        <rect x="213" y="9" width="36" height="16" rx="4" fill="#4c1d95" />
+        <text x="231" y="20" fill="#ddd6fe" font-size="9" font-weight="600" text-anchor="middle">OMTP</text>
+        <text x="24" y="39" fill="#94a3b8" font-size="10">OpenRouter · AA 58 · 1M · tools · reasoning</text>
+      </g>
+
+      <!-- Row 3: Gemini 4 Argon (AA 59 · OMTP 48 · OMTP) -->
+      <g transform="translate(0, 124)">
+        <rect x="0" y="0" width="256" height="52" rx="8" fill="#0f172a" fill-opacity="0.75" stroke="#334155" stroke-width="1" />
+        <circle cx="14" cy="18" r="4.5" fill="#34d399" />
+        <text x="24" y="21" fill="#e2e8f0" font-size="11.5" font-weight="600">Gemini 4 Argon</text>
+        <rect x="119" y="9" width="38" height="16" rx="8" fill="#1e293b" stroke="#60a5fa" stroke-width="0.8" />
+        <text x="138" y="20" fill="#93c5fd" font-size="9" font-weight="600" text-anchor="middle">AA 59</text>
+        <rect x="160" y="9" width="46" height="16" rx="8" fill="#312e81" stroke="#8b5cf6" stroke-width="0.8" />
+        <text x="183" y="20" fill="#c4b5fd" font-size="9" font-weight="600" text-anchor="middle">OMTP 48</text>
+        <rect x="209" y="9" width="40" height="16" rx="4" fill="#4c1d95" />
+        <text x="229" y="20" fill="#ddd6fe" font-size="9" font-weight="600" text-anchor="middle">OMTP</text>
+        <text x="24" y="39" fill="#94a3b8" font-size="10">Antigravity · gemini-4-argon · 1M</text>
+      </g>
+    </g>
+
+    <!-- Right half of card: 8-Axis Personality Radar (Claude Opus 5.5) + Quota Bars -->
+    <g transform="translate(346, 114)">
+      <polygon points="0,-54 38,-38 54,0 38,38 0,54 -38,38 -54,0 -38,-38" fill="none" stroke="#334155" stroke-width="1" />
+      <polygon points="0,-36 25,-25 36,0 25,25 0,36 -25,25 -36,0 -25,-25" fill="none" stroke="#334155" stroke-width="0.8" stroke-dasharray="2,2" />
+      <line x1="0" y1="-54" x2="0" y2="54" stroke="#334155" stroke-width="0.7" />
+      <line x1="-54" y1="0" x2="54" y2="0" stroke="#334155" stroke-width="0.7" />
+      <line x1="-38" y1="-38" x2="38" y2="38" stroke="#334155" stroke-width="0.7" />
+      <line x1="-38" y1="38" x2="38" y2="-38" stroke="#334155" stroke-width="0.7" />
+
+      <!-- Data Polygon (Claude Opus 5.5: Expr 90, Org 75, Info 93, Trans 90, Warm 83, Conv 70, Imag 95, Slop 18) -->
+      <polygon points="0,-49 29,-29 50,0 34,34 0,45 -27,27 -51,0 -7,-7" fill="url(#radarFill)" stroke="#a78bfa" stroke-width="1.8" />
+      <circle cx="0" cy="-49" r="3" fill="#60a5fa" />
+      <circle cx="29" cy="-29" r="3" fill="#a78bfa" />
+      <circle cx="50" cy="0" r="3" fill="#f472b6" />
+      <circle cx="34" cy="34" r="3" fill="#34d399" />
+      <circle cx="0" cy="45" r="3" fill="#60a5fa" />
+      <circle cx="-27" cy="27" r="3" fill="#a78bfa" />
+      <circle cx="-51" cy="0" r="3" fill="#f472b6" />
+      <circle cx="-7" cy="-7" r="3" fill="#34d399" />
+
+      <g transform="translate(-52, 68)">
+        <rect x="0" y="0" width="104" height="7" rx="3.5" fill="#1e293b" />
+        <rect x="0" y="0" width="68" height="7" rx="3.5" fill="#34d399" />
+        <rect x="0" y="13" width="104" height="7" rx="3.5" fill="#1e293b" />
+        <rect x="0" y="13" width="84" height="7" rx="3.5" fill="#fbbf24" />
+        <rect x="0" y="26" width="104" height="7" rx="3.5" fill="#1e293b" />
+        <rect x="0" y="26" width="42" height="7" rx="3.5" fill="#60a5fa" />
+      </g>
+    </g>
+  </g>
+</svg>

@@ -1,18 +1,19 @@
 /** OpenAI Responses API gateway adapter. */
 import {
-  JSON_HEADERS,
   authHeaders,
   contentToText,
-  errorResponse,
+  createFinishEmitter,
   hasCredential,
-  networkError,
+  invalidMessages,
+  missingApiKey,
+  missingBaseUrl,
   newCompletionId,
-  resolveBaseUrl,
-  sseResponse,
-  trimSlash,
-  upstreamErrorResponse,
-  usageFrame,
   openAIUsage,
+  resolveBaseUrl,
+  runJsonAdapter,
+  translateFunctionTools,
+  trimSlash,
+  usageFrame,
 } from './openai.mjs';
 import { openAIChunk } from '../sse.mjs';
 
@@ -78,21 +79,6 @@ function translateInput(messages) {
   return { instructions: instructions.join('\n\n'), input };
 }
 
-function translateTools(tools) {
-  if (!Array.isArray(tools)) return [];
-  const out = [];
-  for (const tool of tools) {
-    const fn = tool?.function || tool;
-    if (!fn?.name) continue;
-    const entry = { type: 'function', name: fn.name };
-    if (fn.description) entry.description = fn.description;
-    entry.parameters =
-      fn.parameters && typeof fn.parameters === 'object' ? fn.parameters : { type: 'object', properties: {} };
-    out.push(entry);
-  }
-  return out;
-}
-
 function translateToolChoice(choice) {
   if (!choice) return undefined;
   if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
@@ -118,7 +104,7 @@ export function buildResponsesBody(req, ctx) {
   if (req?.top_p != null) payload.top_p = Number(req.top_p);
   payload.stream = Boolean(req?.stream);
 
-  const tools = translateTools(req?.tools);
+  const tools = translateFunctionTools(req?.tools, 'parameters', { type: 'function' });
   if (tools.length) {
     payload.tools = tools;
     const choice = translateToolChoice(req?.tool_choice);
@@ -201,14 +187,11 @@ export function createResponsesStreamHandler(model) {
   let sawTool = false;
   let finishReason = null;
   let usage = null;
-  let finished = false;
 
-  const finish = (emit) => {
-    if (finished) return;
-    finished = true;
-    emit(openAIChunk({}, finishReason || (sawTool ? 'tool_calls' : 'stop')));
-    if (usage) emit(usageFrame(usage, model));
-  };
+  const finish = createFinishEmitter(
+    () => openAIChunk({}, finishReason || (sawTool ? 'tool_calls' : 'stop')),
+    () => (usage ? usageFrame(usage, model) : null),
+  );
 
   return {
     onStart(emit) {
@@ -285,59 +268,22 @@ export function createResponsesStreamHandler(model) {
 }
 
 export async function chat(req, ctx) {
-  if (!ctx?.baseUrl) {
-    return errorResponse('Provider baseUrl is not configured', {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'missing_base_url',
-    });
-  }
-  if (!hasCredential(ctx)) {
-    return errorResponse(`Missing API key for provider ${ctx.provider || 'responses'}`, {
-      status: 401,
-      type: 'authentication_error',
-      code: 'missing_api_key',
-    });
-  }
+  if (!ctx?.baseUrl) return missingBaseUrl();
+  if (!hasCredential(ctx)) return missingApiKey(ctx, 'responses');
 
   const payload = buildResponsesBody(req, ctx);
-  if (payload.error) {
-    return errorResponse(payload.error, {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'invalid_messages',
-    });
-  }
+  if (payload.error) return invalidMessages();
 
-  const doFetch = ctx.fetchImpl || fetch;
-  const url = `${trimSlash(resolveBaseUrl(ctx.baseUrl, ctx.extraConfig || {}))}/responses`;
-  let upstream;
-  try {
-    upstream = await doFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders(ctx) },
-      body: JSON.stringify(payload),
-      signal: ctx.signal,
-    });
-  } catch (error) {
-    return networkError(error, 'Responses request');
-  }
-
-  if (!upstream.ok) return upstreamErrorResponse(upstream);
-  if (payload.stream) return sseResponse(upstream, createResponsesStreamHandler(ctx.model));
-  let json;
-  try {
-    json = await upstream.json();
-  } catch (error) {
-    return errorResponse(`Invalid Responses API response: ${error?.message || error}`, {
-      status: 502,
-      type: 'upstream_error',
-      code: 'invalid_response',
-    });
-  }
-  return new Response(JSON.stringify(translateResponsesCompletion(json, ctx.model)), {
-    status: 200,
-    headers: JSON_HEADERS,
+  return runJsonAdapter({
+    url: `${trimSlash(resolveBaseUrl(ctx.baseUrl, ctx.extraConfig || {}))}/responses`,
+    headers: { 'Content-Type': 'application/json', ...authHeaders(ctx) },
+    payload,
+    label: 'Responses',
+    invalidLabel: 'Responses API response',
+    stream: payload.stream,
+    streamHandler: () => createResponsesStreamHandler(ctx.model),
+    translate: (json) => translateResponsesCompletion(json, ctx.model),
+    ctx,
   });
 }
 

@@ -23,7 +23,7 @@ export const EFFORT_ALIASES = new Map([
  * @param {unknown} effort
  * @returns {string|null}
  */
-export function normalizeEffort(effort) {
+function normalizeEffort(effort) {
     const raw = String(effort ?? '').trim().toLowerCase();
     if (!raw) {
         return null;

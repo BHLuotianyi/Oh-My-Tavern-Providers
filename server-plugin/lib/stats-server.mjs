@@ -249,7 +249,6 @@ export function stopStatsServer() {
     }
 }
 
-/* eslint-disable */
 const PAGE_HTML = String.raw`<!doctype html>
 <html lang="en">
 <head>

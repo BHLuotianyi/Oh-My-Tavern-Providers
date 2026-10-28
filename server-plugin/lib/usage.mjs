@@ -8,40 +8,16 @@
  *
  * Shape returned by `fetchProviderUsage`:
  *   {
- *     id, supported, ok, plan, source, error?,
- *     fetchedAt,
+ *     id, label, supported, ok, plan, source, error?,
+ *     fetchedAt, cached?,
  *     windows: [{ label, usedPercent, remainingPercent, resetAt, note }],
+ *     balances: [{ label, amount, currency, note }],
  *   }
  */
 import { parseStructuredCredential } from './oauth.mjs';
 
 const REQUEST_TIMEOUT_MS = 12_000;
 const CACHE_TTL_MS = 60_000;
-
-/** Providers with an adapter below. */
-export const USAGE_PROVIDERS = Object.freeze(new Set([
-    'deepseek',
-    'opencode-go',
-    'github-copilot',
-    'cursor',
-    'xai-oauth',
-    'commandcode',
-    'cline-pass',
-    'synthetic',
-    'charm-hyper',
-    'umans',
-    'google-antigravity',
-    'google-gemini-cli',
-    'openai-codex',
-    'openai-codex-device',
-    'anthropic',
-    'zai',
-    'zai-coding-plan',
-    'zhipu-coding-plan',
-    'kimi-code',
-    'minimax-code',
-    'minimax-code-cn',
-]));
 
 /** @type {Map<string, {at:number, value:any}>} */
 const cache = new Map();
@@ -106,12 +82,19 @@ function normalizeWindow({ label, usedPercent, remainingPercent, resetAt = null,
     };
 }
 
-/** @param {string} label @param {number} seconds */
-function windowLabel(label, seconds) {
-    const value = toNumber(seconds);
-    if (value === undefined || value <= 0) return label;
-    if (value >= 6.5 * 24 * 3600) return `${label} (7d)`.replace(' (7d)', '');
-    return label;
+/** Failure result for a usage endpoint that answered with a non-2xx status. */
+function httpFailure(response) {
+    return { ok: false, error: `HTTP ${response.status}` };
+}
+
+/**
+ * Assemble an adapter result; `ok` is true when any window or balance was
+ * found, otherwise `emptyMessage` explains why not.
+ * @param {{windows?: any[], balances?: any[], plan?: string, source: string, emptyMessage?: string}} result
+ */
+function usageResult({ windows = [], balances = [], plan = '', source, emptyMessage = '' }) {
+    const ok = windows.length > 0 || balances.length > 0;
+    return { ok, plan, source, windows, balances, error: ok ? '' : emptyMessage };
 }
 
 /**
@@ -145,9 +128,7 @@ async function codexUsage(id, resolved, doFetch) {
         ...(accountId ? { 'ChatGPT-Account-Id': accountId } : {}),
     };
     const response = await getJson(doFetch, `${base}/wham/usage`, headers);
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const rateLimit = payload?.rate_limit || {};
     const windows = [
@@ -162,13 +143,12 @@ async function codexUsage(id, resolved, doFetch) {
             resetAt: toIso(rateLimit.secondary_window?.resets_at ?? rateLimit.secondary_window?.resets_in_seconds),
         }),
     ].filter(Boolean);
-    return {
-        ok: windows.length > 0,
+    return usageResult({
+        windows,
         plan: payload?.plan_type || '',
         source: 'wham/usage',
-        windows,
-        error: windows.length ? '' : 'No usage windows in the response',
-    };
+        emptyMessage: 'No usage windows in the response',
+    });
 }
 
 /** Claude Pro/Max (`GET /api/oauth/usage`). */
@@ -182,9 +162,7 @@ async function anthropicUsage(id, resolved, doFetch) {
         'User-Agent': 'claude-cli/2.0.0 (external, cli)',
     };
     const response = await getJson(doFetch, 'https://api.anthropic.com/api/oauth/usage', headers);
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const entries = [
         ['5h', 'Five hour', payload?.five_hour],
@@ -214,20 +192,15 @@ async function anthropicUsage(id, resolved, doFetch) {
     const spend = payload?.spend;
     if (spend?.enabled && spend?.limit?.amount_minor !== undefined) {
         const scale = 10 ** (toNumber(spend.limit.exponent) ?? 2);
-        balances.push(normalizeBalance({
+        const balance = normalizeBalance({
             label: 'Extra usage',
             amount: (toNumber(spend.used?.amount_minor) || 0) / scale,
             currency: spend.limit.currency || 'USD',
             note: `limit ${(toNumber(spend.limit.amount_minor) || 0) / scale}`,
-        }));
+        });
+        if (balance) balances.push(balance);
     }
-    return {
-        ok: windows.length > 0 || balances.length > 0,
-        source: 'api/oauth/usage',
-        windows,
-        balances: balances.filter(Boolean),
-        error: windows.length || balances.length ? '' : 'No usage buckets',
-    };
+    return usageResult({ windows, balances, source: 'api/oauth/usage', emptyMessage: 'No usage buckets' });
 }
 
 /** Google Antigravity / Gemini CLI quota summary. */
@@ -242,9 +215,7 @@ async function antigravityUsage(id, resolved, doFetch) {
         'User-Agent': 'antigravity/hub/2.19.1 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)',
     };
     const response = await postJson(doFetch, `${base}/v1internal:retrieveUserQuotaSummary`, { project }, headers);
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     // Groups carry the model family ("Gemini Models", "Claude and GPT models");
     // bucket names only say "Weekly Limit Remaining", so combine both.
@@ -268,8 +239,10 @@ async function antigravityUsage(id, resolved, doFetch) {
             if (normalized) windows.push(normalized);
         }
     }
-    return { ok: windows.length > 0, source: 'retrieveUserQuotaSummary', windows, error: windows.length ? '' : 'No quota buckets' };
+    return usageResult({ windows, source: 'retrieveUserQuotaSummary', emptyMessage: 'No quota buckets' });
 }
+
+const LIMIT_LABELS = { TIME_LIMIT: 'Request window', CREDIT_LIMIT: 'Credits' };
 
 /** Z.AI / GLM coding plan quota limits. */
 async function zaiUsage(id, resolved, doFetch) {
@@ -281,9 +254,7 @@ async function zaiUsage(id, resolved, doFetch) {
         Accept: 'application/json',
         'User-Agent': 'omtp-model-hub',
     });
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const limits = payload?.data?.limits || [];
     const windows = limits
@@ -295,9 +266,7 @@ async function zaiUsage(id, resolved, doFetch) {
                 if (current === undefined || !total) return undefined;
                 return (current / total) * 100;
             })();
-            const label = limit?.type === 'TIME_LIMIT'
-                ? 'Request window'
-                : limit?.type === 'CREDIT_LIMIT' ? 'Credits' : 'Token quota';
+            const label = LIMIT_LABELS[limit?.type] || 'Token quota';
             return normalizeWindow({
                 label,
                 usedPercent: used ?? usedFromValues,
@@ -306,13 +275,12 @@ async function zaiUsage(id, resolved, doFetch) {
             });
         })
         .filter(Boolean);
-    return {
-        ok: windows.length > 0,
+    return usageResult({
+        windows,
         plan: payload?.data?.level || '',
         source: 'monitor/usage/quota/limit',
-        windows,
-        error: windows.length ? '' : 'No quota limits',
-    };
+        emptyMessage: 'No quota limits',
+    });
 }
 
 /** Kimi coding plan usage. */
@@ -323,9 +291,7 @@ async function kimiUsage(id, resolved, doFetch) {
         Accept: 'application/json',
         'User-Agent': 'omtp-model-hub',
     });
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     /** @type {{label: string, detail: any}[]} */
     const rows = [];
@@ -344,13 +310,10 @@ async function kimiUsage(id, resolved, doFetch) {
             const limit = toNumber(detail?.limit);
             const remaining = toNumber(detail?.remaining);
             const ratio = toNumber(detail?.used_ratio);
-            const usedPercent = ratio !== undefined
-                ? ratio * 100
-                : used !== undefined && limit
-                    ? (used / limit) * 100
-                    : remaining !== undefined && limit
-                        ? 100 - (remaining / limit) * 100
-                        : undefined;
+            let usedPercent;
+            if (ratio !== undefined) usedPercent = ratio * 100;
+            else if (used !== undefined && limit) usedPercent = (used / limit) * 100;
+            else if (remaining !== undefined && limit) usedPercent = 100 - (remaining / limit) * 100;
             return normalizeWindow({
                 label,
                 usedPercent,
@@ -358,7 +321,7 @@ async function kimiUsage(id, resolved, doFetch) {
             });
         })
         .filter(Boolean);
-    return { ok: windows.length > 0, source: 'coding/v1/usages', windows, error: windows.length ? '' : 'No usage rows' };
+    return usageResult({ windows, source: 'coding/v1/usages', emptyMessage: 'No usage rows' });
 }
 
 /** MiniMax coding plan remains. */
@@ -370,9 +333,7 @@ async function minimaxUsage(id, resolved, doFetch) {
         Accept: 'application/json',
         'User-Agent': 'omtp-model-hub',
     });
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     // The endpoint answers 200 even on failure; status_code 0 means success.
     if (payload?.base_resp?.status_code && payload.base_resp.status_code !== 0) {
@@ -402,12 +363,7 @@ async function minimaxUsage(id, resolved, doFetch) {
             }));
         }
     }
-    return {
-        ok: windows.filter(Boolean).length > 0,
-        source: 'token_plan/remains',
-        windows: windows.filter(Boolean),
-        error: '',
-    };
+    return usageResult({ windows: windows.filter(Boolean), source: 'token_plan/remains' });
 }
 
 /**
@@ -433,9 +389,7 @@ async function deepseekUsage(id, resolved, doFetch) {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
     });
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const infos = Array.isArray(payload?.balance_infos) ? payload.balance_infos : [];
     const balances = infos
@@ -446,7 +400,7 @@ async function deepseekUsage(id, resolved, doFetch) {
             note: payload?.is_available === false ? 'unavailable' : '',
         }))
         .filter(Boolean);
-    return { ok: balances.length > 0, source: 'user/balance', balances, error: balances.length ? '' : 'No balance fields' };
+    return usageResult({ balances, source: 'user/balance', emptyMessage: 'No balance fields' });
 }
 
 /** Command Code credits + rolling windows. */
@@ -458,9 +412,7 @@ async function commandcodeUsage(id, resolved, doFetch) {
         getJson(doFetch, `${origin}/alpha/whoami`, headers),
         getJson(doFetch, `${origin}/alpha/billing/credits`, headers),
     ]);
-    if (!creditsResponse.ok) {
-        return { ok: false, error: `HTTP ${creditsResponse.status}` };
-    }
+    if (!creditsResponse.ok) return httpFailure(creditsResponse);
     const whoami = whoamiResponse.ok ? await whoamiResponse.json() : {};
     const credits = await creditsResponse.json();
     const orgId = whoami?.org?.id;
@@ -489,14 +441,13 @@ async function commandcodeUsage(id, resolved, doFetch) {
     const balances = total > 0
         ? [normalizeBalance({ label: 'Credits', amount: total, note: creditsInfo.planId || '' })].filter(Boolean)
         : [];
-    return {
-        ok: windows.length > 0 || balances.length > 0,
-        plan: creditsInfo.planId || '',
-        source: 'alpha/billing/credits',
+    return usageResult({
         windows: windows.filter(Boolean),
         balances,
-        error: windows.length || balances.length ? '' : 'No credit fields',
-    };
+        plan: creditsInfo.planId || '',
+        source: 'alpha/billing/credits',
+        emptyMessage: 'No credit fields',
+    });
 }
 
 /** ClinePass plan usage limits. */
@@ -512,9 +463,7 @@ async function clinePassUsage(id, resolved, doFetch) {
         'X-CLIENT-TYPE': 'cline-sdk',
         'X-CLIENT-VERSION': '3.0.58',
     });
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const labels = { five_hour: 'Five hour', weekly: 'Weekly', monthly: 'Monthly' };
     const windows = (payload?.data?.limits || [])
@@ -524,7 +473,7 @@ async function clinePassUsage(id, resolved, doFetch) {
             resetAt: toIso(limit?.resetsAt),
         }))
         .filter(Boolean);
-    return { ok: windows.length > 0, source: 'plan/usage-limits', windows, error: windows.length ? '' : 'No limits' };
+    return usageResult({ windows, source: 'plan/usage-limits', emptyMessage: 'No limits' });
 }
 
 /** Synthetic rolling quota. */
@@ -534,9 +483,7 @@ async function syntheticUsage(id, resolved, doFetch) {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
     });
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const fiveHour = payload?.rollingFiveHourLimit;
     const weekly = payload?.weeklyTokenLimit;
@@ -559,7 +506,7 @@ async function syntheticUsage(id, resolved, doFetch) {
             resetAt: toIso(weekly?.nextRegenAt),
         }));
     }
-    return { ok: windows.filter(Boolean).length > 0, source: 'v2/quotas', windows: windows.filter(Boolean), error: '' };
+    return usageResult({ windows: windows.filter(Boolean), source: 'v2/quotas' });
 }
 
 /** Charm Hyper credit balance. */
@@ -570,12 +517,10 @@ async function charmHyperUsage(id, resolved, doFetch) {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
     });
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const balances = [normalizeBalance({ label: 'Credits', amount: payload?.balance })].filter(Boolean);
-    return { ok: balances.length > 0, source: 'v1/credits', balances, error: balances.length ? '' : 'No balance field' };
+    return usageResult({ balances, source: 'v1/credits', emptyMessage: 'No balance field' });
 }
 
 /** Umans rolling request window. */
@@ -586,9 +531,7 @@ async function umansUsage(id, resolved, doFetch) {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
     });
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const windows = [];
     const limit = toNumber(payload?.limits?.requests?.limit);
@@ -609,13 +552,11 @@ async function umansUsage(id, resolved, doFetch) {
             resetAt: toIso(payload?.window?.resets_at),
         }));
     }
-    return {
-        ok: windows.filter(Boolean).length > 0,
+    return usageResult({
+        windows: windows.filter(Boolean),
         plan: payload?.plan?.display_name || '',
         source: 'v1/usage',
-        windows: windows.filter(Boolean),
-        error: '',
-    };
+    });
 }
 
 /** OpenCode Go subscription windows. */
@@ -626,10 +567,8 @@ async function opencodeUsage(id, resolved, doFetch) {
         Authorization: `Bearer ${token}`,
         'User-Agent': 'omtp-model-hub',
     });
-    if (!response.ok) {
-        // A key without an active Go subscription answers 401/403.
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    // A key without an active Go subscription answers 401/403.
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     if (payload?.error?.message) {
         return { ok: false, error: String(payload.error.message) };
@@ -646,7 +585,7 @@ async function opencodeUsage(id, resolved, doFetch) {
             note: bucket?.status && bucket.status !== 'ok' ? String(bucket.status) : '',
         }));
     }
-    return { ok: windows.length > 0, plan: 'OpenCode Go', source: 'zen/go/v1/usage', windows, error: windows.length ? '' : 'No usage windows' };
+    return usageResult({ windows, plan: 'OpenCode Go', source: 'zen/go/v1/usage', emptyMessage: 'No usage windows' });
 }
 
 /** GitHub Copilot quota snapshots. */
@@ -657,9 +596,7 @@ async function copilotUsage(id, resolved, doFetch) {
         Authorization: `Bearer ${token}`,
         'User-Agent': 'copilot/1.0.82',
     });
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const windows = [];
     for (const [key, label] of [
@@ -672,22 +609,20 @@ async function copilotUsage(id, resolved, doFetch) {
         const entitlement = toNumber(snapshot.entitlement) || 0;
         const remaining = toNumber(snapshot.remaining) || 0;
         const percentRemaining = toNumber(snapshot.percent_remaining);
-        const used = entitlement > 0
-            ? ((entitlement - remaining) / entitlement) * 100
-            : percentRemaining === undefined ? undefined : 100 - percentRemaining;
+        let used;
+        if (entitlement > 0) used = ((entitlement - remaining) / entitlement) * 100;
+        else if (percentRemaining !== undefined) used = 100 - percentRemaining;
         windows.push(normalizeWindow({
             label,
             usedPercent: used,
             resetAt: toIso(payload?.quota_reset_date),
         }));
     }
-    return {
-        ok: windows.filter(Boolean).length > 0,
+    return usageResult({
+        windows: windows.filter(Boolean),
         plan: payload?.copilot_plan || '',
         source: 'copilot_internal/user',
-        windows: windows.filter(Boolean),
-        error: '',
-    };
+    });
 }
 
 /** xAI (SuperGrok) weekly credits / monthly quota. */
@@ -700,9 +635,7 @@ async function xaiUsage(id, resolved, doFetch) {
         'User-Agent': 'omtp-model-hub',
     };
     const response = await getJson(doFetch, 'https://cli-chat-proxy.grok.com/v1/billing?format=credits', headers);
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const config = payload?.config || {};
     const windows = [];
@@ -741,12 +674,7 @@ async function xaiUsage(id, resolved, doFetch) {
             resetAt: null,
         }));
     }
-    return {
-        ok: windows.filter(Boolean).length > 0,
-        source: 'v1/billing',
-        windows: windows.filter(Boolean),
-        error: '',
-    };
+    return usageResult({ windows: windows.filter(Boolean), source: 'v1/billing' });
 }
 
 /** Cursor usage (API keys use the legacy `/auth/usage` endpoint). */
@@ -758,9 +686,7 @@ async function cursorUsage(id, resolved, doFetch) {
         Authorization: `Bearer ${token}`,
         'User-Agent': 'omtp-model-hub',
     });
-    if (!response.ok) {
-        return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return httpFailure(response);
     const payload = await response.json();
     const windows = [];
     for (const [key, value] of Object.entries(payload || {})) {
@@ -775,7 +701,11 @@ async function cursorUsage(id, resolved, doFetch) {
             resetAt: toIso(resetAt),
         }));
     }
-    return { ok: windows.filter(Boolean).length > 0, source: 'auth/usage', windows: windows.filter(Boolean), error: windows.length ? '' : 'No usage buckets' };
+    return usageResult({
+        windows: windows.filter(Boolean),
+        source: 'auth/usage',
+        emptyMessage: 'No usage buckets',
+    });
 }
 
 const ADAPTERS = {
@@ -801,6 +731,9 @@ const ADAPTERS = {
     'charm-hyper': charmHyperUsage,
     umans: umansUsage,
 };
+
+/** Providers with a usage adapter. */
+export const USAGE_PROVIDERS = new Set(Object.keys(ADAPTERS));
 
 /**
  * Fetch usage for one provider.

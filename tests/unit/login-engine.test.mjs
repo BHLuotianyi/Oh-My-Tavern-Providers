@@ -6,6 +6,7 @@ import {
     createPkcePair,
     customHookSupported,
     fillTemplate,
+    getSession,
     mapCredential,
     parseAuthorizationInput,
     pickLocale,
@@ -170,6 +171,63 @@ test('openai-codex-device hook requests a user code and polls the device endpoin
 
     // Leave no polling loop behind.
     assert.equal(cancelLogin(started.id), true);
+});
+
+test('openai-codex-device hook exchanges authorization code with resolved client_id and stores credential', async () => {
+    const calls = [];
+    const stored = {};
+    const jwtPayload = Buffer.from(JSON.stringify({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-1', chatgpt_plan_type: 'plus' },
+        'https://api.openai.com/profile': { email: 'user@example.com' },
+    })).toString('base64url');
+    const fakeJwt = `e30.${jwtPayload}.sig`;
+
+    const doFetch = async (url, init) => {
+        calls.push({ url: String(url), body: init?.body ? String(init.body) : '' });
+        if (String(url).endsWith('/usercode')) {
+            return new Response(JSON.stringify({ device_auth_id: 'dev-1', user_code: 'ABCD-1234', interval: 0 }), { status: 200 });
+        }
+        if (String(url).endsWith('/deviceauth/token')) {
+            return new Response(JSON.stringify({ authorization_code: 'code-123', code_verifier: 'ver-456' }), { status: 200 });
+        }
+        if (String(url).endsWith('/oauth/token')) {
+            return new Response(JSON.stringify({ access_token: fakeJwt, refresh_token: 'ref-789', expires_in: 3600 }), { status: 200 });
+        }
+        throw new Error(`unexpected ${url}`);
+    };
+
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn) => realSetTimeout(fn, 0);
+    try {
+        const started = await startLogin('openai-codex', {
+            kind: 'custom',
+            hook: 'openai-codex-device',
+        }, {
+            keyStore: {
+                async setProviderConfig(target, patch) {
+                    stored[target] = patch;
+                },
+            },
+            doFetch,
+            env: { OMTP_OPENAI_CODEX_CLIENT_ID: 'resolved-codex-client' },
+        });
+        const session = getSession(started.id);
+        await session.promise;
+        assert.equal(session.status, 'done');
+    } finally {
+        globalThis.setTimeout = realSetTimeout;
+    }
+
+    const tokenCall = calls.find((c) => c.url === 'https://auth.openai.com/oauth/token');
+    assert.ok(tokenCall, 'expected token exchange request');
+    const params = new URLSearchParams(tokenCall.body);
+    assert.equal(params.get('client_id'), 'resolved-codex-client');
+    assert.equal(params.get('code'), 'code-123');
+    assert.equal(params.get('code_verifier'), 'ver-456');
+    assert.ok(stored['openai-codex']?.apiKey, 'expected credential stored under openai-codex');
+    const parsedCred = JSON.parse(stored['openai-codex'].apiKey);
+    assert.equal(parsedCred.accountId, 'acct-1');
+    assert.equal(parsedCred.email, 'user@example.com');
 });
 
 test('openai-codex-device hook refuses to start without a local client id', async () => {

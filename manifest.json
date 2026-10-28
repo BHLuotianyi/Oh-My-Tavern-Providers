@@ -7,7 +7,7 @@
   "css": "style.css",
   "author": "BHLuotianyi",
   "version": "0.1.0",
-  "homePage": "",
+  "homePage": "https://github.com/BHLuotianyi/Oh-My-Tavern-Providers",
   "i18n": {
     "en": "i18n/en.json",
     "zh-cn": "i18n/zh-cn.json"

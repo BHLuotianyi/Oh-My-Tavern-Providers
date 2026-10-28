@@ -18,11 +18,7 @@ export { init, disable, clean, onDelete };
 // init() is strictly idempotent via internal `initialized` guard in src/ui/hub.js.
 if (typeof window !== 'undefined' && typeof document === 'object') {
     const autoInit = () => {
-        try {
-            init().catch((err) => console.warn('[omtp] auto-init failed', err));
-        } catch (err) {
-            console.warn('[omtp] auto-init failed', err);
-        }
+        init().catch((err) => console.warn('[omtp] auto-init failed', err));
     };
 
     if (document.readyState === 'loading') {

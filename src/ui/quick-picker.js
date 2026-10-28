@@ -6,7 +6,8 @@
  * two-step Esc (clear query, then close). It is deliberately separate from the
  * hub so `/switch` stays a one-keystroke affair.
  */
-import { tr, trf } from './dom.js';
+import { tr } from './dom.js';
+import { el } from './helpers.js';
 
 /** Rows visible at once; the list scrolls inside this window. */
 const WINDOW_ROWS = 9;
@@ -34,13 +35,6 @@ let currentKey = '';
 /** @type {HTMLElement|null} */
 let previousFocus = null;
 
-function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-}
-
 /**
  * Rank the model list for the current query.
  * @param {string} query
@@ -65,11 +59,6 @@ function applyQuery(query) {
     return items.filter((entry) => String(entry.key || '').toLowerCase().includes(needle)
         || String(entry.model || '').toLowerCase().includes(needle)
         || String(entry.provider || '').toLowerCase().includes(needle));
-}
-
-function rowText(entry) {
-    const provider = entry.provider ? `${entry.provider}/` : '';
-    return `${provider}${entry.model}`;
 }
 
 function renderList() {
@@ -245,9 +234,8 @@ export function openQuickPicker({ items: list, currentKey: key, title, hint, onP
 
     const searchRow = el('div', 'omtp-picker-search');
     searchRow.append(el('span', 'omtp-picker-search-icon', '🔍'));
-    inputEl = document.createElement('input');
+    inputEl = el('input', 'omtp-picker-input');
     inputEl.type = 'text';
-    inputEl.className = 'omtp-picker-input';
     inputEl.placeholder = tr('omtp_picker_search', 'Search provider/model');
     inputEl.addEventListener('input', () => refresh(inputEl.value));
     inputEl.addEventListener('keydown', onKeyDown);
@@ -281,14 +269,4 @@ export function openQuickPicker({ items: list, currentKey: key, title, hint, onP
     }
     setTimeout(() => inputEl?.focus(), 0);
     return { close };
-}
-
-/** Close the picker if it is open. */
-export function closeQuickPicker() {
-    close();
-}
-
-/** True when the picker is on screen. */
-export function isQuickPickerOpen() {
-    return Boolean(overlay);
 }

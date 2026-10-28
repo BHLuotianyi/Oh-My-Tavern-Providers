@@ -85,7 +85,7 @@ test('importOmpCredentials works via CLI fallback when node:sqlite is bypassed',
   assert.equal(mistralCfg.apiKey, 'mistral-fallback-key');
 });
 
-test('importFromOmp respects credentials flag and imports catalog data', async () => {
+test('importFromOmp reports found=false for a missing catalog path', async () => {
   const dir = tempDir();
   const store = new KeyStore({ root: dir, resolveStSecret: () => '' });
   const result = await importFromOmp({ catalogPath: '/non/existent/path', credentials: false, keyStore: store });

@@ -7,9 +7,9 @@
  */
 import { eventSource } from '../../../../events.js';
 import { EVENTS } from './constants.js';
-import { getActiveCatalog, getEntries, invalidateNativeCache, mergeCatalog, resolveEntry, setActiveCatalog } from './catalog.js';
+import { getActiveCatalog, getEntries, invalidateNativeCache, mergeCatalog, resolveEntry, setActiveCatalog, withProviderAvailability } from './catalog.js';
 import { isValidRef, getSettings, parseEntryKey } from './store.js';
-import { applyReasoning, captureSelection, switchToEntry } from './switch-engine.js';
+import { captureSelection, switchToEntry } from './switch-engine.js';
 import { resolveSelector } from './selector.js';
 import { registerNativeAdapter } from './adapters/native.js';
 import { closeHub, getCurrentSelection as hubGetCurrentSelection, openHub, toggleHub } from './ui/hub.js';
@@ -61,7 +61,7 @@ async function switchTo(selectorOrRef, { persist = true } = {}) {
     const settings = getSettings();
     let ref = null;
     let level;
-
+    let resolvedEntry = null;
     if (typeof selectorOrRef === 'string') {
         const input = selectorOrRef.trim();
         if (!input) {
@@ -71,7 +71,7 @@ async function switchTo(selectorOrRef, { persist = true } = {}) {
         if (keyRef) {
             ref = keyRef;
         } else {
-            const result = resolveSelector(input, getEntries(), {
+            const result = resolveSelector(input, getEntries().map(withProviderAvailability), {
                 favorites: settings.favorites,
                 recents: settings.recents,
                 quickSlots: settings.quickSlots,
@@ -85,6 +85,7 @@ async function switchTo(selectorOrRef, { persist = true } = {}) {
             if (result.warning) {
                 console.debug('[omtp]', result.warning);
             }
+            resolvedEntry = result.entry;
             ref = {
                 kind: result.entry.kind,
                 provider: result.entry.provider,
@@ -99,18 +100,18 @@ async function switchTo(selectorOrRef, { persist = true } = {}) {
     if (!isValidRef(ref)) {
         throw new Error('Invalid selection');
     }
-    const entry = resolveEntry(ref);
-    if (!entry) {
-        throw new Error(`Unknown model: ${ref.provider}/${ref.model}`);
+    if (!resolvedEntry) {
+        const rawEntry = resolveEntry(ref);
+        if (!rawEntry) {
+            throw new Error(`Unknown model: ${ref.provider}/${ref.model}`);
+        }
+        resolvedEntry = withProviderAvailability(rawEntry);
     }
-    if (entry.available === false) {
-        throw new Error(entry.unsupportedReason || `Model ${entry.model} is unavailable`);
+    if (resolvedEntry.available === false) {
+        throw new Error(resolvedEntry.unsupportedReason || `Model ${resolvedEntry.model} is unavailable`);
     }
 
-    await switchToEntry(ref, { reason: 'public-api', persist });
-    if (level) {
-        applyReasoning(entry, level);
-    }
+    await switchToEntry(ref, { reason: 'public-api', level, persist });
     return ref;
 }
 

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 使用文档与常见问题 / Documentation & FAQ
+    url: https://github.com/BHLuotianyi/Oh-My-Tavern-Providers#readme
+    about: 遇到安装、网关端口或模型不可选问题？请先查阅 README 的 30 秒快速开始与 FAQ / Check the Quick Start and FAQ in README first
+  - name: 🔌 本地网关与协议参考 / Gateway & Adapter Reference
+    url: https://github.com/BHLuotianyi/Oh-My-Tavern-Providers/blob/main/docs/gateway.md
+    about: 查看 24 条插件路由、9 类协议适配器、16 家额度接口与密钥解析规则 / View routes, protocol adapters, quota endpoints, and key resolution rules

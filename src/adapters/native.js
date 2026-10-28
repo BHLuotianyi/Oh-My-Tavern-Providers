@@ -62,7 +62,6 @@ function createAdapter(config) {
         modelControl = null,
         modelField = null,
         connectButton = null,
-        hasStatus = false,
         requiresKey = null,
         settingsBlock = null,
         readOnlyReason = null,
@@ -78,7 +77,6 @@ function createAdapter(config) {
         modelControl,
         modelField,
         connectButton,
-        hasStatus,
         requiresKey,
         settingsBlock,
         readOnlyReason,
@@ -115,225 +113,136 @@ function textgenAdapter(type, label, control, field, options = {}) {
     });
 }
 
-/** All 44 native adapter keys, in tools/native-adapter-keys.json order. */
-export const NATIVE_ADAPTER_KEYS = Object.freeze([
-    'openai:openai',
-    'openai:claude',
-    'openai:openrouter',
-    'openai:ai21',
-    'openai:makersuite',
-    'openai:vertexai',
-    'openai:mistralai',
-    'openai:custom',
-    'openai:cohere',
-    'openai:perplexity',
-    'openai:groq',
-    'openai:chutes',
-    'openai:electronhub',
-    'openai:nanogpt',
-    'openai:deepseek',
-    'openai:aimlapi',
-    'openai:xai',
-    'openai:pollinations',
-    'openai:moonshot',
-    'openai:fireworks',
-    'openai:cometapi',
-    'openai:azure_openai',
-    'openai:zai',
-    'openai:siliconflow',
-    'openai:minimax',
-    'openai:workers_ai',
-    'textgenerationwebui:ooba',
-    'textgenerationwebui:mancer',
-    'textgenerationwebui:vllm',
-    'textgenerationwebui:aphrodite',
-    'textgenerationwebui:tabby',
-    'textgenerationwebui:koboldcpp',
-    'textgenerationwebui:togetherai',
-    'textgenerationwebui:llamacpp',
-    'textgenerationwebui:ollama',
-    'textgenerationwebui:infermaticai',
-    'textgenerationwebui:dreamgen',
-    'textgenerationwebui:openrouter',
-    'textgenerationwebui:featherless',
-    'textgenerationwebui:huggingface',
-    'textgenerationwebui:generic',
-    'novel:-',
-    'kobold:-',
-    'koboldhorde:-',
-]);
-
 const ADAPTER_LIST = [
     // Chat completion sources.
     chatAdapter('openai', 'OpenAI', '#model_openai_select', 'openai_model', {
-        hasStatus: true,
         requiresKey: 'api_key_openai',
     }),
     chatAdapter('claude', 'Anthropic Claude', '#model_claude_select', 'claude_model', {
-        hasStatus: false,
         requiresKey: 'api_key_claude',
     }),
     chatAdapter('openrouter', 'OpenRouter', '#model_openrouter_select', 'openrouter_model', {
-        hasStatus: true,
         requiresKey: 'api_key_openrouter',
     }),
     chatAdapter('ai21', 'AI21', '#model_ai21_select', 'ai21_model', {
-        hasStatus: false,
         requiresKey: 'api_key_ai21',
     }),
     chatAdapter('makersuite', 'Google AI Studio', '#model_google_select', 'google_model', {
-        hasStatus: true,
         requiresKey: 'api_key_makersuite',
     }),
     chatAdapter('vertexai', 'Google Vertex AI', '#model_vertexai_select', 'vertexai_model', {
-        hasStatus: false,
         requiresKey: 'api_key_vertexai',
     }),
     chatAdapter('mistralai', 'Mistral', '#model_mistralai_select', 'mistralai_model', {
-        hasStatus: true,
         requiresKey: 'api_key_mistralai',
     }),
     chatAdapter('custom', 'Custom (OpenAI-compatible)', '#custom_model_id', 'custom_model', {
-        hasStatus: true,
         requiresKey: null,
         settingsBlock: '#custom_form',
     }),
     chatAdapter('cohere', 'Cohere', '#model_cohere_select', 'cohere_model', {
-        hasStatus: true,
         requiresKey: 'api_key_cohere',
     }),
     chatAdapter('perplexity', 'Perplexity', '#model_perplexity_select', 'perplexity_model', {
-        hasStatus: false,
         requiresKey: 'api_key_perplexity',
     }),
     chatAdapter('groq', 'Groq', '#model_groq_select', 'groq_model', {
-        hasStatus: true,
         requiresKey: 'api_key_groq',
     }),
     chatAdapter('chutes', 'Chutes', '#model_chutes_select', 'chutes_model', {
-        hasStatus: true,
         requiresKey: 'api_key_chutes',
     }),
     chatAdapter('electronhub', 'Electron Hub', '#model_electronhub_select', 'electronhub_model', {
-        hasStatus: true,
         requiresKey: 'api_key_electronhub',
     }),
     chatAdapter('nanogpt', 'NanoGPT', '#model_nanogpt_select', 'nanogpt_model', {
-        hasStatus: true,
         requiresKey: 'api_key_nanogpt',
     }),
     chatAdapter('deepseek', 'DeepSeek', '#model_deepseek_select', 'deepseek_model', {
-        hasStatus: true,
         requiresKey: 'api_key_deepseek',
     }),
     chatAdapter('aimlapi', 'AI/ML API', '#model_aimlapi_select', 'aimlapi_model', {
-        hasStatus: true,
         requiresKey: 'api_key_aimlapi',
     }),
     chatAdapter('xai', 'xAI', '#model_xai_select', 'xai_model', {
-        hasStatus: true,
         requiresKey: 'api_key_xai',
     }),
     chatAdapter('pollinations', 'Pollinations', '#model_pollinations_select', 'pollinations_model', {
-        hasStatus: true,
         requiresKey: 'api_key_pollinations',
     }),
     chatAdapter('moonshot', 'Moonshot', '#model_moonshot_select', 'moonshot_model', {
-        hasStatus: true,
         requiresKey: 'api_key_moonshot',
     }),
     chatAdapter('fireworks', 'Fireworks', '#model_fireworks_select', 'fireworks_model', {
-        hasStatus: true,
         requiresKey: 'api_key_fireworks',
     }),
     chatAdapter('cometapi', 'CometAPI', '#model_cometapi_select', 'cometapi_model', {
-        hasStatus: true,
         requiresKey: 'api_key_cometapi',
         readOnlyReason: 'CometAPI is disabled on this server',
     }),
     chatAdapter('azure_openai', 'Azure OpenAI', '#azure_openai_model', 'azure_openai_model', {
-        hasStatus: true,
         requiresKey: 'api_key_azure_openai',
         settingsBlock: '#azure_openai_settings',
     }),
     chatAdapter('zai', 'Z.AI', '#model_zai_select', 'zai_model', {
-        hasStatus: false,
         requiresKey: 'api_key_zai',
     }),
     chatAdapter('siliconflow', 'SiliconFlow', '#model_siliconflow_select', 'siliconflow_model', {
-        hasStatus: true,
         requiresKey: 'api_key_siliconflow',
     }),
     chatAdapter('minimax', 'MiniMax', '#model_minimax_select', 'minimax_model', {
-        hasStatus: false,
         requiresKey: 'api_key_minimax',
     }),
     chatAdapter('workers_ai', 'Cloudflare Workers AI', '#model_workers_ai_select', 'workers_ai_model', {
-        hasStatus: true,
         requiresKey: 'api_key_workers_ai',
     }),
 
     // Text completion types.
     textgenAdapter('ooba', 'Text Generation WebUI', '#custom_model_textgenerationwebui', 'custom_model', {
-        hasStatus: true,
         requiresKey: 'api_key_ooba',
     }),
     textgenAdapter('mancer', 'Mancer', '#mancer_model', 'mancer_model', {
-        hasStatus: true,
         requiresKey: 'api_key_mancer',
     }),
     textgenAdapter('vllm', 'vLLM', '#vllm_model', 'vllm_model', {
-        hasStatus: true,
         requiresKey: 'api_key_vllm',
     }),
     textgenAdapter('aphrodite', 'Aphrodite', '#aphrodite_model', 'aphrodite_model', {
-        hasStatus: true,
         requiresKey: 'api_key_aphrodite',
     }),
     textgenAdapter('tabby', 'TabbyAPI', '#tabby_model', 'tabby_model', {
-        hasStatus: true,
         requiresKey: 'api_key_tabby',
     }),
     textgenAdapter('koboldcpp', 'KoboldCpp', null, null, {
-        hasStatus: false,
         requiresKey: 'api_key_koboldcpp',
         readOnlyReason: 'Model list is loaded from the backend; manage it in the native UI',
     }),
     textgenAdapter('togetherai', 'Together AI', '#model_togetherai_select', 'togetherai_model', {
-        hasStatus: true,
         requiresKey: 'api_key_togetherai',
     }),
     textgenAdapter('llamacpp', 'llama.cpp', '#llamacpp_model', 'llamacpp_model', {
-        hasStatus: true,
         requiresKey: 'api_key_llamacpp',
     }),
     textgenAdapter('ollama', 'Ollama', '#ollama_model', 'ollama_model', {
-        hasStatus: true,
         requiresKey: null,
     }),
     textgenAdapter('infermaticai', 'InfermaticAI', '#model_infermaticai_select', 'infermaticai_model', {
-        hasStatus: true,
         requiresKey: 'api_key_infermaticai',
     }),
     textgenAdapter('dreamgen', 'DreamGen', '#model_dreamgen_select', 'dreamgen_model', {
-        hasStatus: true,
         requiresKey: 'api_key_dreamgen',
     }),
     textgenAdapter('openrouter', 'OpenRouter (Text)', '#openrouter_model', 'openrouter_model', {
-        hasStatus: true,
         requiresKey: 'api_key_openrouter',
     }),
     textgenAdapter('featherless', 'Featherless', '#featherless_model', 'featherless_model', {
-        hasStatus: true,
         requiresKey: 'api_key_featherless',
     }),
     textgenAdapter('huggingface', 'HuggingFace (TGI)', null, null, {
-        hasStatus: false,
         requiresKey: 'api_key_huggingface',
         readOnlyReason: 'HuggingFace text generation is fixed to the tgi model',
     }),
     textgenAdapter('generic', 'Generic (OpenAI-compatible)', '#generic_model_textgenerationwebui', 'generic_model', {
-        hasStatus: true,
         requiresKey: 'api_key_generic',
     }),
 
@@ -345,7 +254,6 @@ const ADAPTER_LIST = [
         modelControl: '#model_novel_select',
         modelField: 'model_novel',
         connectButton: '#api_button_novel',
-        hasStatus: true,
         requiresKey: 'api_key_novel',
         settingsBlock: '#novel_api',
     }),
@@ -361,7 +269,6 @@ const ADAPTER_LIST = [
         label: 'AI Horde',
         mainApi: 'koboldhorde',
         modelControl: '#horde_model',
-        hasStatus: false,
         requiresKey: 'api_key_horde',
         settingsBlock: '#kobold_api_block',
         readOnlyReason: 'AI Horde uses multi-select; manage it in the native UI',

@@ -19,7 +19,7 @@ import { getCatalogInfo, loadCatalog } from '../catalog.js';
 import { getSettings, saveSettings, updateSettings } from '../store.js';
 import { restoreSelection } from '../switch-engine.js';
 import { applyNativeSelectorVisibility, tr } from './dom.js';
-import { apiKeyUrlFor } from '../provider-links.js';
+import { el, isPlainObject, notify } from './helpers.js';
 import { initBindingUI } from './bindings.js';
 
 const SERVER_CONTROL_IDS = [
@@ -28,11 +28,8 @@ const SERVER_CONTROL_IDS = [
     'omtp-gateway-restart',
     'omtp-catalog-refresh',
     'omtp-import-omp',
-    'omtp-add-provider',
 ];
 
-/** @type {Record<string, Function|undefined>} */
-let callbacks = {};
 /** @type {HTMLElement|null} */
 let container = null;
 /** @type {object|null} */
@@ -50,21 +47,6 @@ let refreshing = null;
 
 function byId(id) {
     return document.getElementById(id);
-}
-
-function isPlainObject(value) {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function notify(kind, message) {
-    const fn = globalThis.toastr?.[kind];
-    if (typeof fn === 'function') {
-        fn(message);
-    } else if (kind === 'error') {
-        console.error('[omtp]', message);
-    } else {
-        console.log('[omtp]', message);
-    }
 }
 
 function setText(id, text) {
@@ -99,17 +81,6 @@ function setDisabled(id, disabled, reason) {
     } else {
         element.removeAttribute('title');
     }
-}
-
-function createElement(tag, className, text) {
-    const element = document.createElement(tag);
-    if (className) {
-        element.className = className;
-    }
-    if (text !== undefined) {
-        element.textContent = text;
-    }
-    return element;
 }
 
 function formatDate(value) {
@@ -201,10 +172,6 @@ function setServerControlsDisabled(disabled) {
     for (const id of SERVER_CONTROL_IDS) {
         setDisabled(id, disabled, reason);
     }
-    if (disabled) {
-        setDisabled('omtp-gateway-autostart', true, reason);
-        setDisabled('omtp-gateway-requireauth', true, reason);
-    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -288,7 +255,9 @@ function updateCatalogInfo(catalog) {
             parts.push(`${info.stats.providers ?? 0} providers`);
             parts.push(`${info.stats.models ?? 0} models`);
         }
-        parts.push('server plugin unavailable');
+        if (serverAvailable === false) {
+            parts.push('server plugin unavailable');
+        }
     }
     element.textContent = parts.filter(Boolean).join(' · ');
 }
@@ -356,7 +325,6 @@ function normalizeProviderList(data) {
 async function refreshProviders() {
     if (serverAvailable === false && !serverStatus) {
         providersCache = [];
-        renderProviders();
         return;
     }
     try {
@@ -367,7 +335,6 @@ async function refreshProviders() {
         markServerUnavailable(error);
         providersCache = [];
     }
-    renderProviders();
 }
 
 /**
@@ -396,266 +363,6 @@ export function refreshSettingsUI() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Providers                                                          */
-/* ------------------------------------------------------------------ */
-
-function providerAction(id, action, successMessage) {
-    return (async () => {
-        try {
-            await action();
-            if (successMessage) {
-                notify('success', successMessage);
-            }
-            callbacks.onProviderChanged?.();
-        } catch (error) {
-            notify('error', errorMessage(error));
-        } finally {
-            await refreshProviders();
-            import('./hub.js').then((hub) => hub.refreshHub?.()).catch(() => {});
-        }
-    })();
-}
-
-function parseJsonObject(text, label) {
-    const raw = String(text ?? '').trim();
-    if (!raw) {
-        return { value: {} };
-    }
-    let parsed;
-    try {
-        parsed = JSON.parse(raw);
-    } catch (error) {
-        return { error: `Invalid ${label} JSON: ${error.message}` };
-    }
-    if (!isPlainObject(parsed)) {
-        return { error: `${label} must be a JSON object` };
-    }
-    return { value: parsed };
-}
-
-function createProviderRow(provider) {
-    const id = String(provider.id ?? '');
-    const row = createElement('div', 'omtp-provider-row');
-    row.dataset.omtpProvider = id;
-
-    const name = createElement('div', 'omtp-provider-name', provider.label || id || 'unknown');
-    const meta = createElement('div', 'omtp-muted');
-    meta.textContent = [
-        provider.adapter,
-        provider.modelCount !== undefined ? `${provider.modelCount} models` : null,
-        provider.baseUrl,
-        provider.custom ? 'custom' : null,
-    ].filter(Boolean).join(' · ');
-    if (meta.textContent) {
-        name.append(meta);
-    }
-    row.append(name);
-
-    const keyState = createElement('span', 'omtp-muted');
-    if (provider.hasKey) {
-        const source = provider.keySource && provider.keySource !== 'none' ? provider.keySource : 'stored';
-        const suffix = provider.last4 ? ` ••••${provider.last4}` : '';
-        keyState.textContent = `Key: ${source}${suffix}`;
-    } else {
-        keyState.textContent = provider.available === false ? 'Needs key' : 'No key';
-    }
-    row.append(keyState);
-
-    const keyInput = document.createElement('input');
-    keyInput.type = 'password';
-    keyInput.autocomplete = 'off';
-    keyInput.placeholder = tr('omtp_provider_key', 'API key');
-    row.append(keyInput);
-
-    const saveKey = createElement('button', 'menu_button', tr('omtp_save_key', 'Save key'));
-    saveKey.type = 'button';
-    saveKey.addEventListener('click', (event) => {
-        event.preventDefault();
-        const key = keyInput.value.trim();
-        if (!key) {
-            notify('warning', 'Enter an API key first');
-            return;
-        }
-        providerAction(
-            id,
-            () => apiFetch(`/providers/${encodeURIComponent(id)}/key`, { method: 'POST', body: { key } }),
-            `Key saved for ${provider.label || id}`,
-        ).then(() => {
-            keyInput.value = '';
-        });
-    });
-    row.append(saveKey);
-
-    const deleteKey = createElement('button', 'menu_button', tr('omtp_delete_key', 'Delete key'));
-    deleteKey.type = 'button';
-    deleteKey.disabled = !provider.hasKey;
-    deleteKey.addEventListener('click', (event) => {
-        event.preventDefault();
-        providerAction(
-            id,
-            () => apiFetch(`/providers/${encodeURIComponent(id)}/key`, { method: 'DELETE' }),
-            `Key deleted for ${provider.label || id}`,
-        );
-    });
-    row.append(deleteKey);
-
-    const testButton = createElement('button', 'menu_button', tr('omtp_test_provider', 'Test'));
-    testButton.type = 'button';
-    testButton.addEventListener('click', async (event) => {
-        event.preventDefault();
-        testButton.disabled = true;
-        try {
-            const result = await apiFetch(`/providers/${encodeURIComponent(id)}/test`, { method: 'POST' });
-            const message = isPlainObject(result)
-                ? (result.message ?? result.error ?? JSON.stringify(result))
-                : String(result ?? 'OK');
-            testState.textContent = message;
-            notify(result?.ok === false ? 'warning' : 'success', `${provider.label || id}: ${message}`);
-        } catch (error) {
-            testState.textContent = errorMessage(error);
-            notify('error', `${provider.label || id}: ${errorMessage(error)}`);
-        } finally {
-            testButton.disabled = false;
-        }
-    });
-    row.append(testButton);
-
-    const keyUrl = apiKeyUrlFor(id);
-    if (keyUrl) {
-        const link = document.createElement('a');
-        link.className = 'menu_button omtp-get-key';
-        link.href = keyUrl;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.textContent = tr('omtp_get_api_key', 'Get API key');
-        link.title = keyUrl;
-        row.append(link);
-    }
-
-    const testState = createElement('span', 'omtp-muted');
-    row.append(testState);
-
-    if (serverAvailable === false) {
-        saveKey.disabled = true;
-        deleteKey.disabled = true;
-        testButton.disabled = true;
-    }
-
-    const advanced = document.createElement('details');
-    advanced.classList.add('omtp-advanced');
-    advanced.append(createElement('summary', null, tr('omtp_advanced', 'Advanced')));
-
-    const baseUrlRow = createElement('div', 'omtp-settings-row');
-    const baseUrlLabel = createElement('label', null, tr('omtp_base_url', 'Base URL'));
-    const baseUrlInput = document.createElement('input');
-    baseUrlInput.type = 'url';
-    baseUrlInput.value = provider.baseUrl ?? '';
-    baseUrlInput.placeholder = 'https://api.example.com/v1';
-    baseUrlRow.append(baseUrlLabel, baseUrlInput);
-
-    const headersRow = createElement('div', 'omtp-settings-row');
-    const headersLabel = createElement('label', null, tr('omtp_headers', 'Headers JSON'));
-    const headersArea = document.createElement('textarea');
-    headersArea.classList.add('text_pole', 'monospace');
-    headersArea.rows = 3;
-    headersArea.value = isPlainObject(provider.headers) ? JSON.stringify(provider.headers, null, 2) : '';
-    headersRow.append(headersLabel, headersArea);
-
-    const extraRow = createElement('div', 'omtp-settings-row');
-    const extraLabel = createElement('label', null, tr('omtp_extra_config', 'Extra config JSON'));
-    const extraArea = document.createElement('textarea');
-    extraArea.classList.add('text_pole', 'monospace');
-    extraArea.rows = 3;
-    extraArea.value = isPlainObject(provider.extraConfig) ? JSON.stringify(provider.extraConfig, null, 2) : '';
-    extraRow.append(extraLabel, extraArea);
-
-    const actionRow = createElement('div', 'omtp-settings-row');
-    const saveConfig = createElement('button', 'menu_button', tr('omtp_save_config', 'Save config'));
-    saveConfig.type = 'button';
-    const advancedState = createElement('span', 'omtp-muted');
-    actionRow.append(saveConfig, advancedState);
-
-    saveConfig.addEventListener('click', (event) => {
-        event.preventDefault();
-        const headers = parseJsonObject(headersArea.value, 'headers');
-        const extraConfig = parseJsonObject(extraArea.value, 'extra config');
-        if (headers.error) {
-            advancedState.textContent = headers.error;
-            return;
-        }
-        if (extraConfig.error) {
-            advancedState.textContent = extraConfig.error;
-            return;
-        }
-        providerAction(
-            id,
-            () => apiFetch(`/providers/${encodeURIComponent(id)}/config`, {
-                method: 'POST',
-                body: {
-                    baseUrl: baseUrlInput.value.trim(),
-                    headers: headers.value,
-                    extraConfig: extraConfig.value,
-                },
-            }),
-            `Configuration saved for ${provider.label || id}`,
-        ).then(() => {
-            advancedState.textContent = '';
-        });
-    });
-
-    if (provider.custom) {
-        const removeProvider = createElement('button', 'menu_button', tr('omtp_delete_provider', 'Delete provider'));
-        removeProvider.type = 'button';
-        removeProvider.addEventListener('click', async (event) => {
-            event.preventDefault();
-            const confirmed = await confirmAction(
-                tr('omtp_delete_provider', 'Delete provider'),
-                `Remove the custom provider "${provider.label || id}" and its stored configuration?`,
-            );
-            if (!confirmed) {
-                return;
-            }
-            await providerAction(
-                id,
-                () => apiFetch(`/providers/${encodeURIComponent(id)}/config`, { method: 'DELETE' }),
-                `Provider ${provider.label || id} deleted`,
-            );
-        });
-        actionRow.append(removeProvider);
-    }
-
-    advanced.append(baseUrlRow, headersRow, extraRow, actionRow);
-
-    const wrapper = document.createDocumentFragment();
-    wrapper.append(row, advanced);
-    return wrapper;
-}
-
-function renderProviders() {
-    const list = byId('omtp-provider-rows');
-    if (!list) {
-        return;
-    }
-    list.textContent = '';
-
-    if (serverAvailable === false) {
-        list.append(createElement(
-            'div',
-            'omtp-muted',
-            'OMTP Gateway unavailable (enable server plugins). Provider keys can only be managed with the server plugin installed.',
-        ));
-        return;
-    }
-    if (providersCache.length === 0) {
-        list.append(createElement('div', 'omtp-muted', 'No providers configured yet.'));
-        return;
-    }
-    for (const provider of providersCache) {
-        list.append(createProviderRow(provider));
-    }
-}
-
-/* ------------------------------------------------------------------ */
 /* Popups                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -674,8 +381,8 @@ async function confirmAction(title, text) {
 }
 
 function formRow(labelText, control) {
-    const row = createElement('div', 'omtp-settings-row');
-    const label = createElement('label', null, labelText);
+    const row = el('div', 'omtp-settings-row');
+    const label = el('label', null, labelText);
     if (control.id) {
         label.htmlFor = control.id;
     }
@@ -715,55 +422,49 @@ function parseModels(text) {
     return { value: models };
 }
 
-export function openCustomProviderEditor() {
-    if (serverAvailable === false) {
-        notify('warning', 'OMTP Gateway unavailable (enable server plugins)');
-        return;
-    }
-
-    const form = document.createElement('div');
-    form.append(createElement(
+/** Build the custom-provider form and its controls. */
+function buildCustomProviderForm() {
+    const form = el('div');
+    form.append(el(
         'div',
         'omtp-muted',
         'Custom providers are merged into the catalog and the gateway model list.',
     ));
 
-    const idInput = document.createElement('input');
+    const idInput = el('input');
     idInput.type = 'text';
     idInput.placeholder = 'my-provider';
     idInput.id = 'omtp-custom-provider-id';
 
-    const labelInput = document.createElement('input');
+    const labelInput = el('input');
     labelInput.type = 'text';
     labelInput.placeholder = 'My Provider';
     labelInput.id = 'omtp-custom-provider-label';
 
-    const adapterSelect = document.createElement('select');
+    const adapterSelect = el('select');
     adapterSelect.id = 'omtp-custom-provider-adapter';
     for (const adapter of GATEWAY_ADAPTERS) {
-        const option = document.createElement('option');
+        const option = el('option', null, adapter);
         option.value = adapter;
-        option.textContent = adapter;
         adapterSelect.append(option);
     }
 
-    const baseUrlInput = document.createElement('input');
+    const baseUrlInput = el('input');
     baseUrlInput.type = 'url';
     baseUrlInput.placeholder = 'https://api.example.com/v1';
     baseUrlInput.id = 'omtp-custom-provider-baseurl';
 
-    const modelsArea = document.createElement('textarea');
-    modelsArea.classList.add('text_pole', 'monospace');
+    const modelsArea = el('textarea', 'text_pole monospace');
     modelsArea.rows = 4;
     modelsArea.id = 'omtp-custom-provider-models';
     modelsArea.placeholder = '[{"id":"model-id","name":"Model","contextWindow":32000}]';
 
-    const keyInput = document.createElement('input');
+    const keyInput = el('input');
     keyInput.type = 'password';
     keyInput.autocomplete = 'off';
     keyInput.id = 'omtp-custom-provider-key';
 
-    const errorLine = createElement('div', 'omtp-muted');
+    const errorLine = el('div', 'omtp-muted');
     errorLine.setAttribute('role', 'alert');
 
     form.append(
@@ -776,47 +477,56 @@ export function openCustomProviderEditor() {
         errorLine,
     );
 
-    const popup = new Popup(form, POPUP_TYPE.CONFIRM, null, {
+    return { form, idInput, labelInput, adapterSelect, baseUrlInput, modelsArea, keyInput, errorLine };
+}
+
+/** Validate and POST the new provider; returns false to keep the popup open. */
+async function submitCustomProvider({ idInput, labelInput, adapterSelect, baseUrlInput, modelsArea, keyInput, errorLine }) {
+    const id = idInput.value.trim();
+    if (!/^[a-z0-9][a-z0-9._-]*$/i.test(id)) {
+        errorLine.textContent = 'Provider id must start with a letter or digit and contain only letters, digits, ".", "_" or "-".';
+        return false;
+    }
+    const models = parseModels(modelsArea.value);
+    if (models.error) {
+        errorLine.textContent = models.error;
+        return false;
+    }
+    const config = {
+        custom: true,
+        label: labelInput.value.trim() || id,
+        adapter: adapterSelect.value,
+        baseUrl: baseUrlInput.value.trim(),
+        models: models.value,
+    };
+    try {
+        await apiFetch(`/providers/${encodeURIComponent(id)}/config`, { method: 'POST', body: config });
+        const key = keyInput.value.trim();
+        if (key) {
+            await apiFetch(`/providers/${encodeURIComponent(id)}/key`, { method: 'POST', body: { key } });
+        }
+    } catch (error) {
+        errorLine.textContent = errorMessage(error);
+        return false;
+    }
+    notify('success', `Provider ${config.label} added`);
+    await refreshProviders();
+    return true;
+}
+
+export function openCustomProviderEditor() {
+    if (serverAvailable === false) {
+        notify('warning', 'OMTP Gateway unavailable (enable server plugins)');
+        return;
+    }
+
+    const fields = buildCustomProviderForm();
+    const popup = new Popup(fields.form, POPUP_TYPE.CONFIRM, null, {
         okButton: tr('omtp_add_provider', 'Add provider'),
         cancelButton: tr('omtp_cancel', 'Cancel'),
         wide: true,
         allowVerticalScrolling: true,
-        onClosing: async (current) => {
-            if (current.result !== POPUP_RESULT.AFFIRMATIVE) {
-                return true;
-            }
-            const id = idInput.value.trim();
-            if (!/^[a-z0-9][a-z0-9._-]*$/i.test(id)) {
-                errorLine.textContent = 'Provider id must start with a letter or digit and contain only letters, digits, ".", "_" or "-".';
-                return false;
-            }
-            const models = parseModels(modelsArea.value);
-            if (models.error) {
-                errorLine.textContent = models.error;
-                return false;
-            }
-            const config = {
-                custom: true,
-                label: labelInput.value.trim() || id,
-                adapter: adapterSelect.value,
-                baseUrl: baseUrlInput.value.trim(),
-                models: models.value,
-            };
-            try {
-                await apiFetch(`/providers/${encodeURIComponent(id)}/config`, { method: 'POST', body: config });
-                const key = keyInput.value.trim();
-                if (key) {
-                    await apiFetch(`/providers/${encodeURIComponent(id)}/key`, { method: 'POST', body: { key } });
-                }
-            } catch (error) {
-                errorLine.textContent = errorMessage(error);
-                return false;
-            }
-            notify('success', `Provider ${config.label} added`);
-            callbacks.onProviderChanged?.();
-            await refreshProviders();
-            return true;
-        },
+        onClosing: (current) => (current.result === POPUP_RESULT.AFFIRMATIVE ? submitCustomProvider(fields) : true),
     });
 
     popup.show().catch((error) => notify('error', errorMessage(error)));
@@ -828,26 +538,25 @@ function openImportPopup() {
         return;
     }
 
-    const form = document.createElement('div');
-    form.append(createElement(
+    const form = el('div');
+    form.append(el(
         'div',
         'omtp-muted',
         'Reads the local oh-my-pi catalog (data only; the omp binary is never executed) and stores it as an overlay. The bundled catalog is never overwritten.',
     ));
 
-    const pathInput = document.createElement('input');
+    const pathInput = el('input');
     pathInput.type = 'text';
     pathInput.id = 'omtp-import-path';
-    pathInput.value = '/home/winster42/test/oh-my-pi';
+    pathInput.placeholder = '~/oh-my-pi';
 
-    const credentialsLabel = document.createElement('label');
-    credentialsLabel.classList.add('checkbox_label');
-    const credentialsInput = document.createElement('input');
+    const credentialsLabel = el('label', 'checkbox_label');
+    const credentialsInput = el('input');
     credentialsInput.type = 'checkbox';
     credentialsInput.id = 'omtp-import-credentials';
-    credentialsLabel.append(credentialsInput, createElement('span', null, 'Import stored credentials from the local OMP agent.db (API keys and OAuth sessions)'));
+    credentialsLabel.append(credentialsInput, el('span', null, 'Import stored credentials from the local OMP agent.db (API keys and OAuth sessions)'));
 
-    const errorLine = createElement('div', 'omtp-muted');
+    const errorLine = el('div', 'omtp-muted');
     errorLine.setAttribute('role', 'alert');
 
     form.append(formRow('OMP path', pathInput), credentialsLabel, errorLine);
@@ -880,7 +589,6 @@ function openImportPopup() {
                 if (result?.credentialError) {
                     notify('warning', `Credential import note: ${result.credentialError}`);
                 }
-                callbacks.onCatalogChanged?.(result);
                 // Reload in the background so a slow fetch cannot pin the popup open.
                 reloadClientCatalog().catch((error) => {
                     console.warn('[omtp] could not reload after OMP import', error);
@@ -930,7 +638,6 @@ async function refreshCatalog() {
             throw new Error(result.error || 'Catalog refresh failed');
         }
         notify('success', `Catalog refreshed: ${result?.providers ?? '?'} providers, ${result?.models ?? '?'} models`);
-        callbacks.onCatalogChanged?.(result);
         await reloadClientCatalog();
     } catch (error) {
         notify('error', `Catalog refresh failed: ${errorMessage(error)}`);
@@ -982,11 +689,7 @@ async function restoreNativeSelection() {
         return;
     }
     try {
-        if (typeof callbacks.onRestoreNative === 'function') {
-            await callbacks.onRestoreNative(snapshot);
-        } else {
-            await restoreSelection(snapshot, { fast: false });
-        }
+        await restoreSelection(snapshot, { fast: false });
         notify('success', 'Native selection restored');
         await refreshSettingsUI();
     } catch (error) {
@@ -1010,7 +713,6 @@ async function deleteProviderKeys() {
         }
     }
     notify(removed > 0 ? 'success' : 'info', `${removed} provider key(s) deleted`);
-    callbacks.onProviderChanged?.();
 }
 
 async function clearSettings() {
@@ -1077,7 +779,6 @@ function bindControls(root) {
         const hide = Boolean(hideNative.checked);
         updateSettings({ hideNativeSelector: hide });
         applyNativeSelectorVisibility({ ...getSettings(), hideNativeSelector: hide });
-        callbacks.onHideNativeSelector?.(hide);
     });
 
     const hotkey = element(root, 'omtp-hotkey');
@@ -1124,10 +825,6 @@ function bindControls(root) {
         event.preventDefault();
         openImportPopup();
     });
-    element(root, 'omtp-add-provider')?.addEventListener('click', (event) => {
-        event.preventDefault();
-        openCustomProviderEditor();
-    });
 
     element(root, 'omtp-restore-native')?.addEventListener('click', (event) => {
         event.preventDefault();
@@ -1141,8 +838,7 @@ function bindControls(root) {
 
 /**
  * Initialize the settings panel.
- * @param {HTMLElement|{container?: HTMLElement, onHideNativeSelector?: Function,
- *          onRestoreNative?: Function, onCatalogChanged?: Function, onProviderChanged?: Function}} [arg]
+ * @param {HTMLElement|{container?: HTMLElement}} [arg]
  * @returns {HTMLElement|null} The settings container
  */
 export function initSettingsUI(arg) {
@@ -1158,13 +854,6 @@ export function initSettingsUI(arg) {
         console.warn('[omtp] settings container not found; settings UI not initialized');
         return null;
     }
-
-    callbacks = {
-        onHideNativeSelector: options.onHideNativeSelector,
-        onRestoreNative: options.onRestoreNative,
-        onCatalogChanged: options.onCatalogChanged,
-        onProviderChanged: options.onProviderChanged,
-    };
 
     if (!container.dataset.omtpBound) {
         container.dataset.omtpBound = '1';

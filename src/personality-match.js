@@ -24,7 +24,7 @@ export function normalizeName(value) {
  * @param {unknown} model
  * @returns {string}
  */
-export function modelSegment(model) {
+function modelSegment(model) {
     const parts = String(model ?? '').split('/');
     return parts[parts.length - 1];
 }

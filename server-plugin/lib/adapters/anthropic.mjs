@@ -1,19 +1,21 @@
 /** Anthropic Messages API gateway adapter. */
 import {
-  JSON_HEADERS,
   authHeaders,
   contentToText,
-  errorResponse,
+  createFinishEmitter,
   hasCredential,
-  networkError,
+  invalidMessages,
+  missingApiKey,
+  missingBaseUrl,
   newCompletionId,
+  openAIUsage,
+  parseDataUrl,
   parseJsonObject,
   pushContent,
-  sseResponse,
+  runJsonAdapter,
+  translateFunctionTools,
   trimSlash,
-  upstreamErrorResponse,
   usageFrame,
-  openAIUsage,
 } from './openai.mjs';
 import { openAIChunk } from '../sse.mjs';
 
@@ -22,7 +24,7 @@ export const DEFAULT_CLAUDE_CODE_VERSION = '2.1.280';
 export const CLAUDE_CODE_SYSTEM_INSTRUCTION = "You are Claude Code, Anthropic's official CLI for Claude.";
 export const CLAUDE_CODE_BETAS = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27';
 
-export function isClaudeCode(ctx) {
+function isClaudeCode(ctx) {
   if (ctx?.extraConfig?.claudeCode || ctx?.provider === 'claude-code') return true;
   if (typeof ctx?.apiKey === 'string' && (ctx.apiKey.startsWith('sk-ant-acc') || ctx.apiKey.startsWith('oauth:'))) return true;
   return false;
@@ -39,9 +41,9 @@ function messagesUrl(baseUrl) {
 }
 
 function dataUrlImage(url) {
-  const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(url || '');
-  if (!match) return null;
-  return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
+  const parsed = parseDataUrl(url);
+  if (!parsed) return null;
+  return { type: 'image', source: { type: 'base64', media_type: parsed.mimeType, data: parsed.data } };
 }
 
 function imageBlock(part) {
@@ -110,21 +112,6 @@ function translateMessages(messages) {
   return { system: system.join('\n\n'), messages: out };
 }
 
-function translateTools(tools) {
-  if (!Array.isArray(tools)) return [];
-  const out = [];
-  for (const tool of tools) {
-    const fn = tool?.function || tool;
-    if (!fn?.name) continue;
-    const entry = { name: fn.name };
-    if (fn.description) entry.description = fn.description;
-    entry.input_schema =
-      fn.parameters && typeof fn.parameters === 'object' ? fn.parameters : { type: 'object', properties: {} };
-    out.push(entry);
-  }
-  return out;
-}
-
 function translateToolChoice(choice) {
   if (!choice) return undefined;
   if (choice === 'auto') return { type: 'auto' };
@@ -171,7 +158,7 @@ function mapStopReason(reason) {
     case 'refusal':
       return 'content_filter';
     default:
-      return reason ? 'stop' : 'stop';
+      return 'stop';
   }
 }
 
@@ -223,26 +210,22 @@ function createStreamHandler(model) {
   let outputTokens = 0;
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
-  let finished = false;
 
-  const finish = (emit) => {
-    if (finished) return;
-    finished = true;
-    emit(openAIChunk({}, finishReason || 'stop'));
-    if (inputTokens || outputTokens || cacheReadTokens || cacheWriteTokens) {
-      emit(
-        usageFrame(
-          openAIUsage({
-            prompt: inputTokens + cacheReadTokens + cacheWriteTokens,
-            completion: outputTokens,
-            cached: cacheReadTokens,
-            cacheWrite: cacheWriteTokens,
-          }),
-          model,
-        ),
+  const finish = createFinishEmitter(
+    () => openAIChunk({}, finishReason || 'stop'),
+    () => {
+      if (!inputTokens && !outputTokens && !cacheReadTokens && !cacheWriteTokens) return null;
+      return usageFrame(
+        openAIUsage({
+          prompt: inputTokens + cacheReadTokens + cacheWriteTokens,
+          completion: outputTokens,
+          cached: cacheReadTokens,
+          cacheWrite: cacheWriteTokens,
+        }),
+        model,
       );
-    }
-  };
+    },
+  );
 
   return {
     onStart(emit) {
@@ -309,44 +292,39 @@ function createStreamHandler(model) {
   };
 }
 
-export async function chat(req, ctx) {
-  if (!ctx?.baseUrl) {
-    return errorResponse('Provider baseUrl is not configured', {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'missing_base_url',
-    });
-  }
-  if (!hasCredential(ctx)) {
-    return errorResponse(`Missing API key for provider ${ctx.provider || 'anthropic'}`, {
-      status: 401,
-      type: 'authentication_error',
-      code: 'missing_api_key',
-    });
-  }
+/**
+ * Headers shared by `chat()` and `listModels()`, including the Claude Code
+ * fingerprint when the credential comes from a subscription login.
+ */
+function anthropicHeaders(ctx, extra = {}) {
+  return {
+    'anthropic-version': extra.anthropicVersion || ANTHROPIC_VERSION,
+    ...(isClaudeCode(ctx)
+      ? {
+          'User-Agent': `claude-cli/${extra.claudeCodeVersion || DEFAULT_CLAUDE_CODE_VERSION} (external, cli)`,
+          'anthropic-beta': extra.anthropicBeta || CLAUDE_CODE_BETAS,
+          ...(ctx.apiKey ? { Authorization: `Bearer ${ctx.apiKey.replace(/^oauth:/, '').trim()}` } : {}),
+        }
+      : authHeaders(ctx, 'x-api-key')),
+    ...(ctx.headers || {}),
+  };
+}
 
-  const extra = ctx.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
+/**
+ * Translate an OpenAI chat request into a Messages payload.
+ * @returns {any|null} null when the request has no user/assistant content.
+ */
+function buildPayload(req, ctx, extra) {
   const { system, messages } = translateMessages(req?.messages);
-  if (messages.length === 0) {
-    return errorResponse('At least one non-system message is required', {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'invalid_messages',
-    });
-  }
+  if (messages.length === 0) return null;
 
-  let maxTokens = resolveMaxTokens(req || {}, extra, ctx.modelInfo);
+  const requestedMax = resolveMaxTokens(req || {}, extra, ctx.modelInfo);
   const supportsThinking = ctx.modelInfo ? Boolean(ctx.modelInfo.reasoning) : true;
-  const { thinking, maxTokens: nextMaxTokens } = buildThinking(
-    supportsThinking ? req?.reasoning_effort : 'auto',
-    maxTokens,
-  );
-  maxTokens = nextMaxTokens;
+  const { thinking, maxTokens } = buildThinking(supportsThinking ? req?.reasoning_effort : 'auto', requestedMax);
 
-  const claudeCodeMode = isClaudeCode(ctx);
   const payload = { model: ctx.model, max_tokens: maxTokens, messages };
   let finalSystem = system;
-  if (claudeCodeMode) {
+  if (isClaudeCode(ctx)) {
     finalSystem = finalSystem ? `${CLAUDE_CODE_SYSTEM_INSTRUCTION}\n\n${finalSystem}` : CLAUDE_CODE_SYSTEM_INSTRUCTION;
   }
   if (finalSystem) payload.system = finalSystem;
@@ -358,7 +336,7 @@ export async function chat(req, ctx) {
     payload.temperature = 1;
     delete payload.top_p;
   }
-  const tools = translateTools(req?.tools);
+  const tools = translateFunctionTools(req?.tools, 'input_schema');
   if (tools.length) {
     payload.tools = tools;
     const choice = translateToolChoice(req?.tool_choice);
@@ -372,66 +350,37 @@ export async function chat(req, ctx) {
   payload.messages = messages;
   payload.stream = Boolean(req?.stream);
   if (thinking) payload.temperature = 1;
+  return payload;
+}
 
-  let upstream;
-  try {
-    const doFetch = ctx.fetchImpl || fetch;
-    upstream = await doFetch(messagesUrl(ctx.baseUrl), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'anthropic-version': extra.anthropicVersion || ANTHROPIC_VERSION,
-        ...(claudeCodeMode
-          ? {
-              'User-Agent': `claude-cli/${extra.claudeCodeVersion || DEFAULT_CLAUDE_CODE_VERSION} (external, cli)`,
-              'anthropic-beta': extra.anthropicBeta || CLAUDE_CODE_BETAS,
-              ...(ctx.apiKey ? { Authorization: `Bearer ${ctx.apiKey.replace(/^oauth:/, '').trim()}` } : {}),
-            }
-          : authHeaders(ctx, 'x-api-key')),
-        ...(ctx.headers || {}),
-      },
-      body: JSON.stringify(payload),
-      signal: ctx.signal,
-    });
-  } catch (error) {
-    return networkError(error, 'Anthropic request');
-  }
+export async function chat(req, ctx) {
+  if (!ctx?.baseUrl) return missingBaseUrl();
+  if (!hasCredential(ctx)) return missingApiKey(ctx, 'anthropic');
 
-  if (!upstream.ok) return upstreamErrorResponse(upstream);
-  if (payload.stream) return sseResponse(upstream, createStreamHandler(ctx.model));
-  let json;
-  try {
-    json = await upstream.json();
-  } catch (error) {
-    return errorResponse(`Invalid Anthropic response: ${error?.message || error}`, {
-      status: 502,
-      type: 'upstream_error',
-      code: 'invalid_response',
-    });
-  }
-  return new Response(JSON.stringify(translateCompletion(json, ctx.model)), {
-    status: 200,
-    headers: JSON_HEADERS,
+  const extra = ctx.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
+  const payload = buildPayload(req, ctx, extra);
+  if (!payload) return invalidMessages();
+
+  return runJsonAdapter({
+    url: messagesUrl(ctx.baseUrl),
+    headers: { 'Content-Type': 'application/json', ...anthropicHeaders(ctx, extra) },
+    payload,
+    label: 'Anthropic',
+    stream: payload.stream,
+    streamHandler: () => createStreamHandler(ctx.model),
+    translate: (json) => translateCompletion(json, ctx.model),
+    ctx,
   });
 }
 
 export async function listModels(ctx) {
   const base = trimSlash(ctx?.baseUrl || 'https://api.anthropic.com');
   const url = /\/v1$/.test(base) ? `${base}/models` : `${base}/v1/models`;
-  const claudeCodeMode = isClaudeCode(ctx);
-  const headers = {
-    'anthropic-version': ctx?.extraConfig?.anthropicVersion || ANTHROPIC_VERSION,
-    ...(claudeCodeMode
-      ? {
-          'User-Agent': `claude-cli/${ctx?.extraConfig?.claudeCodeVersion || DEFAULT_CLAUDE_CODE_VERSION} (external, cli)`,
-          'anthropic-beta': ctx?.extraConfig?.anthropicBeta || CLAUDE_CODE_BETAS,
-          ...(ctx?.apiKey ? { Authorization: `Bearer ${ctx.apiKey.replace(/^oauth:/, '').trim()}` } : {}),
-        }
-      : authHeaders(ctx, 'x-api-key')),
-    ...(ctx?.headers || {}),
-  };
   const doFetch = ctx?.fetchImpl || fetch;
-  const response = await doFetch(url, { headers, signal: ctx?.signal });
+  const response = await doFetch(url, {
+    headers: anthropicHeaders(ctx, ctx?.extraConfig || {}),
+    signal: ctx?.signal,
+  });
   if (!response.ok) {
     throw new Error(`Anthropic listModels failed: HTTP ${response.status}`);
   }
@@ -442,7 +391,5 @@ export async function listModels(ctx) {
     name: item.display_name || item.id,
   }));
 }
-
-export { translateCompletion, createStreamHandler };
 
 export default { id, chat, listModels };

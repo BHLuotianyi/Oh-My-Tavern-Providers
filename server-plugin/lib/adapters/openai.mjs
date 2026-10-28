@@ -1,24 +1,17 @@
 /**
  * OpenAI-compatible gateway adapter.
  *
- * This module also hosts the small transport helpers shared by the other
- * protocol adapters. The adapter directory is a fixed file list, so there is
- * deliberately no separate helper module.
+ * This module also hosts the transport helpers shared by the other protocol
+ * adapters, so every adapter imports its scaffolding from here.
  */
-import { parseSse, done } from '../sse.mjs';
+import { parseSse, done, sseHeaders } from '../sse.mjs';
+import { KEYLESS_PROVIDERS } from '../provider-config.mjs';
 
 export const id = 'openai';
 
-export const SSE_HEADERS = Object.freeze({
-  'Content-Type': 'text/event-stream; charset=utf-8',
-  'Cache-Control': 'no-cache, no-transform',
-  Connection: 'keep-alive',
-  'X-Accel-Buffering': 'no',
-});
-
 export const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; charset=utf-8' });
 
-const KEYLESS_PROVIDERS = new Set(['local', 'ollama', 'pollinations', 'yolo-auto']);
+const KEYLESS = new Set(KEYLESS_PROVIDERS);
 
 export function trimSlash(value) {
   return String(value || '').replace(/\/+$/, '');
@@ -64,7 +57,7 @@ export function hasCredential(ctx) {
 
 export function isKeyless(ctx) {
   if (ctx?.extraConfig?.allowNoKey === true) return true;
-  if (KEYLESS_PROVIDERS.has(ctx?.provider)) return true;
+  if (KEYLESS.has(ctx?.provider)) return true;
   try {
     const host = new URL(ctx?.baseUrl || '').hostname.toLowerCase();
     return (
@@ -102,6 +95,42 @@ export function errorResponse(
   const error = { message: String(message || 'Unknown error'), type, code };
   if (param) error.param = param;
   return new Response(JSON.stringify({ error }), { status, headers: JSON_HEADERS });
+}
+
+/** 400 response for a provider without a usable base URL. */
+export function missingBaseUrl() {
+  return errorResponse('Provider baseUrl is not configured', {
+    status: 400,
+    type: 'invalid_request_error',
+    code: 'missing_base_url',
+  });
+}
+
+/** 401 response for a provider whose credentials are absent. */
+export function missingApiKey(ctx, fallback) {
+  return errorResponse(`Missing API key for provider ${ctx?.provider || fallback}`, {
+    status: 401,
+    type: 'authentication_error',
+    code: 'missing_api_key',
+  });
+}
+
+/** 400 response for a request with no user/assistant content. */
+export function invalidMessages() {
+  return errorResponse('At least one non-system message is required', {
+    status: 400,
+    type: 'invalid_request_error',
+    code: 'invalid_messages',
+  });
+}
+
+/** 502 response for an upstream body that is not the JSON we expect. */
+export function invalidResponse(label, error) {
+  return errorResponse(`Invalid ${label}: ${error?.message || error}`, {
+    status: 502,
+    type: 'upstream_error',
+    code: 'invalid_response',
+  });
 }
 
 export function isAbortError(error) {
@@ -154,6 +183,59 @@ export async function passthroughJson(upstream) {
   const text = await upstream.text();
   const contentType = upstream.headers?.get?.('content-type') || JSON_HEADERS['Content-Type'];
   return new Response(text, { status: upstream.status || 200, headers: { 'Content-Type': contentType } });
+}
+
+/**
+ * Run the fetch/stream/decode half of a JSON adapter exchange.
+ *
+ * Adapters keep their own guard clauses and request building (both are
+ * protocol specific) and hand the finished request here; everything after it
+ * is identical across the JSON adapters.
+ *
+ * @param {object} options
+ * @param {string} options.url
+ * @param {Record<string, string>} options.headers
+ * @param {Record<string, any>} options.payload Serialized as the JSON body.
+ * @param {string} options.label Base name for errors ("Anthropic", "Google").
+ * @param {string} [options.invalidLabel] Overrides `Invalid <label> response`.
+ * @param {boolean} [options.stream] Return the upstream SSE stream as-is.
+ * @param {() => any} [options.streamHandler] Factory for the SSE translator.
+ * @param {(json: any) => any} options.translate Builds the completion payload.
+ * @param {any} options.ctx Resolved provider context (`fetchImpl`, `signal`).
+ */
+export async function runJsonAdapter({
+  url,
+  headers,
+  payload,
+  label,
+  invalidLabel = `${label} response`,
+  stream = false,
+  streamHandler,
+  translate,
+  ctx,
+}) {
+  const doFetch = ctx?.fetchImpl || fetch;
+  let upstream;
+  try {
+    upstream = await doFetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: ctx?.signal,
+    });
+  } catch (error) {
+    return networkError(error, `${label} request`);
+  }
+
+  if (!upstream.ok) return upstreamErrorResponse(upstream);
+  if (stream) return sseResponse(upstream, streamHandler());
+  let json;
+  try {
+    json = await upstream.json();
+  } catch (error) {
+    return invalidResponse(invalidLabel, error);
+  }
+  return new Response(JSON.stringify(translate(json)), { status: 200, headers: JSON_HEADERS });
 }
 
 /** Normalize whatever parseSse yields into a parsed event object. */
@@ -245,7 +327,7 @@ export function sseResponse(upstream, handler) {
           await handler?.onEvent?.(event, emit);
         }
         await handler?.onEnd?.(emit);
-        emit(typeof done === 'function' ? done() : 'data: [DONE]\n\n');
+        emit(done());
       } catch (error) {
         if (!isAbortError(error)) emit(errorFrame(error));
       } finally {
@@ -265,7 +347,24 @@ export function sseResponse(upstream, handler) {
       }
     },
   });
-  return new Response(body, { status: 200, headers: SSE_HEADERS });
+  return new Response(body, { status: 200, headers: sseHeaders() });
+}
+
+/**
+ * Wrap a one-shot finish block: the terminal chunk and the usage frame are
+ * emitted at most once, whichever of `message_stop` / `onEnd` fires first.
+ * @param {() => any} buildFinishChunk
+ * @param {() => any} buildUsageFrame Returns a frame, or null when there is no usage.
+ */
+export function createFinishEmitter(buildFinishChunk, buildUsageFrame) {
+  let finished = false;
+  return (emit) => {
+    if (finished) return;
+    finished = true;
+    emit(buildFinishChunk());
+    const usage = buildUsageFrame();
+    if (usage) emit(usage);
+  };
 }
 
 export function contentToText(content) {
@@ -284,6 +383,16 @@ export function contentToText(content) {
   return '';
 }
 
+/**
+ * Split a `data:<mime>;base64,<payload>` URL into its parts.
+ * @param {string} url
+ * @returns {{mimeType: string, data: string}|null}
+ */
+export function parseDataUrl(url) {
+  const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(url || '');
+  return match ? { mimeType: match[1], data: match[2] } : null;
+}
+
 export function parseJsonObject(value) {
   if (value == null || value === '') return {};
   if (typeof value === 'object') return Array.isArray(value) ? {} : value;
@@ -293,6 +402,28 @@ export function parseJsonObject(value) {
   } catch {
     return {};
   }
+}
+
+/**
+ * Normalize OpenAI-style `tools` into a vendor schema keyed by `schemaKey`
+ * (`input_schema` for Anthropic, `parameters` for the Responses API).
+ * @param {any} tools
+ * @param {string} schemaKey
+ * @param {Record<string, any>} [extra] Leading fields such as `{ type: 'function' }`.
+ */
+export function translateFunctionTools(tools, schemaKey, extra = {}) {
+  if (!Array.isArray(tools)) return [];
+  const out = [];
+  for (const tool of tools) {
+    const fn = tool?.function || tool;
+    if (!fn?.name) continue;
+    const entry = { ...extra, name: fn.name };
+    if (fn.description) entry.description = fn.description;
+    entry[schemaKey] =
+      fn.parameters && typeof fn.parameters === 'object' ? fn.parameters : { type: 'object', properties: {} };
+    out.push(entry);
+  }
+  return out;
 }
 
 /** Append content blocks to a role message, merging consecutive same-role turns. */
@@ -308,24 +439,11 @@ export function pushContent(list, role, parts) {
 }
 
 export async function chat(req, ctx) {
-  if (!ctx?.baseUrl) {
-    return errorResponse('Provider baseUrl is not configured', {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'missing_base_url',
-    });
-  }
-  if (!hasCredential(ctx) && !isKeyless(ctx)) {
-    return errorResponse(`Missing API key for provider ${ctx.provider || 'unknown'}`, {
-      status: 401,
-      type: 'authentication_error',
-      code: 'missing_api_key',
-    });
-  }
+  if (!ctx?.baseUrl) return missingBaseUrl();
+  if (!hasCredential(ctx) && !isKeyless(ctx)) return missingApiKey(ctx, 'unknown');
 
   const extra = ctx.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
   const body = { ...(req || {}) };
-  body.model = ctx.model || body.model;
 
   if (extra.omitReasoningEffort) delete body.reasoning_effort;
   if (extra.maxCompletionTokens && body.max_completion_tokens === undefined && body.max_tokens !== undefined) {
@@ -352,7 +470,7 @@ export async function chat(req, ctx) {
   }
 
   if (!upstream.ok) return upstreamErrorResponse(upstream);
-  if (body.stream) return new Response(upstream.body, { status: 200, headers: SSE_HEADERS });
+  if (body.stream) return new Response(upstream.body, { status: 200, headers: sseHeaders() });
   return passthroughJson(upstream);
 }
 
@@ -370,7 +488,7 @@ export async function listModels(ctx) {
     throw new Error(`OpenAI listModels failed: HTTP ${response.status}`);
   }
   const json = await response.json();
-  const list = Array.isArray(json?.data) ? json.data : Array.isArray(json?.models) ? json.models : Array.isArray(json) ? json : [];
+  const list = [json?.data, json?.models, json].find(Array.isArray) || [];
   return list.map((item) => ({
     id: typeof item === 'string' ? item : item.id,
     name: typeof item === 'string' ? item : item.name || item.id,

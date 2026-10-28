@@ -8,7 +8,7 @@ Prerequisites:
 - Server plugin installed at `plugins/omtp/` and `enableServerPlugins: true`.
 - Mock provider running: `node tests/fixtures/mock-openai.mjs` (port 4199).
 
-Configure a custom provider in OMTP settings:
+Configure a custom provider from the hub's **Sign-in** tab (**Add custom provider**):
 
 - id: `mock`
 - label: `Mock`
@@ -26,9 +26,8 @@ Browser checks:
    match, and settings survive reload.
 3. Disable the extension and reload. Verify the native selector returns and the
    last native selection remains usable.
-4. Re-enable, turn on **Enable OMTP protocol providers**, confirm the warning,
-   select `mock/echo`, and verify
-   `custom_url=http://127.0.0.1:4100/v1`,
+4. Re-enable the extension, select `mock/echo` in the hub (gateway entries carry
+   the `OMTP` badge), and verify `custom_url=http://127.0.0.1:4100/v1`,
    `custom_model=mock/echo`, and the bearer header is set.
 5. Send `ping`; the mock returns `pong`.
 6. Toggle **Hide native API selector** off/on; verify visibility survives reload.

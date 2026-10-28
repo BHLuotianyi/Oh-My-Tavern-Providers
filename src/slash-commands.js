@@ -18,8 +18,7 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { SlashCommandParser } from '../../../../slash-commands/SlashCommandParser.js';
 import { oai_settings } from '../../../../openai.js';
 import { getRequestHeaders } from '../../../../../script.js';
-import { API_BASE } from './constants.js';
-import { REASONING_LEVELS } from './constants.js';
+import { API_BASE, REASONING_LEVELS } from './constants.js';
 import { EFFORT_ALIASES, normalizeEffortList } from './reasoning.js';
 import { getEntries, resolveEntry, withProviderAvailability } from './catalog.js';
 import { switchToSelector } from './public-api.js';
@@ -171,6 +170,21 @@ function currentLevel(entry) {
 }
 
 /**
+ * Error for an `/effort` argument that names no available level.
+ * @param {string} requested
+ * @param {string[]} levels
+ * @returns {Error}
+ */
+function unknownEffortError(requested, levels) {
+    return new Error(trf(
+        'omtp_unknown_effort',
+        'Unknown thinking level: ${0}. Available: ${1}',
+        requested.toLowerCase(),
+        levels.join(', '),
+    ));
+}
+
+/**
  * Set a level with no model selected (no connection yet): ST's own reasoning
  * control still applies, exactly like the built-in settings dropdown.
  * @param {string|null} requested
@@ -182,12 +196,7 @@ function setGlobalLevel(requested) {
     if (requested) {
         const resolved = resolveLevel(requested, REASONING_LEVELS);
         if (!resolved) {
-            throw new Error(trf(
-                'omtp_unknown_effort',
-                'Unknown thinking level: ${0}. Available: ${1}',
-                requested.toLowerCase(),
-                REASONING_LEVELS.join(', '),
-            ));
+            throw unknownEffortError(requested, REASONING_LEVELS);
         }
         level = resolved;
     } else {
@@ -366,12 +375,7 @@ export function initSlashCommands(hooks = {}) {
                 }
                 const resolved = resolveLevel(requested, levels);
                 if (!resolved) {
-                    throw new Error(trf(
-                        'omtp_unknown_effort',
-                        'Unknown thinking level: ${0}. Available: ${1}',
-                        requested.toLowerCase(),
-                        levels.join(', '),
-                    ));
+                    throw unknownEffortError(requested, levels);
                 }
                 return setLevel(entry, resolved);
             },

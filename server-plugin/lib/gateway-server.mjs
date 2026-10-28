@@ -15,14 +15,14 @@ import { log, logError } from './redact.mjs';
 import { getAdapter } from './adapters/index.mjs';
 import { createUsageTap, tokensFromOpenAIUsage } from './stats.mjs';
 
-export const GATEWAY_VERSION = '0.1.0';
+const GATEWAY_VERSION = '0.1.0';
 const FALLBACK_PORTS = Object.freeze([4100, 4101, 4102, 4103, 4104, 4105, 4106, 4107, 4108, 4109, 4110]);
 
 /**
  * @param {string} modelRef
  * @returns {{provider:string, model:string}|null}
  */
-export function splitModelRef(modelRef) {
+function splitModelRef(modelRef) {
     if (typeof modelRef !== 'string') return null;
     const trimmed = modelRef.trim();
     const separator = trimmed.indexOf('/');
@@ -47,10 +47,11 @@ async function probeHealth(port) {
 }
 
 /**
+ * Wrap an async route so rejections reach Express's error middleware.
  * @param {any} fn
  * @returns {any}
  */
-function asyncHandler(fn) {
+export function asyncHandler(fn) {
     return (req, res, next) => {
         Promise.resolve(fn(req, res, next)).catch(next);
     };
@@ -303,29 +304,33 @@ export class GatewayServer {
     }
 
     /**
+     * Validate a chat request and resolve the adapter. Writes the error
+     * response and returns null when the request cannot be forwarded.
+     *
      * @param {import('express').Request} req
      * @param {import('express').Response} res
+     * @returns {Promise<{ref:any, catalogProvider:any, resolved:any, modelInfo:any, adapter:any}|null>}
      */
-    async _handleChat(req, res) {
+    async _resolveChat(req, res) {
         const body = req.body;
         if (!body || typeof body !== 'object' || Array.isArray(body)) {
             res.status(400).json(openAIErrorEnvelope('Request body must be a JSON object', 'invalid_request_error', 'invalid_body'));
-            return;
+            return null;
         }
         const ref = splitModelRef(body.model);
         if (!ref) {
             res.status(400).json(openAIErrorEnvelope('Invalid model; expected provider/model', 'invalid_request_error', 'invalid_model'));
-            return;
+            return null;
         }
         if (!Array.isArray(body.messages)) {
             res.status(400).json(openAIErrorEnvelope('messages must be an array', 'invalid_request_error', 'invalid_messages'));
-            return;
+            return null;
         }
 
         const catalogProvider = await this.catalogService.getProvider(ref.provider);
         if (!catalogProvider) {
             res.status(404).json(openAIErrorEnvelope(`Unknown provider: ${ref.provider}`, 'invalid_request_error', 'model_not_found'));
-            return;
+            return null;
         }
         const resolved = await this.keyStore.resolveProvider(catalogProvider);
         if (!resolved.adapter) {
@@ -334,7 +339,7 @@ export class GatewayServer {
                 'invalid_request_error',
                 'unsupported_provider',
             ));
-            return;
+            return null;
         }
         // Live-discovered models (provider /models) are not in the bundled
         // catalog; forward them with minimal metadata.
@@ -343,7 +348,7 @@ export class GatewayServer {
             || { id: ref.model, name: ref.model };
         if (!resolved.baseUrl) {
             res.status(400).json(openAIErrorEnvelope(`Provider ${ref.provider} has no base URL`, 'invalid_request_error', 'invalid_provider_config'));
-            return;
+            return null;
         }
         if (!resolved.available) {
             res.status(401).json(openAIErrorEnvelope(
@@ -351,7 +356,7 @@ export class GatewayServer {
                 'authentication_error',
                 'missing_api_key',
             ));
-            return;
+            return null;
         }
 
         const adapter = await this.adapterResolver(resolved.adapter);
@@ -361,8 +366,19 @@ export class GatewayServer {
                 'invalid_request_error',
                 'unsupported_provider',
             ));
-            return;
+            return null;
         }
+        return { ref, catalogProvider, resolved, modelInfo, adapter };
+    }
+
+    /**
+     * @param {import('express').Request} req
+     * @param {import('express').Response} res
+     */
+    async _handleChat(req, res) {
+        const target = await this._resolveChat(req, res);
+        if (!target) return;
+        const { ref, catalogProvider, resolved, modelInfo, adapter } = target;
 
         const controller = new AbortController();
         this._inflight.add(controller);
@@ -373,7 +389,7 @@ export class GatewayServer {
 
         try {
             const ctx = await buildGatewayContext(resolved, this.keyStore, ref.model, controller.signal, catalogProvider, modelInfo);
-            const upstream = await adapter.chat({ ...body, model: ref.model }, ctx);
+            const upstream = await adapter.chat({ ...req.body, model: ref.model }, ctx);
             if (!(upstream instanceof Response)) {
                 throw Object.assign(new Error('Adapter returned an invalid response'), { status: 502, type: 'gateway_error' });
             }
@@ -398,29 +414,9 @@ export class GatewayServer {
                 { isStream: String(upstream.headers.get('content-type') || '').includes('text/event-stream') },
             );
             if (upstream.body) {
-                const nodeStream = Readable.fromWeb(/** @type {any} */ (upstream.body));
-                nodeStream.on('error', (error) => {
-                    if (controller.signal.aborted) return;
-                    logError('gateway stream failed', error);
-                    if (!res.headersSent) {
-                        res.status(502).json(openAIErrorEnvelope(
-                            error instanceof Error ? error.message : 'Upstream stream failed',
-                            'gateway_error',
-                            'upstream_error',
-                        ));
-                    } else {
-                        res.destroy();
-                    }
-                });
-                res.on('close', () => {
-                    if (!nodeStream.destroyed) nodeStream.destroy();
-                });
-                nodeStream.pipe(createUsageTransform(usageTap)).pipe(res);
+                pipeUpstream(upstream, res, controller, usageTap);
             } else {
-                const text = await upstream.text();
-                usageTap.push(text);
-                usageTap.end();
-                res.end(text);
+                await sendUpstreamText(upstream, res, usageTap);
             }
         } catch (error) {
             if (controller.signal.aborted) return;
@@ -434,11 +430,6 @@ export class GatewayServer {
     }
 }
 
-/**
- * Build the adapter ctx, resolving structured OAuth credentials (refreshing
- * when expired) the way OMP's AuthStorage does before a request.
- * @returns {Promise<any>}
- */
 /**
  * Pass-through stream that feeds the usage tap.
  * @param {any} tap
@@ -456,6 +447,53 @@ function createUsageTransform(tap) {
     });
 }
 
+/**
+ * Pipe a streaming upstream body to the client, feeding the usage tap and
+ * aborting the upstream when the client goes away.
+ * @param {Response} upstream
+ * @param {import('express').Response} res
+ * @param {AbortController} controller
+ * @param {any} usageTap
+ */
+function pipeUpstream(upstream, res, controller, usageTap) {
+    const nodeStream = Readable.fromWeb(/** @type {any} */ (upstream.body));
+    nodeStream.on('error', (error) => {
+        if (controller.signal.aborted) return;
+        logError('gateway stream failed', error);
+        if (!res.headersSent) {
+            res.status(502).json(openAIErrorEnvelope(
+                error instanceof Error ? error.message : 'Upstream stream failed',
+                'gateway_error',
+                'upstream_error',
+            ));
+        } else {
+            res.destroy();
+        }
+    });
+    res.on('close', () => {
+        if (!nodeStream.destroyed) nodeStream.destroy();
+    });
+    nodeStream.pipe(createUsageTransform(usageTap)).pipe(res);
+}
+
+/**
+ * Forward a non-streamed upstream body after feeding the usage tap.
+ * @param {Response} upstream
+ * @param {import('express').Response} res
+ * @param {any} usageTap
+ */
+async function sendUpstreamText(upstream, res, usageTap) {
+    const text = await upstream.text();
+    usageTap.push(text);
+    usageTap.end();
+    res.end(text);
+}
+
+/**
+ * Build the adapter ctx, resolving structured OAuth credentials (refreshing
+ * when expired) the way OMP's AuthStorage does before a request.
+ * @returns {Promise<any>}
+ */
 export async function buildGatewayContext(resolved, keyStore, model, signal, catalogProvider = null, modelInfo = null) {
     const { apiKey, credential } = await resolveAccessToken(resolved, keyStore);
     const ctx = buildProviderContext({ ...resolved, apiKey }, model, signal, catalogProvider, modelInfo);

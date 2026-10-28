@@ -2,19 +2,21 @@
 import { createHash, createHmac } from 'node:crypto';
 import {
   JSON_HEADERS,
-  SSE_HEADERS,
   contentToText,
   errorResponse,
+  invalidMessages,
+  invalidResponse,
   networkError,
   newCompletionId,
+  openAIUsage,
+  parseDataUrl,
   parseJsonObject,
   pushContent,
   trimSlash,
   upstreamErrorResponse,
   usageFrame,
-  openAIUsage,
 } from './openai.mjs';
-import { openAIChunk, done } from '../sse.mjs';
+import { openAIChunk, done, sseHeaders } from '../sse.mjs';
 
 export const id = 'bedrock';
 
@@ -79,25 +81,22 @@ function signRequest({ url, body, region, accessKeyId, secretAccessKey, sessionT
 
 function imageBlock(part) {
   const url = part?.image_url?.url || part?.image_url || part?.url;
-  const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(url || '');
-  if (!match) return null;
-  const mime = match[1].toLowerCase();
-  const format = mime.includes('jpeg') || mime.includes('jpg')
-    ? 'jpeg'
-    : mime.includes('gif')
-      ? 'gif'
-      : mime.includes('webp')
-        ? 'webp'
-        : 'png';
-  return { image: { format, source: { bytes: match[2] } } };
+  const parsed = parseDataUrl(url);
+  if (!parsed) return null;
+  const mime = parsed.mimeType.toLowerCase();
+  let format = 'png';
+  if (mime.includes('jpeg') || mime.includes('jpg')) format = 'jpeg';
+  else if (mime.includes('gif')) format = 'gif';
+  else if (mime.includes('webp')) format = 'webp';
+  return { image: { format, source: { bytes: parsed.data } } };
 }
 
-function buildConverse(req, ctx) {
-  const extra = ctx?.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
+/** Split OpenAI messages into Converse `system` blocks and merged turns. */
+function convertMessages(messages) {
   const system = [];
-  const messages = [];
+  const turns = [];
 
-  for (const message of Array.isArray(req?.messages) ? req.messages : []) {
+  for (const message of Array.isArray(messages) ? messages : []) {
     if (!message || typeof message !== 'object') continue;
     const role = message.role;
     if (role === 'system' || role === 'developer') {
@@ -106,7 +105,7 @@ function buildConverse(req, ctx) {
       continue;
     }
     if (role === 'tool' || role === 'function') {
-      pushContent(messages, 'user', [
+      pushContent(turns, 'user', [
         {
           toolResult: {
             toolUseId: message.tool_call_id || message.name || '',
@@ -131,7 +130,7 @@ function buildConverse(req, ctx) {
           },
         });
       }
-      if (blocks.length) pushContent(messages, 'assistant', blocks);
+      if (blocks.length) pushContent(turns, 'assistant', blocks);
       continue;
     }
     const blocks = [];
@@ -148,63 +147,74 @@ function buildConverse(req, ctx) {
       const text = contentToText(message.content);
       if (text) blocks.push({ text });
     }
-    if (blocks.length) pushContent(messages, 'user', blocks);
+    if (blocks.length) pushContent(turns, 'user', blocks);
   }
 
-  if (messages.length && messages[0].role !== 'user') {
-    messages.unshift({ role: 'user', content: [{ text: ' ' }] });
+  // Converse requires the transcript to start with a user turn.
+  if (turns.length && turns[0].role !== 'user') {
+    turns.unshift({ role: 'user', content: [{ text: ' ' }] });
   }
+  return { system, turns };
+}
 
-  const body = { messages };
-  if (system.length) body.system = system;
-
-  const inferenceConfig = {};
+function buildInferenceConfig(req, extra) {
+  const config = {};
   const maxTokens = req?.max_completion_tokens ?? req?.max_tokens ?? extra.maxTokens;
   if (maxTokens != null && Number.isFinite(Number(maxTokens))) {
-    inferenceConfig.maxTokens = Math.floor(Number(maxTokens));
+    config.maxTokens = Math.floor(Number(maxTokens));
   }
   if (req?.temperature != null && Number.isFinite(Number(req.temperature))) {
-    inferenceConfig.temperature = Math.min(1, Math.max(0, Number(req.temperature)));
+    config.temperature = Math.min(1, Math.max(0, Number(req.temperature)));
   }
   if (req?.top_p != null && Number.isFinite(Number(req.top_p))) {
-    inferenceConfig.topP = Math.min(1, Math.max(0, Number(req.top_p)));
+    config.topP = Math.min(1, Math.max(0, Number(req.top_p)));
   }
   if (req?.stop != null) {
     const stop = (Array.isArray(req.stop) ? req.stop : [req.stop]).filter(Boolean).slice(0, 4);
-    if (stop.length) inferenceConfig.stopSequences = stop;
+    if (stop.length) config.stopSequences = stop;
   }
+  return config;
+}
+
+function buildToolConfig(req) {
+  if (!Array.isArray(req?.tools) || !req.tools.length || req.tool_choice === 'none') return null;
+  const tools = [];
+  for (const tool of req.tools) {
+    const fn = tool?.function || tool;
+    if (!fn?.name) continue;
+    const toolSpec = { name: fn.name };
+    if (fn.description) toolSpec.description = fn.description;
+    toolSpec.inputSchema = {
+      json:
+        fn.parameters && typeof fn.parameters === 'object'
+          ? fn.parameters
+          : { type: 'object', properties: {} },
+    };
+    tools.push({ toolSpec });
+  }
+  if (!tools.length) return null;
+  const toolConfig = { tools };
+  if (req.tool_choice === 'required' || req.tool_choice === 'any') toolConfig.toolChoice = { any: {} };
+  else if (typeof req.tool_choice === 'object') {
+    const name = req.tool_choice.function?.name || req.tool_choice.name;
+    if (name) toolConfig.toolChoice = { tool: { name } };
+  }
+  return toolConfig;
+}
+
+function buildConverse(req, ctx) {
+  const extra = ctx?.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
+  const { system, turns } = convertMessages(req?.messages);
+  const body = { messages: turns };
+  if (system.length) body.system = system;
+  const inferenceConfig = buildInferenceConfig(req, extra);
   if (Object.keys(inferenceConfig).length) body.inferenceConfig = inferenceConfig;
-
-  if (Array.isArray(req?.tools) && req.tools.length && req.tool_choice !== 'none') {
-    const tools = [];
-    for (const tool of req.tools) {
-      const fn = tool?.function || tool;
-      if (!fn?.name) continue;
-      const toolSpec = { name: fn.name };
-      if (fn.description) toolSpec.description = fn.description;
-      toolSpec.inputSchema = {
-        json:
-          fn.parameters && typeof fn.parameters === 'object'
-            ? fn.parameters
-            : { type: 'object', properties: {} },
-      };
-      tools.push({ toolSpec });
-    }
-    if (tools.length) {
-      const toolConfig = { tools };
-      if (req.tool_choice === 'required' || req.tool_choice === 'any') toolConfig.toolChoice = { any: {} };
-      else if (typeof req.tool_choice === 'object') {
-        const name = req.tool_choice.function?.name || req.tool_choice.name;
-        if (name) toolConfig.toolChoice = { tool: { name } };
-      }
-      body.toolConfig = toolConfig;
-    }
-  }
-
+  const toolConfig = buildToolConfig(req);
+  if (toolConfig) body.toolConfig = toolConfig;
   if (extra.body && typeof extra.body === 'object' && !Array.isArray(extra.body)) {
     Object.assign(body, extra.body);
   }
-  body.messages = messages;
+  body.messages = turns;
   return body;
 }
 
@@ -297,7 +307,7 @@ function synthesizeSse(completion) {
   }
   frames.push(openAIChunk({}, completion.choices[0].finish_reason));
   frames.push(usageFrame(completion.usage, completion.model));
-  frames.push(typeof done === 'function' ? done() : 'data: [DONE]\n\n');
+  frames.push(done());
   return frames.join('');
 }
 
@@ -317,13 +327,7 @@ export async function chat(req, ctx) {
   }
 
   const body = buildConverse(req, ctx);
-  if (!body.messages?.length) {
-    return errorResponse('At least one non-system message is required', {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'invalid_messages',
-    });
-  }
+  if (!body.messages?.length) return invalidMessages();
 
   const base = trimSlash(ctx.baseUrl || '').replace('{region}', region);
   const url =
@@ -358,16 +362,12 @@ export async function chat(req, ctx) {
   try {
     json = await upstream.json();
   } catch (error) {
-    return errorResponse(`Invalid Bedrock response: ${error?.message || error}`, {
-      status: 502,
-      type: 'upstream_error',
-      code: 'invalid_response',
-    });
+    return invalidResponse('Bedrock response', error);
   }
 
   const completion = translateConverse(json, ctx.model);
   if (req?.stream) {
-    return new Response(synthesizeSse(completion), { status: 200, headers: SSE_HEADERS });
+    return new Response(synthesizeSse(completion), { status: 200, headers: sseHeaders() });
   }
   return new Response(JSON.stringify(completion), { status: 200, headers: JSON_HEADERS });
 }

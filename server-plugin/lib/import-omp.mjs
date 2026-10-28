@@ -3,9 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import child_process from 'node:child_process';
 import util from 'node:util';
-import { normalizeCatalog, validateCatalog } from './catalog-normalize.mjs';
-import { IMPORTED_CATALOG_FILE, getOmtpRoot, omtpPath, writeJsonAtomic } from './config.mjs';
-import { stripCatalogCredentials } from './catalog-normalize.mjs';
+import { normalizeCatalog, stripCatalogCredentials, validateCatalog } from './catalog-normalize.mjs';
+import { IMPORTED_CATALOG_FILE, getOmtpRoot, omtpPath, readJsonFile, writeJsonAtomic } from './config.mjs';
 import { providerMapFromCatalog } from './catalog-service.mjs';
 import { logError } from './redact.mjs';
 import { OAUTH_PROVIDERS } from './oauth.mjs';
@@ -35,7 +34,6 @@ async function queryAuthCredentialsFallback(dbPath) {
 
     return null;
 }
-export const DEFAULT_OMP_ROOT = '/home/winster42/test/oh-my-pi';
 
 /**
  * @param {string} candidate
@@ -74,11 +72,29 @@ async function resolveCatalogPaths(candidate) {
 }
 
 /**
- * @param {string} file
- * @returns {Promise<any>}
+ * Map one `auth_credentials` row onto a provider key patch, or null when the
+ * row is unusable (unknown provider, unparsable data, empty secret).
+ * @param {any} row
+ * @returns {{provider:string, apiKey:string}|null}
  */
-async function readJson(file) {
-    return JSON.parse(await fs.promises.readFile(file, 'utf8'));
+function credentialPatch(row) {
+    const provider = String(row.provider || '');
+    if (!provider) return null;
+    let parsed;
+    try {
+        parsed = JSON.parse(String(row.data || ''));
+    } catch {
+        return null;
+    }
+    if (row.credential_type === 'oauth') {
+        if (!Object.prototype.hasOwnProperty.call(OAUTH_PROVIDERS, provider)) return null;
+        const access = parsed?.access ?? parsed?.token ?? parsed?.accessToken;
+        if (typeof access !== 'string' || !access.trim()) return null;
+        return { provider, apiKey: JSON.stringify({ type: 'oauth', ...parsed }) };
+    }
+    const key = typeof parsed?.key === 'string' ? parsed.key : typeof parsed?.apiKey === 'string' ? parsed.apiKey : '';
+    if (!key.trim()) return null;
+    return { provider, apiKey: key.trim() };
 }
 
 /**
@@ -122,26 +138,10 @@ export async function importOmpCredentials({ keyStore, homeDir = os.homedir(), _
         }
         const imported = new Set();
         for (const row of rows) {
-            const provider = String(row.provider || '');
-            if (!provider) continue;
-            let parsed;
-            try {
-                parsed = JSON.parse(String(row.data || ''));
-            } catch {
-                continue;
-            }
-            if (row.credential_type === 'oauth') {
-                if (!Object.prototype.hasOwnProperty.call(OAUTH_PROVIDERS, provider)) continue;
-                const access = parsed?.access ?? parsed?.token ?? parsed?.accessToken;
-                if (typeof access !== 'string' || !access.trim()) continue;
-                await keyStore.setProviderConfig(provider, { apiKey: JSON.stringify({ type: 'oauth', ...parsed }) });
-                imported.add(provider);
-                continue;
-            }
-            const key = typeof parsed?.key === 'string' ? parsed.key : typeof parsed?.apiKey === 'string' ? parsed.apiKey : '';
-            if (!key.trim()) continue;
-            await keyStore.setProviderConfig(provider, { apiKey: key.trim() });
-            imported.add(provider);
+            const patch = credentialPatch(row);
+            if (!patch) continue;
+            await keyStore.setProviderConfig(patch.provider, { apiKey: patch.apiKey });
+            imported.add(patch.provider);
         }
         return { available: true, imported: imported.size, providers: [...imported].sort() };
     } catch (error) {
@@ -174,7 +174,7 @@ export async function importOmpCredentials({ keyStore, homeDir = os.homedir(), _
 export async function importFromOmp(options = {}) {
     const root = options.root || getOmtpRoot();
     const requestedPath = options.catalogPath ? String(options.catalogPath).trim() : '';
-    const candidates = requestedPath ? [requestedPath] : [DEFAULT_OMP_ROOT, path.join(os.homedir(), 'oh-my-pi')];
+    const candidates = requestedPath ? [requestedPath] : [path.join(os.homedir(), 'oh-my-pi')];
 
     /** @type {{modelsPath:string, rulesPath:string}|null} */
     let paths = null;
@@ -194,7 +194,7 @@ export async function importFromOmp(options = {}) {
 
     if (paths) {
         try {
-            const [models, rules] = await Promise.all([readJson(paths.modelsPath), readJson(paths.rulesPath)]);
+            const [models, rules] = await Promise.all([readJsonFile(paths.modelsPath), readJsonFile(paths.rulesPath)]);
             const providerMap = providerMapFromCatalog(options.bundledCatalog || null);
             const catalog = normalizeCatalog(models, rules, providerMap);
             const validation = validateCatalog(catalog, { expectedProviders: 0, minModels: 0 });

@@ -12,27 +12,13 @@ import { PROTECTED_EXTRA_BODY_KEYS, ST_EVENTS } from '../constants.js';
 import { getEntryKey, getSettings, saveSettings } from '../store.js';
 import { captureSelection } from '../switch-engine.js';
 import { tr } from './dom.js';
+import { isPlainObject, notify, el } from './helpers.js';
 
 const CLEANUP_KEY = '__omtpExtraBodyCleanup';
 
 /** @type {Array<[string, Function]>} */
 let hooks = [];
 let initialized = false;
-
-function notify(kind, message) {
-    const fn = globalThis.toastr?.[kind];
-    if (typeof fn === 'function') {
-        fn(message);
-    } else if (kind === 'error') {
-        console.error('[omtp]', message);
-    } else {
-        console.log('[omtp]', message);
-    }
-}
-
-function isPlainObject(value) {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}
 
 function cloneValue(value) {
     if (value === null || typeof value !== 'object') {
@@ -110,16 +96,12 @@ function applyExtraBody(payload) {
     }
 }
 
-function onChatCompletionSettingsReady(generateData) {
+function onGenerationSettingsReady(generateData) {
     applyExtraBody(generateData);
 }
 
 function onTextCompletionSettingsReady(params) {
     applyExtraBody(params);
-}
-
-function onGenerateAfterData(generateData) {
-    applyExtraBody(generateData);
 }
 
 /**
@@ -138,9 +120,9 @@ export function initExtraBody() {
         : eventSource.on.bind(eventSource);
 
     const entries = [
-        [eventName('CHAT_COMPLETION_SETTINGS_READY'), onChatCompletionSettingsReady],
+        [eventName('CHAT_COMPLETION_SETTINGS_READY'), onGenerationSettingsReady],
         [eventName('TEXT_COMPLETION_SETTINGS_READY'), onTextCompletionSettingsReady],
-        [eventName('GENERATE_AFTER_DATA'), onGenerateAfterData],
+        [eventName('GENERATE_AFTER_DATA'), onGenerationSettingsReady],
     ];
     for (const [name, handler] of entries) {
         if (!name) {
@@ -226,6 +208,69 @@ function entryLabel(entry, key) {
     return key;
 }
 
+/** Build the editor form and its validation line. */
+function buildExtraBodyEditor(existing) {
+    const wrapper = el('div', 'omtp-extra-body-editor');
+    wrapper.append(el(
+        'div',
+        'omtp-muted',
+        tr(
+            'omtp_extra_body_hint',
+            'Plain JSON object merged into the request body. Model, messages, stream and API routing keys are managed by OMTP.',
+        ),
+    ));
+
+    const textarea = el('textarea', 'text_pole monospace');
+    textarea.id = 'omtp-extra-body-json';
+    textarea.rows = 12;
+    textarea.style.width = '100%';
+    textarea.spellcheck = false;
+    textarea.value = isPlainObject(existing) ? JSON.stringify(existing, null, 2) : '';
+    textarea.placeholder = '{\n  "top_k": 42\n}';
+    wrapper.append(textarea);
+
+    const errorLine = el('div', 'omtp-muted');
+    errorLine.setAttribute('role', 'alert');
+    wrapper.append(errorLine);
+
+    return { wrapper, textarea, errorLine };
+}
+
+/** Persist the editor contents; returns false to keep the popup open. */
+function handleEditorClosing(current, { key, label, textarea, errorLine }) {
+    if (current.result !== POPUP_RESULT.AFFIRMATIVE) {
+        return true;
+    }
+    const raw = textarea.value.trim();
+    const live = getSettings();
+    live.extraBodies ??= {};
+
+    if (!raw) {
+        delete live.extraBodies[key];
+        saveSettings();
+        notify('success', `Extra body removed for ${label}`);
+        return true;
+    }
+
+    const parsed = parseExtraBody(raw);
+    if (parsed.error) {
+        errorLine.textContent = parsed.error;
+        return false;
+    }
+    if (parsed.removed?.length) {
+        errorLine.textContent = `Removed OMTP-managed keys: ${parsed.removed.join(', ')}`;
+        notify('warning', `Key "${parsed.removed[0]}" is managed by OMTP and cannot be overridden`);
+    }
+    if (Object.keys(parsed.value ?? {}).length === 0) {
+        delete live.extraBodies[key];
+    } else {
+        live.extraBodies[key] = parsed.value;
+    }
+    saveSettings();
+    notify('success', `Extra body saved for ${label}`);
+    return true;
+}
+
 /**
  * Open the extra-body editor popup for an entry.
  * @param {object|string} entry Catalog entry, EntryRef or entry key
@@ -243,32 +288,7 @@ export async function openExtraBodyEditor(entry) {
     const settings = getSettings();
     const existing = settings.extraBodies?.[key];
     const label = entryLabel(entry, key);
-
-    const wrapper = document.createElement('div');
-    wrapper.classList.add('omtp-extra-body-editor');
-
-    const hint = document.createElement('div');
-    hint.classList.add('omtp-muted');
-    hint.textContent = tr(
-        'omtp_extra_body_hint',
-        'Plain JSON object merged into the request body. Model, messages, stream and API routing keys are managed by OMTP.',
-    );
-    wrapper.append(hint);
-
-    const textarea = document.createElement('textarea');
-    textarea.id = 'omtp-extra-body-json';
-    textarea.classList.add('text_pole', 'monospace');
-    textarea.rows = 12;
-    textarea.style.width = '100%';
-    textarea.spellcheck = false;
-    textarea.value = isPlainObject(existing) ? JSON.stringify(existing, null, 2) : '';
-    textarea.placeholder = '{\n  "top_k": 42\n}';
-    wrapper.append(textarea);
-
-    const errorLine = document.createElement('div');
-    errorLine.classList.add('omtp-muted');
-    errorLine.setAttribute('role', 'alert');
-    wrapper.append(errorLine);
+    const { wrapper, textarea, errorLine } = buildExtraBodyEditor(existing);
 
     const popup = new Popup(wrapper, POPUP_TYPE.CONFIRM, null, {
         okButton: tr('omtp_save', 'Save'),
@@ -276,42 +296,10 @@ export async function openExtraBodyEditor(entry) {
         customButtons: [{ text: tr('omtp_delete', 'Delete'), result: POPUP_RESULT.CUSTOM1 }],
         wide: true,
         allowVerticalScrolling: true,
-        onClosing: (current) => {
-            if (current.result !== POPUP_RESULT.AFFIRMATIVE) {
-                return true;
-            }
-            const raw = textarea.value.trim();
-            const live = getSettings();
-            live.extraBodies ??= {};
-
-            if (!raw) {
-                delete live.extraBodies[key];
-                saveSettings();
-                notify('success', `Extra body removed for ${label}`);
-                return true;
-            }
-
-            const parsed = parseExtraBody(raw);
-            if (parsed.error) {
-                errorLine.textContent = parsed.error;
-                return false;
-            }
-            if (parsed.removed?.length) {
-                errorLine.textContent = `Removed OMTP-managed keys: ${parsed.removed.join(', ')}`;
-                notify('warning', `Key "${parsed.removed[0]}" is managed by OMTP and cannot be overridden`);
-            }
-            if (Object.keys(parsed.value ?? {}).length === 0) {
-                delete live.extraBodies[key];
-            } else {
-                live.extraBodies[key] = parsed.value;
-            }
-            saveSettings();
-            notify('success', `Extra body saved for ${label}`);
-            return true;
-        },
+        onClosing: (current) => handleEditorClosing(current, { key, label, textarea, errorLine }),
     });
 
-    if (existing && isPlainObject(existing)) {
+    if (isPlainObject(existing)) {
         popup.defaultResult = POPUP_RESULT.AFFIRMATIVE;
     }
 

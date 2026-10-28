@@ -159,18 +159,6 @@ export async function ensureGatewayToken(root = getOmtpRoot()) {
 }
 
 /**
- * @param {string} root
- * @returns {Promise<string>}
- */
-export async function readGatewayToken(root = getOmtpRoot()) {
-    try {
-        return (await fs.promises.readFile(omtpPath(root, TOKEN_FILE), 'utf8')).trim();
-    } catch {
-        return '';
-    }
-}
-
-/**
  * Constant-time string comparison for tokens.
  * @param {string} a
  * @param {string} b

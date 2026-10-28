@@ -2,8 +2,8 @@
  * Pure selector grammar and resolution.
  *
  * Deliberately free of SillyTavern / lib.js imports so it can be unit tested
- * in Node and reused by the hub UI. Fuzzy search is injected via `options.fuse`
- * (the UI passes a Fuse instance from /lib.js).
+ * in Node and reused by the hub UI. The hub keeps its own fuzzy index for row
+ * search, so ranking here is exact-match plus substring only.
  */
 
 import { MAX_SEARCH_RESULTS, REASONING_LEVELS } from './constants.js';
@@ -72,36 +72,22 @@ function providerLookup(providers) {
 
 function isExactSelector(text, options) {
     const needle = lower(text);
-    if (!needle) {
+    if (!needle || !Array.isArray(options.entries)) {
         return false;
     }
 
-    if (Array.isArray(options.entries)) {
-        return options.entries.some((entry) => {
-            if (!entry) {
-                return false;
-            }
-            const model = lower(entry.model);
-            if (!model) {
-                return false;
-            }
-            return model === needle
-                || lower(entry.key) === needle
-                || `${lower(entry.provider)}/${model}` === needle;
-        });
-    }
-
-    const exact = options.exactModelIds;
-    if (exact) {
-        const ids = exact instanceof Set
-            ? [...exact]
-            : Array.isArray(exact)
-                ? exact
-                : Object.keys(exact);
-        return ids.some((id) => lower(id) === needle);
-    }
-
-    return false;
+    return options.entries.some((entry) => {
+        if (!entry) {
+            return false;
+        }
+        const model = lower(entry.model);
+        if (!model) {
+            return false;
+        }
+        return model === needle
+            || lower(entry.key) === needle
+            || `${lower(entry.provider)}/${model}` === needle;
+    });
 }
 
 function splitLevel(text, options) {
@@ -123,7 +109,7 @@ function splitLevel(text, options) {
  * Lex the selector string.
  *
  * @param {string} input
- * @param {{providers?: string[]|Set<string>|object, entries?: object[], exactModelIds?: string[]|Set<string>|object, quickSlots?: object[]}} [options]
+ * @param {{providers?: string[]|Set<string>|object, entries?: object[], quickSlots?: object[]}} [options]
  * @returns {{raw: string, kind: 'empty'|'slot'|'alias'|'ref'|'query', slot?: number, alias?: 'favorites'|'recents', provider?: string, model?: string, level?: string|null}}
  */
 export function parseSelector(input, options = {}) {
@@ -187,12 +173,24 @@ function matchTier(entry, needle, favoriteKeys, recentKeys) {
     return 4;
 }
 
+/** Tier for an entry when the query is empty: favorites, recents, then the rest. */
+function emptyQueryTier(entry, favoriteKeys, recentKeys) {
+    const key = lower(entry.key);
+    if (favoriteKeys.has(key)) {
+        return 0;
+    }
+    if (recentKeys.has(key)) {
+        return 1;
+    }
+    return 2;
+}
+
 /**
  * Rank entries for a search query.
  *
  * Exact `provider/model` wins, then exact model id, then favorites, then
- * recents, then fuzzy/substring matches. `options.fuse` may be a Fuse
- * instance; otherwise a simple case-insensitive substring scorer is used.
+ * recents, then case-insensitive substring matches on the model and provider
+ * labels.
  */
 export function rankEntries(entries, query, options = {}) {
     const list = Array.isArray(entries) ? entries.filter(Boolean) : [];
@@ -208,7 +206,7 @@ export function rankEntries(entries, query, options = {}) {
             .map((entry, index) => ({
                 entry,
                 index,
-                tier: favoriteKeys.has(lower(entry.key)) ? 0 : recentKeys.has(lower(entry.key)) ? 1 : 2,
+                tier: emptyQueryTier(entry, favoriteKeys, recentKeys),
                 score: 0,
             }))
             .sort(compareRanked)
@@ -217,19 +215,6 @@ export function rankEntries(entries, query, options = {}) {
     }
 
     const needle = lower(raw);
-    const fuseScores = new Map();
-    if (options.fuse && typeof options.fuse.search === 'function') {
-        try {
-            for (const result of options.fuse.search(raw)) {
-                if (result && result.item) {
-                    fuseScores.set(result.item, typeof result.score === 'number' ? result.score : 1);
-                }
-            }
-        } catch {
-            // A malformed Fuse instance must never break selection.
-        }
-    }
-
     const ranked = [];
     list.forEach((entry, index) => {
         const provider = lower(entry.provider);
@@ -252,10 +237,6 @@ export function rankEntries(entries, query, options = {}) {
                 if (position >= 0) {
                     score = Math.min(score, 10 + position);
                 }
-            }
-            if (fuseScores.has(entry)) {
-                const fuseScore = 20 + fuseScores.get(entry);
-                score = Math.min(score, fuseScore);
             }
         }
 
@@ -310,7 +291,7 @@ export function resolveSelector(input, entries, options = {}) {
             return { error: `Quick slot ${parsed.slot + 1} is empty` };
         }
         const entry = findRef(ref);
-        if (!entry) {
+        if (!entry || entry.available === false) {
             return { error: `Quick slot ${parsed.slot + 1} points to an unavailable model` };
         }
         return { entry, level: parsed.level ?? undefined, warning: null };
@@ -321,7 +302,7 @@ export function resolveSelector(input, entries, options = {}) {
         const refs = Array.isArray(source) ? source : [];
         for (const ref of refs) {
             const entry = findRef(ref);
-            if (entry) {
+            if (entry && entry.available !== false) {
                 const label = parsed.alias === 'favorites' ? 'Favorites' : 'Recent models';
                 return {
                     entry,

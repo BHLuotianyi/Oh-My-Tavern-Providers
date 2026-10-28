@@ -13,6 +13,8 @@
 
 import { getSettings, saveSettings, getEntryKey, parseEntryKey } from './store.js';
 import { resolveEntry } from './catalog.js';
+import { API_BASE, EVENTS, MAX_RECENTS, REASONING_LEVELS } from './constants.js';
+import { currentChatId } from './usage-session.js';
 import { NATIVE_ADAPTERS } from './adapters/native.js';
 import {
   main_api,
@@ -34,9 +36,6 @@ const POLL_INTERVAL_MS = 100;
 const PROFILE_TIMEOUT_MS = 20000;
 const GATEWAY_STATUS_TTL_MS = 5000;
 const GATEWAY_TOKEN_TTL_MS = 60000;
-const MAX_RECENTS = 20;
-
-const REASONING_LEVELS = ['auto', 'min', 'low', 'medium', 'high', 'max'];
 
 /** [snapshot key, oai_settings field, DOM control] */
 const CUSTOM_FIELDS = [
@@ -71,7 +70,7 @@ async function getProviderStatuses() {
     return providerStatusCache.value;
   }
   try {
-    const response = await fetch('/api/plugins/omtp/providers', { headers: getRequestHeaders({ omitContentType: true }) });
+    const response = await fetch(`${API_BASE}/providers`, { headers: getRequestHeaders({ omitContentType: true }) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     const list = Array.isArray(data?.providers) ? data.providers : [];
@@ -82,7 +81,6 @@ async function getProviderStatuses() {
     return null;
   }
 }
-
 
 // MARK: helpers
 
@@ -169,7 +167,12 @@ function adapterForState(api, source, type) {
   if (!api) {
     return null;
   }
-  const suffix = api === 'openai' ? source : api === 'textgenerationwebui' ? type : null;
+  let suffix = null;
+  if (api === 'openai') {
+    suffix = source;
+  } else if (api === 'textgenerationwebui') {
+    suffix = type;
+  }
   return NATIVE_ADAPTERS[`${api}:${suffix ?? '-'}`] ?? null;
 }
 
@@ -252,8 +255,15 @@ function detectCurrentRef() {
   if (!adapter || !model) {
     return null;
   }
-  if (last && last.kind === 'st' && last.provider === adapter.key && last.model === model) {
-    return { kind: 'st', provider: last.provider, model: last.model };
+  if (last && last.kind === 'st' && last.model === model) {
+    const entry = resolveEntry(last);
+    if (entry?.nativeAdapter?.key === adapter.key || last.provider === adapter.key) {
+      return { kind: 'st', provider: entry?.provider || last.provider, model: last.model };
+    }
+  }
+  const match = resolveEntry({ kind: 'st', provider: adapter.key, model });
+  if (match) {
+    return { kind: 'st', provider: match.provider, model };
   }
   return { kind: 'st', provider: adapter.key, model };
 }
@@ -278,7 +288,7 @@ function recordSelection(entry, { native = false, persist = true } = {}) {
 function emitSelectionChanged(entry, { gateway = isGatewayMode(), reason = undefined } = {}) {
   const payload = { ref: refOf(entry), entry: entry ?? null, gateway, reason };
   try {
-    Promise.resolve(eventSource.emit('omtp:selection-changed', payload)).catch(error => {
+    Promise.resolve(eventSource.emit(EVENTS.SELECTION_CHANGED, payload)).catch(error => {
       console.debug('[omtp] selection-changed listener failed', error);
     });
   } catch (error) {
@@ -350,18 +360,7 @@ function writeCustomFields(snapshot) {
 }
 
 /** Header carrying the SillyTavern chat id, so usage can be attributed per chat. */
-export const CHAT_HEADER = 'X-OMTP-Chat';
-
-/** @returns {string} Current SillyTavern chat id, or '' when none is open. */
-export function currentChatId() {
-  try {
-    const ctx = globalThis.SillyTavern?.getContext?.();
-    const id = typeof ctx?.getCurrentChatId === 'function' ? ctx.getCurrentChatId() : ctx?.chatId;
-    return typeof id === 'string' ? id : '';
-  } catch {
-    return '';
-  }
-}
+const CHAT_HEADER = 'X-OMTP-Chat';
 
 /**
  * Keep the `X-OMTP-Chat` header in sync with the open chat. Called on
@@ -419,14 +418,21 @@ function mergeYamlHeaders(existing, additions) {
       parsed = null;
     }
   }
-  const merged = { ...(parsed ?? {}), ...additions };
+  const merged = { ...(parsed ?? {}) };
+  for (const [key, value] of Object.entries(additions || {})) {
+    if (value === undefined || value === null || value === '') {
+      delete merged[key];
+    } else {
+      merged[key] = value;
+    }
+  }
   return String(yaml.stringify(merged) ?? '').trimEnd();
 }
 
 // MARK: gateway status / token
 
 async function fetchGatewayStatus() {
-  const response = await fetch('/api/plugins/omtp/status', { headers: getRequestHeaders() });
+  const response = await fetch(`${API_BASE}/status`, { headers: getRequestHeaders() });
   if (!response.ok) {
     throw new Error(`status request failed (${response.status})`);
   }
@@ -481,7 +487,7 @@ async function resolveGatewayToken(status) {
     return gatewayTokenCache.token;
   }
   try {
-    const response = await fetch('/api/plugins/omtp/gateway/token', { headers: getRequestHeaders() });
+    const response = await fetch(`${API_BASE}/gateway/token`, { headers: getRequestHeaders() });
     if (response.ok) {
       const data = await response.json();
       const token = typeof data?.token === 'string' ? data.token.trim() : '';
@@ -505,7 +511,7 @@ async function resolveGatewayToken(status) {
  * @param {() => T} predicate
  * @returns {Promise<T>}
  */
-export function waitFor(predicate, timeoutMs = SWITCH_TIMEOUT_MS, intervalMs = POLL_INTERVAL_MS) {
+function waitFor(predicate, timeoutMs = SWITCH_TIMEOUT_MS, intervalMs = POLL_INTERVAL_MS) {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
     const tick = () => {
@@ -531,13 +537,13 @@ export function waitFor(predicate, timeoutMs = SWITCH_TIMEOUT_MS, intervalMs = P
 }
 
 /** Serialize switches; a second switch waits for the first one to settle. */
-export function withSwitchLock(fn) {
+function withSwitchLock(fn) {
   const run = switchChain.then(() => fn());
   switchChain = run.then(() => undefined, () => undefined);
   return run;
 }
 
-export function assertCanSwitch() {
+function assertCanSwitch() {
   if (isGenerating()) {
     throw new Error('Cannot switch while generating');
   }
@@ -561,6 +567,15 @@ export function isGatewayMode() {
 
 // MARK: snapshots
 
+/** Custom-source fields as stored in a selection snapshot. */
+function captureCustomFields() {
+  const fields = {};
+  for (const [key, field] of CUSTOM_FIELDS) {
+    fields[key] = oai_settings?.[field] ?? '';
+  }
+  return fields;
+}
+
 export function captureSelection() {
   return {
     ref: detectCurrentRef(),
@@ -569,17 +584,12 @@ export function captureSelection() {
     textgenType: main_api === 'textgenerationwebui' ? (textgenerationwebui_settings?.type ?? null) : null,
     model: currentModel(),
     reasoningEffort: oai_settings?.reasoning_effort ?? '',
-    customUrl: oai_settings?.custom_url ?? '',
-    customModel: oai_settings?.custom_model ?? '',
-    customIncludeHeaders: oai_settings?.custom_include_headers ?? '',
-    customIncludeBody: oai_settings?.custom_include_body ?? '',
-    customExcludeBody: oai_settings?.custom_exclude_body ?? '',
-    customPromptPostProcessing: oai_settings?.custom_prompt_post_processing ?? '',
+    ...captureCustomFields(),
   };
 }
 
 /** Snapshot of ST's custom-source state, without a selection ref. */
-export function captureCustomState() {
+function captureCustomState() {
   return { ...captureSelection(), ref: null };
 }
 
@@ -588,7 +598,7 @@ export function captureCustomState() {
  * `fieldsOnly` writes only the custom URL/headers/body/model fields (used when
  * leaving gateway mode, where the API/source is set by the following switch).
  */
-export async function restoreCustomState(snapshot, { fast = false, fieldsOnly = false } = {}) {
+async function restoreCustomState(snapshot, { fast = false, fieldsOnly = false } = {}) {
   if (!snapshot || typeof snapshot !== 'object') {
     return false;
   }
@@ -699,7 +709,13 @@ export function applyReasoning(entry, level) {
 
 // MARK: switches
 
-export async function switchToNative(entry, { level, persist = true } = {}) {
+/**
+ * Resolve the adapter for a native switch and reject entries the native UI
+ * cannot drive.
+ * @param {object} entry
+ * @returns {object} the native adapter
+ */
+function requireNativeAdapter(entry) {
   const adapter = entry?.nativeAdapter;
   if (!adapter) {
     throw new Error(`No native SillyTavern adapter for ${entry?.provider ?? 'unknown provider'}`);
@@ -707,33 +723,43 @@ export async function switchToNative(entry, { level, persist = true } = {}) {
   if (adapter.readOnlyReason) {
     throw new Error(adapter.readOnlyReason);
   }
-  if (adapter.mainApi === 'kobold' || adapter.mainApi === 'koboldhorde') {
-    throw new Error('Read-only provider; manage it in the native UI');
-  }
   if (adapter.modelControl && typeof adapter.supportsModel === 'function' && !adapter.supportsModel(entry.model)) {
     throw new Error(`Model ${entry.model} is not available in ${adapter.label || adapter.key}`);
   }
   if (!jq('#main_api')) {
     throw new Error('SillyTavern UI is not ready');
   }
+  return adapter;
+}
 
-  const settings = getSettings();
-  const previous = captureSelection();
-
-  if (gatewaySettings(settings).savedCustom) {
-    // Resolve the live gateway port so isGatewayMode() is accurate after a reload.
-    await getGatewayStatus();
+/**
+ * Restore ST's own custom-source state when the previous selection came from
+ * the gateway, so a native switch does not leave gateway fields behind.
+ * @param {object} settings
+ */
+async function leaveGatewayMode(settings) {
+  if (!gatewaySettings(settings).savedCustom) {
+    return;
   }
-  if (isGatewayMode() && gatewaySettings(settings).savedCustom) {
-    await restoreCustomState(gatewaySettings(settings).savedCustom, { fast: true, fieldsOnly: true });
-    gatewaySettings(settings).savedCustom = null;
+  // Resolve the live gateway port so isGatewayMode() is accurate after a reload.
+  await getGatewayStatus();
+  if (!isGatewayMode()) {
+    return;
   }
+  await restoreCustomState(gatewaySettings(settings).savedCustom, { fast: true, fieldsOnly: true });
+  gatewaySettings(settings).savedCustom = null;
+}
 
+/** Write ST's main API and wait for it to settle. */
+async function selectNativeApi(adapter) {
   setControlValue('#main_api', adapter.mainApi, 'change');
   await waitFor(() => main_api === adapter.mainApi).catch(() => {
     throw new Error(`Failed to switch the API to ${adapter.mainApi}`);
   });
+}
 
+/** Select the chat-completion source, textgen type or NovelAI model for the adapter. */
+async function selectNativeSource(entry, adapter) {
   if (adapter.mainApi === 'openai' && adapter.source) {
     if (!setControlValue('#chat_completion_source', adapter.source, 'change')) {
       throw new Error(`Failed to select the chat completion source ${adapter.source}`);
@@ -741,14 +767,20 @@ export async function switchToNative(entry, { level, persist = true } = {}) {
     await waitFor(() => oai_settings.chat_completion_source === adapter.source).catch(() => {
       throw new Error(`Failed to select the chat completion source ${adapter.source}`);
     });
-  } else if (adapter.mainApi === 'textgenerationwebui' && adapter.type) {
+    return;
+  }
+
+  if (adapter.mainApi === 'textgenerationwebui' && adapter.type) {
     if (!setControlValue('#textgen_type', adapter.type, 'change')) {
       throw new Error(`Failed to select the text generation type ${adapter.type}`);
     }
     await waitFor(() => textgenerationwebui_settings.type === adapter.type).catch(() => {
       throw new Error(`Failed to select the text generation type ${adapter.type}`);
     });
-  } else if (adapter.mainApi === 'novel') {
+    return;
+  }
+
+  if (adapter.mainApi === 'novel') {
     if (!setControlValue('#model_novel_select', entry.model, 'change')) {
       throw new Error(`Model ${entry.model} is not available in NovelAI`);
     }
@@ -756,38 +788,58 @@ export async function switchToNative(entry, { level, persist = true } = {}) {
       throw new Error(`Failed to select the NovelAI model ${entry.model}`);
     });
   }
+}
+
+/** Select the model in the adapter's control and wait for ST to store it. */
+async function selectNativeModel(entry, adapter) {
+  if (!jq(adapter.modelControl)) {
+    throw new Error(`Native model control not found: ${adapter.modelControl}`);
+  }
+  if (!setControlValue(adapter.modelControl, entry.model)) {
+    throw new Error(`Model ${entry.model} is not available in ${adapter.label || adapter.key}`);
+  }
+  await waitFor(() => String(readSettingField(adapter.mainApi, adapter.modelField) ?? '') === String(entry.model)).catch(() => {
+    throw new Error(`Failed to apply the model ${entry.model}`);
+  });
+}
+
+/** Click the adapter's connect button when ST reports no connection. */
+async function ensureNativeConnection(adapter, previous) {
+  if (online_status !== 'no_connection' || !adapter.connectButton) {
+    return;
+  }
+  const button = jq(adapter.connectButton);
+  if (!button) {
+    return;
+  }
+  button.trigger('click');
+  try {
+    await waitFor(() => online_status !== 'no_connection', STATUS_TIMEOUT_MS);
+  } catch {
+    await restoreSelection(previous, { fast: true });
+    throw new Error(`Connection failed for ${adapter.label || adapter.key}`);
+  }
+}
+
+async function switchToNative(entry, { level, persist = true } = {}) {
+  const adapter = requireNativeAdapter(entry);
+  const settings = getSettings();
+  const previous = captureSelection();
+
+  await leaveGatewayMode(settings);
+  await selectNativeApi(adapter);
+  await selectNativeSource(entry, adapter);
 
   if (!adapter.modelControl) {
     throw new Error('Read-only provider; manage it in the native UI');
   }
-
   if (adapter.mainApi !== 'novel') {
-    if (!jq(adapter.modelControl)) {
-      throw new Error(`Native model control not found: ${adapter.modelControl}`);
-    }
-    if (!setControlValue(adapter.modelControl, entry.model)) {
-      throw new Error(`Model ${entry.model} is not available in ${adapter.label || adapter.key}`);
-    }
-    await waitFor(() => String(readSettingField(adapter.mainApi, adapter.modelField) ?? '') === String(entry.model)).catch(() => {
-      throw new Error(`Failed to apply the model ${entry.model}`);
-    });
+    await selectNativeModel(entry, adapter);
   }
 
   applyReasoning(entry, level);
   saveSettingsDebounced();
-
-  if (online_status === 'no_connection' && adapter.connectButton) {
-    const button = jq(adapter.connectButton);
-    if (button) {
-      button.trigger('click');
-      try {
-        await waitFor(() => online_status !== 'no_connection', STATUS_TIMEOUT_MS);
-      } catch {
-        await restoreSelection(previous, { fast: true });
-        throw new Error(`Connection failed for ${adapter.label || adapter.key}`);
-      }
-    }
-  }
+  await ensureNativeConnection(adapter, previous);
 
   recordSelection(entry, { native: true, persist });
   saveSettings();
@@ -795,21 +847,27 @@ export async function switchToNative(entry, { level, persist = true } = {}) {
   return entry;
 }
 
-export async function switchToGateway(entry, { level, persist = true } = {}) {
-  const settings = getSettings();
+/** Reject entries the gateway cannot drive. */
+function requireGatewayEntry(entry) {
   if (!entry?.gatewayAdapter) {
     throw new Error(entry?.unsupportedReason || `Provider ${entry?.providerLabel || entry?.provider || 'unknown'} is not supported`);
   }
   if (entry.available === false) {
     throw new Error(entry.unsupportedReason || `Provider ${entry.providerLabel || entry.provider} has no usable API key`);
   }
-
-  const modelId = String(entry.model ?? '');
-  if (!modelId) {
+  if (!String(entry.model ?? '')) {
     throw new Error('Gateway model id is missing');
   }
-  const model = `${entry.provider}/${modelId}`;
+}
 
+/**
+ * Resolve the gateway URL and token, refusing providers the gateway reports as
+ * unusable.
+ * @param {object} entry
+ * @param {object} settings
+ * @returns {Promise<{status: object, gatewayUrl: string, token: string|null}>}
+ */
+async function resolveGatewayTarget(entry, settings) {
   const status = await getGatewayStatus();
   if (!status.running) {
     throw new Error(status.lastError ? `OMTP Gateway unavailable: ${status.lastError}` : 'OMTP Gateway unavailable (enable server plugins)');
@@ -830,6 +888,72 @@ export async function switchToGateway(entry, { level, persist = true } = {}) {
   if (status.requireAuth && !token) {
     throw new Error('OMTP Gateway token is unavailable');
   }
+  return { status, gatewayUrl, token };
+}
+
+/**
+ * Point ST's custom source at the gateway. URL, headers and model must be in
+ * place before the source changes, because the source change immediately
+ * validates the endpoint.
+ */
+function writeGatewayEndpoint(target, model) {
+  oai_settings.custom_url = target.gatewayUrl;
+  setControlValue('#custom_api_url_text', target.gatewayUrl);
+
+  const additions = {
+    [CHAT_HEADER]: currentChatId() || undefined,
+  };
+  if (target.status.requireAuth && target.token) {
+    additions.Authorization = `Bearer ${target.token}`;
+  }
+  const headers = mergeYamlHeaders(oai_settings.custom_include_headers, additions);
+  oai_settings.custom_include_headers = headers;
+  setControlValue('#custom_include_headers', headers);
+
+  oai_settings.custom_model = model;
+  setControlValue('#custom_model_id', model);
+}
+
+/** Switch the chat completion source to `custom` and wait for it to settle. */
+async function selectCustomSource() {
+  if (jq('#chat_completion_source')) {
+    if (!setControlValue('#chat_completion_source', 'custom', 'change')) {
+      throw new Error('Failed to select the custom chat completion source');
+    }
+  } else {
+    oai_settings.chat_completion_source = 'custom';
+  }
+  await waitFor(() => oai_settings.chat_completion_source === 'custom').catch(() => {
+    throw new Error('Failed to select the custom chat completion source');
+  });
+}
+
+/**
+ * Re-apply the gateway model: switching the source repopulates
+ * `#model_custom_select` and rewrites `custom_model` from whatever that select
+ * currently shows.
+ */
+async function applyGatewayModel(model) {
+  const modelSelect = jq('#model_custom_select');
+  const hasOption = modelSelect?.length
+    ? modelSelect.find('option').filter((_, option) => option.value === model).length > 0
+    : false;
+  if (hasOption) {
+    setControlValue('#model_custom_select', model, 'change');
+  }
+  oai_settings.custom_model = model;
+  setControlValue('#custom_model_id', model);
+  await waitFor(() => oai_settings.custom_model === model).catch(() => {
+    throw new Error(`Failed to set the gateway model ${model}`);
+  });
+}
+
+async function switchToGateway(entry, { level, persist = true } = {}) {
+  const settings = getSettings();
+  requireGatewayEntry(entry);
+  const model = `${entry.provider}/${String(entry.model ?? '')}`;
+
+  const target = await resolveGatewayTarget(entry, settings);
   if (!jq('#main_api')) {
     throw new Error('SillyTavern UI is not ready');
   }
@@ -843,49 +967,9 @@ export async function switchToGateway(entry, { level, persist = true } = {}) {
     throw new Error('Failed to switch the API to openai');
   });
 
-  // Custom URL, headers and model must be in place before the source changes,
-  // because the source change immediately validates the endpoint.
-  oai_settings.custom_url = gatewayUrl;
-  setControlValue('#custom_api_url_text', gatewayUrl);
-
-  if (status.requireAuth && token) {
-    const headers = mergeYamlHeaders(oai_settings.custom_include_headers, {
-      Authorization: `Bearer ${token}`,
-      [CHAT_HEADER]: currentChatId(),
-    });
-    oai_settings.custom_include_headers = headers;
-    setControlValue('#custom_include_headers', headers);
-  }
-
-  oai_settings.custom_model = model;
-  setControlValue('#custom_model_id', model);
-
-  if (jq('#chat_completion_source')) {
-    if (!setControlValue('#chat_completion_source', 'custom', 'change')) {
-      throw new Error('Failed to select the custom chat completion source');
-    }
-  } else {
-    oai_settings.chat_completion_source = 'custom';
-  }
-  await waitFor(() => oai_settings.chat_completion_source === 'custom').catch(() => {
-    throw new Error('Failed to select the custom chat completion source');
-  });
-
-  // Switching the source repopulates `#model_custom_select` and rewrites
-  // `custom_model` from whatever that select currently shows, so the model has
-  // to be applied again once the source has settled.
-  const modelSelect = jq('#model_custom_select');
-  const hasOption = modelSelect?.length
-    ? modelSelect.find('option').filter((_, option) => option.value === model).length > 0
-    : false;
-  if (hasOption) {
-    setControlValue('#model_custom_select', model, 'change');
-  }
-  oai_settings.custom_model = model;
-  setControlValue('#custom_model_id', model);
-  await waitFor(() => oai_settings.custom_model === model).catch(() => {
-    throw new Error(`Failed to set the gateway model ${model}`);
-  });
+  writeGatewayEndpoint(target, model);
+  await selectCustomSource();
+  await applyGatewayModel(model);
   await waitFor(() => online_status !== 'no_connection', STATUS_TIMEOUT_MS).catch(() => {
     console.debug('[omtp] gateway status did not settle; continuing');
   });
@@ -898,7 +982,7 @@ export async function switchToGateway(entry, { level, persist = true } = {}) {
   return entry;
 }
 
-export async function switchToProfile(entry) {
+async function switchToProfile(entry) {
   const command = SlashCommandParser?.commands?.profile;
   if (!command || typeof command.callback !== 'function') {
     throw new Error('Connection Profiles extension is not enabled');
@@ -909,13 +993,7 @@ export async function switchToProfile(entry) {
   }
 
   const settings = getSettings();
-  if (gatewaySettings(settings).savedCustom) {
-    await getGatewayStatus();
-  }
-  if (isGatewayMode() && gatewaySettings(settings).savedCustom) {
-    await restoreCustomState(gatewaySettings(settings).savedCustom, { fast: true, fieldsOnly: true });
-    gatewaySettings(settings).savedCustom = null;
-  }
+  await leaveGatewayMode(settings);
 
   await withTimeout(
     Promise.resolve(command.callback({ quiet: 'true', await: 'true' }, name)),
@@ -954,7 +1032,7 @@ export async function switchToEntry(ref, { reason, level, persist = true } = {})
       return switchToProfile(entry);
     }
 
-    const adapter = entry.nativeAdapter || (entry.stKey ? NATIVE_ADAPTERS.get(entry.stKey) : null);
+    const adapter = entry.nativeAdapter;
     if (adapter && !adapter.readOnlyReason) {
       const supported = !adapter.modelControl
         || typeof adapter.supportsModel !== 'function'

@@ -12,9 +12,9 @@ import { normalizeCustomModel } from './key-store.mjs';
 import { buildProviderConfig } from './provider-config.mjs';
 import { log, logError } from './redact.mjs';
 
-export const DEFAULT_OMP_MODELS_URL = 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/catalog/src/models.json';
-export const DEFAULT_OMP_RULES_URL = 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/catalog/src/compat/rules.json';
-export const DEFAULT_REMAINING_GATEWAY_ADAPTER = 'openai';
+const DEFAULT_OMP_MODELS_URL = 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/catalog/src/models.json';
+const DEFAULT_OMP_RULES_URL = 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/catalog/src/compat/rules.json';
+const DEFAULT_REMAINING_GATEWAY_ADAPTER = 'openai';
 
 const FETCH_TIMEOUT_MS = 60_000;
 const MAX_FETCH_BYTES = 20 * 1024 * 1024;
@@ -23,7 +23,7 @@ const MAX_FETCH_BYTES = 20 * 1024 * 1024;
  * @param {string} url
  * @returns {boolean}
  */
-export function isHttpUrl(url) {
+function isHttpUrl(url) {
     try {
         const parsed = new URL(url);
         return parsed.protocol === 'http:' || parsed.protocol === 'https:';
@@ -36,7 +36,7 @@ export function isHttpUrl(url) {
  * @param {Record<string, any>} providers
  * @returns {{providers:number, models:number}}
  */
-export function computeStats(providers) {
+function computeStats(providers) {
     let models = 0;
     for (const provider of Object.values(providers || {})) {
         models += Array.isArray(provider?.models) ? provider.models.length : 0;
@@ -72,7 +72,7 @@ export function providerMapFromCatalog(catalog) {
  * @param {any} overlay
  * @returns {any}
  */
-export function mergeCatalog(base, overlay) {
+function mergeCatalog(base, overlay) {
     /** @type {Record<string, any>} */
     const providers = {};
     for (const [id, provider] of Object.entries(base?.providers || {})) {

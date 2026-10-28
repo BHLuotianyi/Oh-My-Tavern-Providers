@@ -9,6 +9,7 @@ import { getRequestHeaders } from '../../../../../../script.js';
 import { API_BASE } from '../constants.js';
 import { currentChatId, ensureUsageSession } from '../usage-session.js';
 import { tr, trf } from './dom.js';
+import { el, formatTokens, formatUsd } from './helpers.js';
 
 let host = null;
 let loading = false;
@@ -21,13 +22,6 @@ let sessionStartedAt = ensureUsageSession();
  */
 export function resetUsageSession(chatId) {
     sessionStartedAt = ensureUsageSession({ force: true, chatId });
-}
-
-function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
 }
 
 async function api(path, init = {}) {
@@ -128,24 +122,6 @@ function renderRow(row) {
     return card;
 }
 
-/** @param {number} tokens */
-function formatTokens(tokens) {
-    const value = Number(tokens) || 0;
-    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
-    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-    return String(Math.round(value));
-}
-
-/** @param {number} usd */
-function formatUsd(usd) {
-    const value = Number(usd) || 0;
-    if (!value) return '$0';
-    if (value < 0.001) return `$${value.toFixed(6)}`;
-    if (value < 0.01) return `$${value.toFixed(4)}`;
-    if (value < 1) return `$${value.toFixed(3)}`;
-    return `$${value.toFixed(2)}`;
-}
-
 /**
  * Token totals: session (since the chat opened) and all-time, plus the
  * per-model table.
@@ -182,7 +158,10 @@ async function renderStats(container) {
         return line;
     };
 
-    block.append(addSummary(tr('omtp_stats_session', 'This chat'), session));
+    const sessionLabel = chatId
+        ? tr('omtp_stats_chat', 'This chat')
+        : tr('omtp_stats_session', 'This session');
+    block.append(addSummary(sessionLabel, session));
     block.append(addSummary(tr('omtp_stats_total', 'All time'), total));
 
     const sessionModels = (session?.byModel || []).filter((row) => row.requests > 0);
@@ -223,7 +202,7 @@ const STATS_COLUMNS = {
  * Fetch and render the usage page.
  * @param {{refresh?: boolean}} [options]
  */
-export async function refreshUsage({ refresh = false } = {}) {
+async function refreshUsage({ refresh = false } = {}) {
     if (!host || loading) return;
     loading = true;
     host.replaceChildren(el('div', 'omtp-muted', tr('omtp_usage_loading', 'Reading quotas…')));

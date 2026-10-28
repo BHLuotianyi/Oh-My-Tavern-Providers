@@ -17,7 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const CLIENTS_FILE = 'oauth-clients.json';
+const CLIENTS_FILE = 'oauth-clients.json';
 
 /** @type {{file: string, mtime: number, data: Record<string, {clientId?:string, clientSecret?:string}>}|null} */
 let cache = null;

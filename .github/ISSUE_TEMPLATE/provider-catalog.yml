@@ -1,0 +1,63 @@
+name: Provider or Catalog request / 服务商与模型适配
+description: 申请接入新服务商协议、补充实时额度接口 (/usage)、更新模型目录或 AA 人格评分 / Request a new provider adapter, usage quota endpoint, or catalog update
+title: "[Provider] "
+labels: ["provider-support"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        在此申请接入新的模型服务商、更新内置模型列表、或为某家订阅套餐添加实时额度查询（`/usage`）。
+        > 💡 **提示**：如果该服务商兼容标准 OpenAI / Anthropic / Gemini 协议，你现在就可以在面板的「**登录 (Sign-in) → 添加自定义服务商**」中直接配置使用，或点击服务商右侧的 `🔄` 按钮实时拉取最新模型。
+
+  - type: dropdown
+    id: request-type
+    attributes:
+      label: 请求类型 / Request type
+      default: 0
+      options:
+        - 新增服务商协议适配器 (Gateway Adapter)
+        - 新增订阅额度查询接口 (Usage Quota Endpoint)
+        - 新增 OAuth / 设备码登录流程 (Sign-in Flow)
+        - 更新内置模型目录或修正模型参数 (Catalog Update)
+        - 更新 AA-PersonalityBench 人格评分数据 (Personality Snapshot)
+    validations:
+      required: true
+
+  - type: input
+    id: provider-name
+    attributes:
+      label: 服务商名称与 ID / Provider Name & ID
+      placeholder: 例如：OpenRouter (openrouter) / 某新厂商 (example-ai)
+    validations:
+      required: true
+
+  - type: input
+    id: api-docs
+    attributes:
+      label: 官方 API 文档或上游参考链接 / Official API Docs or Upstream Reference
+      placeholder: https://...（如 oh-my-pi 已支持，可贴对应源码路径）
+    validations:
+      required: true
+
+  - type: textarea
+    id: protocol-details
+    attributes:
+      label: 接口形态与鉴权说明 / Protocol & Authentication Details
+      placeholder: |
+        - 基础地址 (Base URL)：
+        - 协议类型（OpenAI Chat Completions / Anthropic Messages / Responses / 专有格式）：
+        - 鉴权方式（Bearer API Key / OAuth PKCE / Device Code）：
+        - 需补充的模型 ID 或额度查询端点：
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 提交前确认 / Confirmation
+      options:
+        - label: 我已确认未在正文中粘贴任何真实的私有 API Key、Token 或账号凭据 / I have not included any private API keys, tokens, or credentials
+          required: true
+        - label: 我已搜索现有 Issues，未发现针对该服务商的重复请求 / I searched existing issues and found no duplicate
+          required: true

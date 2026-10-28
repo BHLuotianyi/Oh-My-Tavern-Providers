@@ -1,26 +1,20 @@
 /** Ollama OpenAI-compatibility gateway adapter. */
 import {
-  SSE_HEADERS,
   authHeaders,
-  errorResponse,
   joinUrl,
+  missingBaseUrl,
   networkError,
   passthroughJson,
   resolveBaseUrl,
   trimSlash,
   upstreamErrorResponse,
 } from './openai.mjs';
+import { sseHeaders } from '../sse.mjs';
 
 export const id = 'ollama';
 
 export async function chat(req, ctx) {
-  if (!ctx?.baseUrl) {
-    return errorResponse('Provider baseUrl is not configured', {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'missing_base_url',
-    });
-  }
+  if (!ctx?.baseUrl) return missingBaseUrl();
 
   const body = { ...(req || {}), model: ctx.model };
   const url = joinUrl(resolveBaseUrl(ctx.baseUrl, ctx.extraConfig || {}), '/chat/completions');
@@ -39,7 +33,7 @@ export async function chat(req, ctx) {
   }
 
   if (!upstream.ok) return upstreamErrorResponse(upstream);
-  if (body.stream) return new Response(upstream.body, { status: 200, headers: SSE_HEADERS });
+  if (body.stream) return new Response(upstream.body, { status: 200, headers: sseHeaders() });
   return passthroughJson(upstream);
 }
 

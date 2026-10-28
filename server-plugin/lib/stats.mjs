@@ -20,6 +20,23 @@ const MAX_EVENTS = 2000;
 /** Chat-scoped counters survive restarts, but only the most recent chats are kept. */
 const MAX_CHATS = 50;
 
+/** Token buckets accumulated per model/day/chat (all others are cost counters). */
+const TOKEN_KEYS = ['input', 'cachedInput', 'cacheWrite', 'output', 'reasoning'];
+
+/**
+ * Keep at most `max` entries of a Map, dropping the ones that sort first.
+ * @param {Map<string, any>} map
+ * @param {number} max
+ * @param {(a: [string, any], b: [string, any]) => number} compare
+ */
+function trimToSize(map, max, compare) {
+    if (map.size <= max) return;
+    const keys = [...map.entries()].sort(compare).map(([key]) => key);
+    for (const key of keys.slice(0, map.size - max)) {
+        map.delete(key);
+    }
+}
+
 /** @type {{ input:number, cachedInput:number, cacheWrite:number, output:number, reasoning:number, requests:number, costUsd:number }} */
 const emptyTotals = () => ({
     input: 0,
@@ -184,18 +201,42 @@ export class UsageStats {
                 chatModel = { provider, model, ...emptyTotals(), price: price || null };
                 chatEntry.byModel.set(modelKey, chatModel);
             }
-            chatModel.requests += 1;
-            chatModel.costUsd += costUsd;
-            chatModel.input += input;
-            chatModel.cachedInput += cachedInput;
-            chatModel.cacheWrite += cacheWrite;
-            chatModel.output += output;
-            chatModel.reasoning += reasoning;
-            this._trimChats();
+            add(chatModel);
+            trimToSize(this.byChat, MAX_CHATS, (a, b) => a[1].at - b[1].at);
         }
-        this._trimDays();
+        trimToSize(this.byDay, KEEP_DAYS, (a, b) => a[0].localeCompare(b[0]));
         this._scheduleFlush();
-        return { costUsd, ...emptyTotals() };
+    }
+
+    /**
+     * Fold the in-memory event ring into totals plus per-model rows.
+     * @param {(event: {at:number, chatId:string, provider:string, model:string, costUsd:number, tokens:any}) => boolean} include
+     */
+    #accumulate(include) {
+        const totals = emptyTotals();
+        const perModel = new Map();
+        let oldest = null;
+        for (const event of this.events) {
+            if (!include(event)) continue;
+            oldest = oldest === null ? event.at : Math.min(oldest, event.at);
+            totals.requests += 1;
+            totals.costUsd += event.costUsd;
+            for (const key of TOKEN_KEYS) {
+                totals[key] += event.tokens[key] || 0;
+            }
+            const id = `${event.provider}/${event.model}`;
+            let entry = perModel.get(id);
+            if (!entry) {
+                entry = { provider: event.provider, model: event.model, ...emptyTotals(), price: this.byModel.get(id)?.price || null };
+                perModel.set(id, entry);
+            }
+            entry.requests += 1;
+            entry.costUsd += event.costUsd;
+            for (const key of TOKEN_KEYS) {
+                entry[key] += event.tokens[key] || 0;
+            }
+        }
+        return { totals, perModel, oldest };
     }
 
     /**
@@ -215,29 +256,7 @@ export class UsageStats {
                 generatedAt: new Date(this.now()).toISOString(),
             };
         }
-        const totals = emptyTotals();
-        const perModel = new Map();
-        let oldest = null;
-        for (const event of this.events) {
-            if (event.chatId !== chatId) continue;
-            oldest = oldest === null ? event.at : Math.min(oldest, event.at);
-            totals.requests += 1;
-            totals.costUsd += event.costUsd;
-            for (const key of ['input', 'cachedInput', 'cacheWrite', 'output', 'reasoning']) {
-                totals[key] += event.tokens[key] || 0;
-            }
-            const id = `${event.provider}/${event.model}`;
-            let entry = perModel.get(id);
-            if (!entry) {
-                entry = { provider: event.provider, model: event.model, ...emptyTotals(), price: this.byModel.get(id)?.price || null };
-                perModel.set(id, entry);
-            }
-            entry.requests += 1;
-            entry.costUsd += event.costUsd;
-            for (const key of ['input', 'cachedInput', 'cacheWrite', 'output', 'reasoning']) {
-                entry[key] += event.tokens[key] || 0;
-            }
-        }
+        const { totals, perModel, oldest } = this.#accumulate((event) => event.chatId === chatId);
         return {
             chat: chatId,
             since: oldest === null ? null : new Date(oldest).toISOString(),
@@ -250,26 +269,6 @@ export class UsageStats {
         };
     }
 
-    _trimChats() {
-        if (this.byChat.size <= MAX_CHATS) return;
-        const oldest = [...this.byChat.entries()].sort((a, b) => a[1].at - b[1].at);
-        for (const [chatId] of oldest.slice(0, this.byChat.size - MAX_CHATS)) {
-            this.byChat.delete(chatId);
-        }
-    }
-
-    _trimDays() {
-        if (this.byDay.size <= KEEP_DAYS) return;
-        const days = [...this.byDay.keys()].sort();
-        for (const day of days.slice(0, this.byDay.size - KEEP_DAYS)) {
-            this.byDay.delete(day);
-        }
-    }
-
-    /**
-     * Snapshot, optionally only what happened since an ISO timestamp.
-     * @param {{since?: string|null}} [options]
-     */
     /**
      * Data the local dashboard (`/omtp stats`) renders beyond `snapshot()`:
      * one row per chat, already flattened.
@@ -285,38 +284,23 @@ export class UsageStats {
         };
     }
 
+    /**
+     * Snapshot of everything, of one chat, or of everything since an ISO
+     * timestamp.
+     * @param {{since?: string|null, chat?: string}} [options]
+     */
     snapshot({ since = null, chat = '' } = {}) {
         if (chat) {
             return this.#chatSnapshot(chat);
         }
         const cutoff = since ? Date.parse(since) : NaN;
         if (Number.isFinite(cutoff)) {
-            const totals = emptyTotals();
-            const perModel = new Map();
-            let covered = this.events.length > 0 && this.events[0].at <= cutoff;
-            for (const event of this.events) {
-                if (event.at < cutoff) continue;
-                totals.requests += 1;
-                totals.costUsd += event.costUsd;
-                for (const key of ['input', 'cachedInput', 'cacheWrite', 'output', 'reasoning']) {
-                    totals[key] += event.tokens[key] || 0;
-                }
-                const id = `${event.provider}/${event.model}`;
-                let entry = perModel.get(id);
-                if (!entry) {
-                    entry = { provider: event.provider, model: event.model, ...emptyTotals(), price: this.byModel.get(id)?.price || null };
-                    perModel.set(id, entry);
-                }
-                entry.requests += 1;
-                entry.costUsd += event.costUsd;
-                for (const key of ['input', 'cachedInput', 'cacheWrite', 'output', 'reasoning']) {
-                    entry[key] += event.tokens[key] || 0;
-                }
-            }
+            const { totals, perModel } = this.#accumulate((event) => event.at >= cutoff);
+            // True when the requested window reaches back further than the
+            // in-memory event log, in which case numbers are a lower bound.
+            const covered = this.events.length > 0 && this.events[0].at <= cutoff;
             return {
                 since,
-                // True when the requested window reaches back further than the
-                // in-memory event log, in which case numbers are a lower bound.
                 partial: !covered,
                 totals,
                 byModel: [...perModel.values()].sort((a, b) => b.costUsd - a.costUsd),
@@ -342,13 +326,6 @@ export class UsageStats {
             startedAt: this.startedAt,
             generatedAt: new Date(this.now()).toISOString(),
         };
-    }
-}
-
-/** @param {any} target @param {any} source */
-function addTotals(target, source) {
-    for (const key of Object.keys(target)) {
-        target[key] += Number(source?.[key]) || 0;
     }
 }
 

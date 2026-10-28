@@ -11,8 +11,8 @@
  *
  * Providers whose policy uses a `custom` login (Cursor, Copilot, Devin, …)
  * need per-provider code. The ones we have ported live in `custom-logins/`
- * and register themselves below; everything else is reported as
- * `loginNeedsHook` and can still be imported from OMP.
+ * and are imported below; everything else is reported as `loginNeedsHook` and
+ * can still be imported from OMP.
  */
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -168,7 +168,7 @@ export function createPkcePair() {
 }
 
 /** @returns {string} */
-export function createState() {
+function createState() {
     return crypto.randomBytes(16).toString('hex');
 }
 
@@ -366,7 +366,7 @@ async function postToken(url, body, mode, headers, doFetch) {
  * @param {{code: string, verifier?: string, redirectUri: string, provider?: string}} options
  * @returns {Promise<object>} structured credential
  */
-export async function exchangeCode(login, { code, verifier, redirectUri, provider = '', result = '' }, doFetch = fetch) {
+async function exchangeCode(login, { code, verifier, redirectUri, provider = '', result = '' }, doFetch = fetch) {
     const params = { code, grant_type: 'authorization_code' };
     if (login.pkce && verifier) params.code_verifier = verifier;
     const body = tokenRequestBody(login, params, redirectUri);
@@ -381,7 +381,7 @@ export async function exchangeCode(login, { code, verifier, redirectUri, provide
  * @param {{provider?: string, env?: Record<string,string|undefined>}} [options]
  * @returns {Promise<{deviceCode: string, userCode: string, verificationUri: string, verificationUriComplete?: string, interval: number, expiresIn: number}>}
  */
-export async function startDeviceAuthorization(login, { env = process.env } = {}, doFetch = fetch) {
+async function startDeviceAuthorization(login, { env = process.env } = {}, doFetch = fetch) {
     const device = login.device;
     if (!device?.url) {
         throw new Error('This provider does not expose a device authorization endpoint');
@@ -418,7 +418,7 @@ export async function startDeviceAuthorization(login, { env = process.env } = {}
  * @param {{signal?: AbortSignal, env?: Record<string,string|undefined>}} [options]
  * @returns {Promise<object>} structured credential
  */
-export async function pollDeviceToken(login, grant, { signal, env = process.env } = {}, doFetch = fetch) {
+async function pollDeviceToken(login, grant, { signal, env = process.env } = {}, doFetch = fetch) {
     const deadline = Date.now() + grant.expiresIn * 1000;
     let interval = Math.max(1, grant.interval) + DEVICE_POLL_SLACK_S;
     while (Date.now() < deadline) {
@@ -476,6 +476,101 @@ function remember(session) {
 }
 
 /**
+ * Start an `oauth-code` flow: bind the loopback listener and build the
+ * authorize URL.
+ * @param {string} providerId
+ * @param {object} login compiled login policy
+ * @param {{keyStore:any, env:Record<string,string|undefined>, doFetch:typeof fetch, locale:'en'|'zh-cn'}} deps
+ * @returns {Promise<{id:string, kind:string, url:string, redirectUri:string, instructions:string}>}
+ */
+async function startOauthCode(providerId, login, { keyStore, env, doFetch, locale }) {
+    const state = createState();
+    const pkce = login.pkce ? createPkcePair() : { verifier: '', challenge: '' };
+    const callback = login.callback || {};
+    const redirectUri = `http://${callback.hostname || 'localhost'}:${callback.port || 54545}${callback.path || '/callback'}`;
+    const session = remember({
+        providerId,
+        kind: 'oauth-code',
+        login,
+        state,
+        verifier: pkce.verifier,
+        redirectUri,
+        locale,
+        keyStore,
+        doFetch,
+        env,
+    });
+    session.server = await listenForCode(session);
+    const url = buildAuthorizeUrl(login, { state, challenge: pkce.challenge, redirectUri, env });
+    return { id: session.id, kind: 'oauth-code', url, redirectUri, instructions: login.instructions || '' };
+}
+
+/**
+ * Start a device authorization grant and poll it in the background.
+ * @param {string} providerId
+ * @param {object} login compiled login policy
+ * @param {{keyStore:any, env:Record<string,string|undefined>, doFetch:typeof fetch}} deps
+ * @returns {Promise<{id:string, kind:string, url:string, userCode:string, instructions:string}>}
+ */
+async function startDeviceCode(providerId, login, { keyStore, env, doFetch }) {
+    const grant = await startDeviceAuthorization(login, { env }, doFetch);
+    const session = remember({
+        providerId,
+        kind: 'device-code',
+        login,
+        grant: { ...grant, provider: providerId },
+        keyStore,
+        doFetch,
+        env,
+    });
+    session.controller = new AbortController();
+    completeInBackground(session, pollDeviceToken(login, session.grant, { signal: session.controller.signal, env }, doFetch), credentialTarget(login, providerId), keyStore);
+    return {
+        id: session.id,
+        kind: 'device-code',
+        url: grant.verificationUriComplete || grant.verificationUri,
+        userCode: grant.userCode,
+        instructions: fillTemplate(login.instructions || '', { user_code: grant.userCode, verification_uri: grant.verificationUri }),
+    };
+}
+
+/**
+ * Start a provider-specific `custom` hook.
+ * @param {string} providerId
+ * @param {object} login compiled login policy
+ * @param {{keyStore:any, env:Record<string,string|undefined>, doFetch:typeof fetch, locale:'en'|'zh-cn'}} deps
+ * @returns {Promise<{id:string, kind:string, url:string, userCode:string, instructions:string}>}
+ */
+async function startCustomHook(providerId, login, { keyStore, env, doFetch, locale }) {
+    const hookName = String(login.hook || '');
+    const hook = CUSTOM_HOOKS.get(hookName);
+    if (!hook) {
+        throw new Error(`Login hook "${hookName || 'unknown'}" needs provider-specific code; sign in with omp and import the credential`);
+    }
+    const controller = new AbortController();
+    const started = await hook({ providerId, login, env, doFetch, signal: controller.signal });
+    const session = remember({
+        providerId,
+        kind: 'custom',
+        hook: hookName,
+        login,
+        keyStore,
+        doFetch,
+        env,
+        locale,
+    });
+    session.controller = controller;
+    completeInBackground(session, started.waitForCompletion({ signal: controller.signal }), credentialTarget(login, providerId), keyStore);
+    return {
+        id: session.id,
+        kind: 'device-code',
+        url: started.url,
+        userCode: started.userCode,
+        instructions: started.instructions || '',
+    };
+}
+
+/**
  * Start a login flow for one provider.
  *
  * @param {string} providerId
@@ -489,100 +584,14 @@ export async function startLogin(providerId, login, { keyStore, env = process.en
     }
     const uiLocale = pickLocale(locale, '');
     if (login.kind === 'oauth-code') {
-        const state = createState();
-        const pkce = login.pkce ? createPkcePair() : { verifier: '', challenge: '' };
-        const callback = login.callback || {};
-        const redirectUri = `http://${callback.hostname || 'localhost'}:${callback.port || 54545}${callback.path || '/callback'}`;
-        const session = remember({
-            providerId,
-            kind: 'oauth-code',
-            login,
-            state,
-            verifier: pkce.verifier,
-            redirectUri,
-            locale: uiLocale,
-            keyStore,
-            doFetch,
-            env,
-        });
-        session.server = await listenForCode(session);
-        const url = buildAuthorizeUrl(login, { state, challenge: pkce.challenge, redirectUri, env });
-        return { id: session.id, kind: 'oauth-code', url, redirectUri, instructions: login.instructions || '' };
+        return startOauthCode(providerId, login, { keyStore, env, doFetch, locale: uiLocale });
     }
-
     if (login.kind === 'device-code') {
-        const grant = await startDeviceAuthorization(login, { env }, doFetch);
-        const session = remember({
-            providerId,
-            kind: 'device-code',
-            login,
-            grant: { ...grant, provider: providerId },
-            keyStore,
-            doFetch,
-            env,
-        });
-        session.controller = new AbortController();
-        session.promise = pollDeviceToken(login, session.grant, { signal: session.controller.signal, env }, doFetch)
-            .then(async (credential) => {
-                await keyStore.setProviderConfig(credentialTarget(login, providerId), { apiKey: credentialToStore(credential) });
-                session.status = 'done';
-                session.credential = credential;
-            })
-            .catch((error) => {
-                if (session.status === 'pending') {
-                    session.status = 'error';
-                    session.error = String(error?.message || error);
-                }
-            });
-        return {
-            id: session.id,
-            kind: 'device-code',
-            url: grant.verificationUriComplete || grant.verificationUri,
-            userCode: grant.userCode,
-            instructions: fillTemplate(login.instructions || '', { user_code: grant.userCode, verification_uri: grant.verificationUri }),
-        };
+        return startDeviceCode(providerId, login, { keyStore, env, doFetch });
     }
-
     if (login.kind === 'custom') {
-        const hookName = String(login.hook || '');
-        const hook = CUSTOM_HOOKS.get(hookName);
-        if (!hook) {
-            throw new Error(`Login hook "${hookName || 'unknown'}" needs provider-specific code; sign in with omp and import the credential`);
-        }
-        const controller = new AbortController();
-        const started = await hook({ providerId, login, env, doFetch, signal: controller.signal });
-        const session = remember({
-            providerId,
-            kind: 'custom',
-            hook: hookName,
-            login,
-            keyStore,
-            doFetch,
-            env,
-            locale: uiLocale,
-        });
-        session.controller = controller;
-        session.promise = started.waitForCompletion({ signal: controller.signal })
-            .then(async (credential) => {
-                await keyStore.setProviderConfig(credentialTarget(login, providerId), { apiKey: credentialToStore(credential) });
-                session.credential = credential;
-                session.status = 'done';
-            })
-            .catch((error) => {
-                if (session.status === 'pending') {
-                    session.status = 'error';
-                    session.error = String(error?.message || error);
-                }
-            });
-        return {
-            id: session.id,
-            kind: 'device-code',
-            url: started.url,
-            userCode: started.userCode,
-            instructions: started.instructions || '',
-        };
+        return startCustomHook(providerId, login, { keyStore, env, doFetch, locale: uiLocale });
     }
-
     throw new Error(`Login kind "${login.kind}" needs provider-specific code; import the session from OMP instead`);
 }
 
@@ -656,20 +665,22 @@ async function listenForCode(session) {
 }
 
 /**
- * Complete an `oauth-code` session from a callback or a pasted value.
- * @param {any} session
- * @param {{code: string, state?: string}} input
- */
-/**
  * Provider id a completed login writes to (`store-as` aliases share models).
  * @param {any} login
  * @param {string} providerId
+ * @returns {string}
  */
 function credentialTarget(login, providerId) {
     const target = String(login?.storeAs || '');
     return target || providerId;
 }
 
+/**
+ * Serialize a credential for the key store: durable keys stay plain strings,
+ * OAuth sessions become structured JSON.
+ * @param {any} credential
+ * @returns {string}
+ */
 function credentialToStore(credential) {
     if (credential?.type === 'api-key' && credential.access) {
         return String(credential.access);
@@ -677,6 +688,34 @@ function credentialToStore(credential) {
     return JSON.stringify(credential);
 }
 
+/**
+ * Persist the credential when a background flow settles, recording the
+ * failure on the session instead of throwing.
+ * @param {any} session
+ * @param {Promise<any>} promise
+ * @param {string} target provider id the credential is stored under
+ * @param {any} keyStore
+ */
+function completeInBackground(session, promise, target, keyStore) {
+    session.promise = promise
+        .then(async (credential) => {
+            await keyStore.setProviderConfig(target, { apiKey: credentialToStore(credential) });
+            session.credential = credential;
+            session.status = 'done';
+        })
+        .catch((error) => {
+            if (session.status === 'pending') {
+                session.status = 'error';
+                session.error = String(error?.message || error);
+            }
+        });
+}
+
+/**
+ * Complete an `oauth-code` session from a callback or a pasted value.
+ * @param {any} session
+ * @param {{code: string, state?: string}} input
+ */
 async function finishWithCode(session, input) {
     if (session.status !== 'pending') return;
     if (session.state && input.state && input.state !== session.state) {

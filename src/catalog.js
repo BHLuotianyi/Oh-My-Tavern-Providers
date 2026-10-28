@@ -164,7 +164,7 @@ export async function loadCatalog(options = {}) {
     return activeCatalog;
 }
 
-/** Alias used by index.js during initialization. */
+/** Alias used by the hub during initialization. */
 export async function initCatalog(options = {}) {
     return loadCatalog(options);
 }
@@ -308,28 +308,9 @@ export function mergeCatalog(base, overlay) {
     };
 }
 
-/** All provider metadata objects from the active catalog. */
-export function getProviders() {
-    return Object.values(activeCatalog.providers);
-}
-
-/** Provider metadata map (id -> provider). */
-export function getProviderMap() {
-    return activeCatalog.providers;
-}
-
-/** Single provider metadata object, or null. */
-export function getProvider(id) {
-    return activeCatalog.providers[id] ?? null;
-}
-
-/** True when the catalog provider maps to a first-class SillyTavern provider. */
-export function isNativeProvider(providerId) {
-    return NATIVE_PROVIDER_SET.has(providerId);
-}
-export const KEYLESS_PROVIDERS = Object.freeze(new Set(['local', 'ollama', 'pollinations', 'yolo-auto']));
-export const providerAvailabilityCache = new Map();
-export const liveModelsCache = new Map();
+const KEYLESS_PROVIDERS = Object.freeze(new Set(['local', 'ollama', 'pollinations', 'yolo-auto']));
+const providerAvailabilityCache = new Map();
+const liveModelsCache = new Map();
 
 export function setProviderAvailability(mapOrList) {
     if (mapOrList instanceof Map) {
@@ -370,26 +351,37 @@ export function withProviderAvailability(entry) {
     return { ...entry, available, unsupportedReason };
 }
 
+/**
+ * Whether SillyTavern currently holds a non-empty value for one of its own
+ * secret fields. Probes the DOM control, the secret stores and the legacy
+ * settings objects in that order.
+ * @param {string} keyName
+ * @returns {boolean}
+ */
+function readSecret(keyName) {
+    try {
+        if (document.getElementById(keyName)?.value?.trim()) return true;
+    } catch {}
+    try {
+        if (globalThis.secret_state?.[keyName]) return true;
+    } catch {}
+    try {
+        const context = globalThis.SillyTavern?.getContext?.();
+        if (context?.secret_state?.[keyName]) return true;
+    } catch {}
+    try {
+        if (globalThis.oai_settings?.[keyName]) return true;
+        if (globalThis.textgenerationwebui_settings?.[keyName]) return true;
+    } catch {}
+    return false;
+}
+
 export function hasProviderCredentials(providerId, stAdapter = null, provider = null, { includeGateway = true } = {}) {
     if (KEYLESS_PROVIDERS.has(providerId) || provider?.authKind === 'none') {
         return true;
     }
-    if (stAdapter?.requiresKey) {
-        const keyName = stAdapter.requiresKey;
-        try {
-            if (document.getElementById(keyName)?.value?.trim()) return true;
-        } catch {}
-        try {
-            if (globalThis.secret_state && globalThis.secret_state[keyName]) return true;
-        } catch {}
-        try {
-            const context = globalThis.SillyTavern?.getContext?.();
-            if (context?.secret_state?.[keyName]) return true;
-        } catch {}
-        try {
-            if (globalThis.oai_settings?.[keyName]) return true;
-            if (globalThis.textgenerationwebui_settings?.[keyName]) return true;
-        } catch {}
+    if (stAdapter?.requiresKey && readSecret(stAdapter.requiresKey)) {
+        return true;
     }
     try {
         const omtpSettings = extension_settings?.omtp;
@@ -446,7 +438,7 @@ export async function fetchLiveModelsForProvider(providerId, force = false) {
  * Whether a native adapter can accept a model id right now.
  * Accepts `(adapter, model)` or an entry object.
  */
-export function canUseNative(adapter, model) {
+function canUseNative(adapter, model) {
     let target = adapter;
     let modelId = model;
 
@@ -495,7 +487,8 @@ function entryBase(provider, providerLabel, model, id) {
         efforts: Array.isArray(model.efforts) ? model.efforts : [],
     };
 }
-export function isObsoleteModel(id) {
+
+function isObsoleteModel(id) {
     if (!id) return false;
     const lower = id.toLowerCase();
     if (/^(?:text-davinci|text-curie|text-babbage|text-ada|code-davinci)/i.test(lower)) return true;
@@ -507,6 +500,143 @@ export function isObsoleteModel(id) {
     return false;
 }
 
+/** Live-discovered model list for a provider, or null when none was fetched. */
+function liveModelsFor(providerId) {
+    const liveData = liveModelsCache.get(providerId);
+    return Array.isArray(liveData?.models) ? liveData.models : null;
+}
+
+/**
+ * Models to build entries for. A live probe is authoritative: only the models
+ * it returned are shown. Otherwise the catalog list is used, without models
+ * that predate the current generation.
+ */
+function modelsForProvider(provider, liveList) {
+    if (liveList && liveList.length > 0) {
+        const liveMap = new Map(liveList.map((model) => (
+            typeof model === 'string' ? [model, { id: model, name: model }] : [model.id, model]
+        )));
+        return Array.from(liveMap.values()).map((liveModel) => {
+            const existing = (provider.models || []).find((model) => model.id === liveModel.id);
+            if (existing) {
+                return { ...existing, isLive: true };
+            }
+            return {
+                id: liveModel.id,
+                name: liveModel.name || liveModel.id,
+                kind: 'chat',
+                contextWindow: liveModel.contextWindow ?? null,
+                maxTokens: liveModel.maxTokens ?? null,
+                reasoning: Boolean(liveModel.reasoning || liveModel.supportsThinking),
+                supportsTools: liveModel.supportsTools ?? true,
+                input: liveModel.input || ['text'],
+                isLive: true,
+            };
+        });
+    }
+
+    const models = Array.isArray(provider.models) ? [...provider.models] : [];
+    return models.filter((model) => !isObsoleteModel(model.id));
+}
+
+/** Adapters and credential state shared by every model of one provider. */
+function providerRoute(provider, providerId) {
+    const stKey = typeof provider.stAdapter === 'string' && provider.stAdapter.length > 0
+        ? provider.stAdapter
+        : null;
+    const stAdapter = stKey ? getNativeAdapter(stKey) : null;
+    // SillyTavern's own key and the gateway's key are different stores: an
+    // OAuth session imported from OMP only exists in the gateway, so those
+    // models must route through it instead of the native adapter.
+    const gatewayStatus = providerAvailabilityCache.get(providerId);
+    return {
+        providerLabel: provider.label || providerId,
+        stKey,
+        stAdapter,
+        gatewayAdapter: typeof provider.gatewayAdapter === 'string' && provider.gatewayAdapter.length > 0
+            ? provider.gatewayAdapter
+            : null,
+        source: NATIVE_PROVIDER_SET.has(providerId) ? 'Native' : 'Translated',
+        gatewayCreds: Boolean(gatewayStatus?.hasKey || gatewayStatus?.available),
+        nativeCreds: hasProviderCredentials(providerId, stAdapter, provider, { includeGateway: false }),
+    };
+}
+
+/** One entry for `model`, routed native or through the gateway. */
+function entryForModel(provider, providerId, route, model, isLive) {
+    if (!isPlainObject(model)) {
+        return null;
+    }
+    const id = typeof model.id === 'string' ? model.id : '';
+    if (!id) {
+        return null;
+    }
+    if (model.kind && model.kind !== 'chat') {
+        return null;
+    }
+
+    const { stKey, stAdapter, gatewayAdapter, source, gatewayCreds, nativeCreds } = route;
+    const base = {
+        ...entryBase(provider, route.providerLabel, model, id),
+        providerId,
+        isLive,
+    };
+
+    const nativeUsable = Boolean(stAdapter && canUseNative(stAdapter, id));
+    const routeNative = nativeUsable && (nativeCreds || !gatewayCreds);
+
+    if (routeNative) {
+        return {
+            ...base,
+            key: `st/${providerId}/${id}`,
+            kind: 'st',
+            provider: providerId,
+            providerKey: stAdapter.key,
+            model: id,
+            source,
+            nativeAdapter: stAdapter,
+            gatewayAdapter,
+            unsupportedReason: nativeCreds ? null : tr('omtp_no_credentials', 'No credentials / not signed in'),
+            available: nativeCreds,
+        };
+    }
+
+    if (gatewayAdapter) {
+        return {
+            ...base,
+            key: `omp/${providerId}/${id}`,
+            kind: 'omp',
+            provider: providerId,
+            providerKey: providerId,
+            model: id,
+            source: 'OMTP',
+            nativeAdapter: null,
+            gatewayAdapter,
+            unsupportedReason: gatewayCreds ? null : tr('omtp_no_credentials', 'No credentials / not signed in'),
+            available: gatewayCreds,
+        };
+    }
+
+    const reason = provider.unsupportedReason
+        || stAdapter?.readOnlyReason
+        || (stKey
+            ? `Model is not available in the native ${stAdapter?.label ?? stKey} control and no gateway adapter is configured`
+            : 'No gateway adapter is configured');
+
+    return {
+        ...base,
+        key: `omp/${providerId}/${id}`,
+        kind: 'omp',
+        provider: providerId,
+        model: id,
+        source: 'OMTP',
+        nativeAdapter: null,
+        gatewayAdapter: null,
+        unsupportedReason: reason,
+        available: false,
+    };
+}
+
 function buildEntries() {
     const entries = [];
 
@@ -516,122 +646,19 @@ function buildEntries() {
             : String(provider.id ?? '');
         if (!providerId) continue;
 
-        const providerLabel = provider.label || providerId;
-        const stKey = typeof provider.stAdapter === 'string' && provider.stAdapter.length > 0
-            ? provider.stAdapter
-            : null;
-        const stAdapter = stKey ? getNativeAdapter(stKey) : null;
-        const gatewayAdapter = typeof provider.gatewayAdapter === 'string' && provider.gatewayAdapter.length > 0
-            ? provider.gatewayAdapter
-            : null;
-        const source = NATIVE_PROVIDER_SET.has(providerId) ? 'Native' : 'Translated';
-        // SillyTavern's own key and the gateway's key are different stores: an
-        // OAuth session imported from OMP only exists in the gateway, so those
-        // models must route through it instead of the native adapter.
-        const gatewayStatus = providerAvailabilityCache.get(providerId);
-        const gatewayCreds = Boolean(gatewayStatus?.hasKey || gatewayStatus?.available);
-        const nativeCreds = hasProviderCredentials(providerId, stAdapter, provider, { includeGateway: false });
-        const hasCreds = nativeCreds || gatewayCreds;
+        const liveList = liveModelsFor(providerId);
+        const models = modelsForProvider(provider, liveList);
+        if (models.length === 0) continue;
 
-        // Merge live-discovered models if available
-        const liveData = liveModelsCache.get(providerId);
-        const liveList = Array.isArray(liveData?.models) ? liveData.models : null;
-        let rawModels = Array.isArray(provider.models) ? [...provider.models] : [];
-
-        if (liveList && liveList.length > 0) {
-            // Live API is AUTHORITATIVE: only models returned by live API are shown
-            const liveMap = new Map(liveList.map((m) => typeof m === 'string' ? [m, { id: m, name: m }] : [m.id, m]));
-            rawModels = Array.from(liveMap.values()).map((lm) => {
-                const existing = (provider.models || []).find((m) => m.id === lm.id);
-                if (existing) return { ...existing, isLive: true };
-                return {
-                    id: lm.id,
-                    name: lm.name || lm.id,
-                    kind: 'chat',
-                    contextWindow: lm.contextWindow ?? null,
-                    maxTokens: lm.maxTokens ?? null,
-                    reasoning: Boolean(lm.reasoning || lm.supportsThinking),
-                    supportsTools: lm.supportsTools ?? true,
-                    input: lm.input || ['text'],
-                    isLive: true,
-                };
-            });
-        } else {
-            rawModels = rawModels.filter((m) => !isObsoleteModel(m.id));
-        }
-
-        if (rawModels.length === 0) continue;
-
-        for (const model of rawModels) {
-            if (!isPlainObject(model)) continue;
-            const id = typeof model.id === 'string' ? model.id : '';
-            if (!id) continue;
-            if (model.kind && model.kind !== 'chat') continue;
-
-            // Models synthesized from a live probe are live by construction; static
-            // catalog models carry no liveness signal.
-            const isLive = liveList ? true : null;
-            const base = {
-                ...entryBase(provider, providerLabel, model, id),
-                providerId,
-                isLive,
-            };
-
-            const nativeUsable = Boolean(stAdapter && canUseNative(stAdapter, id));
-            const routeNative = nativeUsable && (nativeCreds || !gatewayCreds);
-
-            if (routeNative) {
-                entries.push({
-                    ...base,
-                    key: `st/${stAdapter.key}/${id}`,
-                    kind: 'st',
-                    provider: providerId,
-                    providerKey: stAdapter.key,
-                    model: id,
-                    source,
-                    nativeAdapter: stAdapter,
-                    gatewayAdapter,
-                    unsupportedReason: nativeCreds ? null : tr('omtp_no_credentials', 'No credentials / not signed in'),
-                    available: nativeCreds,
-                });
-                continue;
+        const route = providerRoute(provider, providerId);
+        // Models synthesized from a live probe are live by construction; static
+        // catalog models carry no liveness signal.
+        const isLive = liveList ? true : null;
+        for (const model of models) {
+            const entry = entryForModel(provider, providerId, route, model, isLive);
+            if (entry) {
+                entries.push(entry);
             }
-
-            if (gatewayAdapter) {
-                entries.push({
-                    ...base,
-                    key: `omp/${providerId}/${id}`,
-                    kind: 'omp',
-                    provider: providerId,
-                    providerKey: providerId,
-                    model: id,
-                    source: 'OMTP',
-                    nativeAdapter: null,
-                    gatewayAdapter,
-                    unsupportedReason: gatewayCreds ? null : tr('omtp_no_credentials', 'No credentials / not signed in'),
-                    available: gatewayCreds,
-                });
-                continue;
-            }
-
-            const reason = provider.unsupportedReason
-                || stAdapter?.readOnlyReason
-                || (stKey
-                    ? `Model is not available in the native ${stAdapter?.label ?? stKey} control and no gateway adapter is configured`
-                    : 'No gateway adapter is configured');
-
-            entries.push({
-                ...base,
-                key: `omp/${providerId}/${id}`,
-                kind: 'omp',
-                provider: providerId,
-                model: id,
-                source: 'OMTP',
-                nativeAdapter: null,
-                gatewayAdapter: null,
-                unsupportedReason: reason,
-                available: false,
-            });
         }
     }
 
@@ -712,11 +739,6 @@ export function getEntries(options = {}) {
     return entriesCache.concat(profileEntries);
 }
 
-/** Entries that can be switched through the OMTP gateway. */
-export function getGatewayEntries() {
-    return getEntries().filter((entry) => entry.kind === 'omp' && entry.gatewayAdapter && entry.available);
-}
-
 /** Resolve an EntryRef (or entry key) against the active entry list. */
 export function resolveEntry(ref, options = {}) {
     const key = refKey(ref);
@@ -729,7 +751,16 @@ export function resolveEntry(ref, options = {}) {
         return direct;
     }
     const needle = key.toLowerCase();
-    return entries.find((entry) => entry.key.toLowerCase() === needle) ?? null;
+    const byKey = entries.find((entry) => entry.key.toLowerCase() === needle);
+    if (byKey) {
+        return byKey;
+    }
+    // Legacy fallback for `st/<stAdapter.key>/<model>` refs.
+    if (needle.startsWith('st/')) {
+        return entries.find((entry) => entry.kind === 'st'
+            && `st/${String(entry.providerKey || '').toLowerCase()}/${String(entry.model || '').toLowerCase()}` === needle) ?? null;
+    }
+    return null;
 }
 
 /**

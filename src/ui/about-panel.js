@@ -8,21 +8,15 @@
  */
 import { API_BASE } from '../constants.js';
 import { tr, trf } from './dom.js';
+import { el } from './helpers.js';
 
-export const LICENSE = 'GPL-3.0';
-export const LICENSE_URL = 'https://www.gnu.org/licenses/gpl-3.0.html';
-export const AUTHOR = 'BHLuotianyi';
-export const OMP_URL = 'https://github.com/can1357/oh-my-pi';
+const LICENSE = 'GPL-3.0';
+const LICENSE_URL = 'https://www.gnu.org/licenses/gpl-3.0.html';
+const AUTHOR = 'BHLuotianyi';
+const OMP_URL = 'https://github.com/can1357/oh-my-pi';
 
 /** @type {HTMLElement|null} */
 let host = null;
-
-function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-}
 
 /** @param {HTMLElement} parent @param {string} label @param {Node|string} value */
 function fact(parent, label, value) {
@@ -57,7 +51,6 @@ function list(items) {
     return ul;
 }
 
-/** SillyTavern's own version, from whichever source is available. */
 /** Reduce "SillyTavern 1.19.0 'release' (06bde93)" to "1.19.0". */
 function shortVersion(raw) {
     const text = typeof raw === 'string' ? raw.trim() : '';
@@ -66,6 +59,7 @@ function shortVersion(raw) {
     return match ? match[0] : text;
 }
 
+/** SillyTavern's own version, from whichever source is available. */
 function sillyTavernVersion() {
     try {
         const ctx = globalThis.SillyTavern?.getContext?.();

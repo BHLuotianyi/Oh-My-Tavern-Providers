@@ -10,30 +10,13 @@ import { getRequestHeaders } from '../../../../../../script.js';
 import { API_BASE } from '../constants.js';
 import { currentChatId, ensureUsageSession } from '../usage-session.js';
 import { tr, trf } from './dom.js';
+import { formatTokens, formatUsd } from './helpers.js';
 
 const CHIP_ID = 'omtp-usage-chip';
 const REFRESH_DEBOUNCE_MS = 600;
 
 let chip = null;
 let timer = null;
-
-/** @param {number} value */
-function formatTokens(value) {
-    const tokens = Number(value) || 0;
-    if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
-    if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
-    return String(Math.round(tokens));
-}
-
-/** @param {number} value */
-function formatUsd(value) {
-    const usd = Number(value) || 0;
-    if (!usd) return '$0';
-    if (usd < 0.001) return `$${usd.toFixed(6)}`;
-    if (usd < 0.01) return `$${usd.toFixed(4)}`;
-    if (usd < 1) return `$${usd.toFixed(3)}`;
-    return `$${usd.toFixed(2)}`;
-}
 
 /**
  * Fetch the current chat's totals and repaint the chip.

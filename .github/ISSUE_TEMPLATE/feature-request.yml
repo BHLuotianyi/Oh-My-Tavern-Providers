@@ -1,0 +1,68 @@
+name: Feature request / 功能请求
+description: 提议新的交互特性、斜杠命令、统计视图或工作流优化 / Propose a new feature, slash command, or workflow improvement
+title: "[Feature] "
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢为 **OMTP Model Hub** 提出新功能建议！
+        如果你希望**新增模型服务商、更新模型目录或补充实时额度接口**，请改用专门的「**新增/更新服务商与模型适配**」模板。
+
+        Thank you for suggesting a feature for **OMTP Model Hub**!
+        If you want to request a **new provider, model catalog update, or quota endpoint**, please use the **Provider / Model Request** template instead.
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 痛点与使用场景 / Problem & Use Case
+      description: 当前在 SillyTavern 中遇到了什么不便？在什么场景下需要这个功能？
+      placeholder: 例如：在跑多角色群聊或长篇故事卡时，希望能按预设（Preset）自动跟随切换推理强度...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的设计与交互 / Proposed Solution
+      description: 你希望这个功能在面板、斜杠命令或 `globalThis.OMTP` API 中如何表现？
+      placeholder: 描述期望的界面入口、快捷键或命令行为...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及模块 / Affected area
+      multiple: true
+      options:
+        - 面板 UI、搜索与筛选 / Hub UI, Search & Filters
+        - 快速槽位与快捷键 / Quick Slots & Hotkeys
+        - 斜杠命令与选择器语法 / Slash Commands & Selector Grammar
+        - 对话与角色自动绑定 / Chat & Character Bindings
+        - 八维人格雷达与评分 / Personality Radar & Roleplay Score
+        - 登录中心与凭据管理 / Sign-in & Credential Management
+        - 用量监控与本地统计大屏 (/omtp stats) / Usage Quotas & Stats Dashboard
+        - 本地网关与协议转换 / Local Gateway & Protocol Translation
+        - 开发者 API (globalThis.OMTP) / Developer API
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案或参考实现（可选） / Alternatives or References (optional)
+      placeholder: 是否有其他扩展、OMP (oh-my-pi) 命令或工具的设计可供参考？
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 提交前确认 / Confirmation
+      options:
+        - label: 我已搜索现有 Issues，未发现相同的功能请求 / I searched existing issues and found no duplicate request
+          required: true
+        - label: 本 Issue 仅聚焦于一项明确的功能提议 / This issue focuses on a single well-defined feature proposal
+          required: true

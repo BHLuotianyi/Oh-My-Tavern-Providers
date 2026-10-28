@@ -1,0 +1,131 @@
+name: Bug report / 报告问题
+description: 汇报模型切换、本地网关转发、OAuth 登录、额度统计或界面异常 / Report a bug in model switching, gateway forwarding, OAuth login, or UI
+title: "[Bug] "
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢向 **OMTP Model Hub** 反馈问题！
+        为帮助我们快速定位，请按实际情况填写以下信息。
+        **安全提醒**：上传浏览器控制台日志、服务端终端输出或截图前，请务必移除你的 **API Key、Bearer Token、Cookie 和个人隐私信息**。
+
+        Thank you for reporting an issue with **OMTP Model Hub**!
+        Please redact all **API keys, OAuth tokens, cookies, and personal data** before pasting logs or screenshots.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述 / Problem description
+      placeholder: 简要描述你遇到的问题（例如：切换到某服务商模型后发送消息报 502 / 面板无法打开） / Briefly describe what went wrong
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: 涉及模块 / Affected area
+      description: 可多选；请选择问题发生的位置 / Select all areas involved
+      multiple: true
+      options:
+        - 面板界面与搜索过滤 / Hub UI, Search & Filters
+        - 原生模型切换 (Native / Translated) / Native Model Switching
+        - 本地网关转发 (OMTP Gateway :4100) / Local Gateway Forwarding
+        - OAuth 订阅登录与设备码 (Sign-in) / OAuth & Device-Code Login
+        - API Key 存储与三级密钥解析 / API Key Storage & Resolution
+        - 实时额度查询 (/usage) / Subscription Quota Tracking
+        - Token 计费徽章与统计大屏 (/omtp stats) / Token Accounting & Stats Dashboard
+        - 对话与角色自动绑定 (Bindings) / Chat & Character Bindings
+        - 推理强度与附加请求体 (/effort & Extra Body) / Reasoning Effort & Extra Body
+        - 本地 OMP 导入与目录刷新 / Local OMP Import & Catalog Refresh
+        - 其他或不确定 / Other or unsure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-mode
+    attributes:
+      label: 安装模式 / Installation mode
+      default: 0
+      options:
+        - 已安装客户端扩展 + 服务端插件 (plugins/omtp) / Client extension + Server plugin
+        - 仅安装客户端扩展 (无服务端插件) / Client extension only
+        - 不确定 / Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: provider-model
+    attributes:
+      label: 涉及的服务商与模型 ID / Provider & Model ID
+      placeholder: 例如：anthropic/claude-opus-5-5 或 google-antigravity/gemini-4-argon（不涉及具体模型填“无”）
+    validations:
+      required: true
+
+  - type: dropdown
+    id: route-badge
+    attributes:
+      label: 模型行显示的路由徽章 / Route badge shown on the model row
+      default: 0
+      options:
+        - Native (原生)
+        - Translated (转换)
+        - OMTP (本地网关)
+        - Profile (连接配置档案)
+        - 不可用 / 灰色禁用 (Unavailable)
+        - 不涉及具体模型 / Not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. 按 Alt+M 打开 OMTP 面板
+        2. 选择服务商 xxx 与模型 yyy
+        3. 点击「使用模型」并发送消息
+        4. 观察到报错 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: 预期行为 vs 实际行为 / Expected vs Actual behavior
+      placeholder: |
+        预期行为：正常流式返回模型回复。
+        实际行为：酒馆提示 Gateway error 502 ...
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: 运行环境版本 / Environment versions
+      description: 可在 OMTP 面板的「关于 (About)」标签页直接查看全部版本号 / You can find all versions in the Hub's "About" tab
+      placeholder: "SillyTavern: 1.13.x | Node.js: v22.x | OS: Windows 11 / Linux | Browser: Chrome"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 控制台与服务端日志 / Browser Console & Server Logs
+      description: 请附上浏览器 F12 Console 报错或运行 SillyTavern 的终端 `[omtp]` 日志（请先脱敏密钥！）
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 提交前确认 / Pre-submission checklist
+      options:
+        - label: "我已阅读 README 的常见问题 (FAQ)，确认不是未开启 `enableServerPlugins: true` 导致的问题 / I checked the FAQ and verified `enableServerPlugins: true` if using gateway features"
+          required: true
+        - label: 我已搜索现有 Issues，未发现重复报告 / I searched existing issues and found no duplicate
+          required: true
+        - label: 我已从日志和截图中移除所有 API Key、Token 与隐私数据 / I redacted all API keys, tokens, and personal data
+          required: true

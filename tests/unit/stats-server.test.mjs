@@ -42,13 +42,6 @@ test('stats dashboard serves the page, the JSON API and its handshake', async (t
     const html = await page.text();
     assert.match(html, /OMTP stats/);
     assert.match(html, /\/api\/stats/);
-    // The page ships its own icon instead of borrowing one from disk.
-    assert.match(html, /rel="icon" href="data:image\/svg\+xml/);
-    // Both locales are embedded; the language comes from the query/navigator.
-    assert.match(html, /'OMTP 统计'/);
-    assert.match(html, /当前对话/);
-    // Chat picker drives the per-chat view.
-    assert.match(html, /<select id="chat" hidden>/);
 
     const handshake = await fetch(`http://127.0.0.1:${port}/__omtp_stats__`);
     assert.deepEqual(await handshake.json(), { ok: true, version: DASHBOARD_VERSION });

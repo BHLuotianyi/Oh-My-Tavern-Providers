@@ -19,6 +19,7 @@ import { getEntryKey, getSettings, isValidRef, parseEntryKey, saveSettings } fro
 import { applyReasoning, captureSelection, switchToEntry } from '../switch-engine.js';
 import { getEntries, loadCatalog, resolveEntry } from '../catalog.js';
 import { tr } from './dom.js';
+import { isPlainObject, notify } from './helpers.js';
 
 const APPLY_DELAY_MS = 150;
 const GENERATION_WAIT_MS = 120000;
@@ -29,21 +30,6 @@ let lastAppliedChatId = null;
 let lastAppliedRef = null;
 let applying = false;
 let pending = false;
-
-function notify(kind, message) {
-    const fn = globalThis.toastr?.[kind];
-    if (typeof fn === 'function') {
-        fn(message);
-    } else if (kind === 'error') {
-        console.error('[omtp]', message);
-    } else {
-        console.log('[omtp]', message);
-    }
-}
-
-function isPlainObject(value) {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}
 
 function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -338,6 +324,11 @@ async function applyBindingForCurrentChat() {
         return;
     }
 
+    await switchToBoundModel(chatId, key);
+}
+
+/** Delay, wait out any running generation, then switch once the binding survives the wait. */
+async function switchToBoundModel(chatId, key) {
     await delay(APPLY_DELAY_MS);
 
     if (!getSettings().autoApplyBindings) {

@@ -30,19 +30,19 @@ import { parseStructuredCredential } from '../oauth.mjs';
 
 export const id = 'antigravity';
 
-export const ANTIGRAVITY_PRIMARY_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
-export const ANTIGRAVITY_SANDBOX_ENDPOINT = 'https://daily-cloudcode-pa.sandbox.googleapis.com';
-export const GEMINI_CLI_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
+const ANTIGRAVITY_PRIMARY_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
+const ANTIGRAVITY_SANDBOX_ENDPOINT = 'https://daily-cloudcode-pa.sandbox.googleapis.com';
+const GEMINI_CLI_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
 export const DEFAULT_ANTIGRAVITY_VERSION = '2.19.1';
 
 const DISCOVERY_DENYLIST = new Set(['chat_20706', 'chat_23310', 'gemini-2.5-pro']);
 
-export function getAntigravityUserAgent(version = DEFAULT_ANTIGRAVITY_VERSION) {
+function getAntigravityUserAgent(version = DEFAULT_ANTIGRAVITY_VERSION) {
   const ver = process.env.PI_AI_ANTIGRAVITY_VERSION || version;
   return `antigravity/hub/${ver} (aidev_client; os_type=darwin; arch=arm64; cl=963137146)`;
 }
 
-export function getGeminiCliUserAgent(modelId = 'gemini-3.1-pro-preview') {
+function getGeminiCliUserAgent(modelId = 'gemini-3.1-pro-preview') {
   const ver = process.env.PI_AI_GEMINI_CLI_VERSION || '0.46.0';
   return `GeminiCLI/${ver}/${modelId} (${process.platform}; ${process.arch}; terminal)`;
 }
@@ -59,7 +59,7 @@ function extractAuth(ctx) {
   return { token, project };
 }
 
-export function buildAntigravityHeaders(ctx, isClaude = false) {
+function buildAntigravityHeaders(ctx, isClaude = false) {
   const { token } = extractAuth(ctx);
   const isGeminiCli = ctx?.provider === 'google-gemini-cli';
   const headers = {
@@ -169,6 +169,45 @@ function createCcaStreamHandler(model) {
   };
 }
 
+/**
+ * POST to the first endpoint that answers 200/401/403, keeping the last
+ * response and the last transport error like the original retry loop.
+ */
+async function postWithFailover(endpoints, path, { headers, body, signal, doFetch }) {
+  let upstream = null;
+  let lastError = null;
+  for (const endpoint of endpoints) {
+    try {
+      const response = await doFetch(`${endpoint}${path}`, { method: 'POST', headers, body, signal });
+      upstream = response;
+      if (response.ok || response.status === 401 || response.status === 403) break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  return { upstream, lastError };
+}
+
+/** Collect the text/reasoning of a non-streaming CCA response body. */
+function parseCcaBody(raw) {
+  let text = '';
+  let reasoning = '';
+  let lastResponse = null;
+  for (const line of raw.split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    const payload = parseJsonObject(line.slice(5).trim());
+    const response = payload?.response ?? payload;
+    if (response?.candidates) lastResponse = response;
+    for (const part of response?.candidates?.[0]?.content?.parts || []) {
+      if (typeof part?.text === 'string') {
+        if (part.thought) reasoning += part.text;
+        else text += part.text;
+      }
+    }
+  }
+  return { text, reasoning, lastResponse };
+}
+
 export async function chat(req, ctx) {
   const { token, project } = extractAuth(ctx);
   if (!token && !hasCredential(ctx)) {
@@ -202,22 +241,11 @@ export async function chat(req, ctx) {
   const headers = buildAntigravityHeaders(ctx, isClaude);
   const doFetch = ctx?.fetchImpl || fetch;
 
-  let upstream = null;
-  let lastError = null;
-  for (const endpoint of endpoints) {
-    try {
-      const res = await doFetch(`${endpoint}/v1internal:streamGenerateContent?alt=sse`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: ctx?.signal,
-      });
-      upstream = res;
-      if (res.ok || res.status === 401 || res.status === 403) break;
-    } catch (error) {
-      lastError = error;
-    }
-  }
+  const { upstream, lastError } = await postWithFailover(
+    endpoints,
+    '/v1internal:streamGenerateContent?alt=sse',
+    { headers, body: JSON.stringify(body), signal: ctx?.signal, doFetch },
+  );
 
   if (!upstream) return networkError(lastError, 'Antigravity request');
   if (!upstream.ok) return upstreamErrorResponse(upstream);
@@ -225,22 +253,7 @@ export async function chat(req, ctx) {
   const model = String(ctx?.model || req?.model || 'gemini-3.1-pro');
   if (req?.stream) return sseResponse(upstream, createCcaStreamHandler(model));
 
-  const raw = await upstream.text();
-  let text = '';
-  let reasoning = '';
-  let lastResponse = null;
-  for (const line of raw.split('\n')) {
-    if (!line.startsWith('data:')) continue;
-    const payload = parseJsonObject(line.slice(5).trim());
-    const response = payload?.response ?? payload;
-    if (response?.candidates) lastResponse = response;
-    for (const part of response?.candidates?.[0]?.content?.parts || []) {
-      if (typeof part?.text === 'string') {
-        if (part.thought) reasoning += part.text;
-        else text += part.text;
-      }
-    }
-  }
+  const { text, reasoning, lastResponse } = parseCcaBody(await upstream.text());
   const translated = lastResponse
     ? translateGoogleCompletion(lastResponse, model)
     : {
@@ -250,23 +263,16 @@ export async function chat(req, ctx) {
         model,
         choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
       };
-  if (choicesTextNeedsOverride(translated, text, reasoning)) {
-    translated.choices[0].message.content = text;
-    if (reasoning) translated.choices[0].message.reasoning_content = reasoning;
+  const message = translated?.choices?.[0]?.message;
+  if (message && (text || reasoning)) {
+    message.content = text;
+    if (reasoning) message.reasoning_content = reasoning;
   }
   return new Response(JSON.stringify(translated), { status: 200, headers: JSON_HEADERS });
 }
 
-function choicesTextNeedsOverride(translated, text, reasoning) {
-  return Boolean(translated?.choices?.[0]?.message && (text || reasoning));
-}
-
-export async function listModels(ctx) {
-  const configured = trimSlash(ctx?.baseUrl);
-  const endpoints = [...new Set([configured || ANTIGRAVITY_PRIMARY_ENDPOINT, ANTIGRAVITY_PRIMARY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT])];
-  const headers = { ...buildAntigravityHeaders(ctx, false), Accept: 'application/json' };
-  const doFetch = ctx?.fetchImpl || fetch;
-
+/** Fetch the model map from the first endpoint that accepts the credential. */
+async function fetchAvailableModels(endpoints, headers, doFetch, signal) {
   let lastStatus = 0;
   for (const endpoint of endpoints) {
     try {
@@ -274,36 +280,51 @@ export async function listModels(ctx) {
         method: 'POST',
         headers,
         body: '{}',
-        signal: ctx?.signal,
+        signal,
       });
       lastStatus = response.status;
       if (!response.ok) continue;
-      const data = await response.json();
-      const modelsMap = data?.models && typeof data.models === 'object' ? data.models : {};
-      const imageIds = new Set(Array.isArray(data?.imageGenerationModelIds) ? data.imageGenerationModelIds : []);
-      const seen = new Set();
-      const out = [];
-      for (const [id, meta] of Object.entries(modelsMap)) {
-        if (!id || DISCOVERY_DENYLIST.has(id) || imageIds.has(id)) continue;
-        if (meta?.disabled || meta?.isInternal || id.startsWith('tab_') || id.startsWith('chat_')) continue;
-        const logicalId = id.replace(/-(?:minimal|extra-low|low|medium|high|tiered|thinking)$/, '');
-        if (seen.has(logicalId)) continue;
-        seen.add(logicalId);
-        out.push({
-          id: logicalId,
-          name: typeof meta?.displayName === 'string' && meta.displayName ? meta.displayName.replace(/\s*\((?:minimal|low|medium|high|tiered|thinking)\)$/i, '') : logicalId,
-          contextWindow: Number(meta?.maxTokens) || 200_000,
-          maxTokens: Number(meta?.maxOutputTokens) || 64_000,
-          reasoning: Boolean(meta?.supportsThinking),
-          input: meta?.supportsImages ? ['text', 'image'] : ['text'],
-        });
-      }
-      return out;
+      return await response.json();
     } catch {
       /* try next endpoint */
     }
   }
   throw new Error(`Antigravity fetchAvailableModels failed (HTTP ${lastStatus || 'network'})`);
+}
+
+/** Strip wire-model suffixes and denylisted entries from the discovery map. */
+function toDiscoveredModels(data) {
+  const modelsMap = data?.models && typeof data.models === 'object' ? data.models : {};
+  const imageIds = new Set(Array.isArray(data?.imageGenerationModelIds) ? data.imageGenerationModelIds : []);
+  const seen = new Set();
+  const out = [];
+  for (const [id, meta] of Object.entries(modelsMap)) {
+    if (!id || DISCOVERY_DENYLIST.has(id) || imageIds.has(id)) continue;
+    if (meta?.disabled || meta?.isInternal || id.startsWith('tab_') || id.startsWith('chat_')) continue;
+    const logicalId = id.replace(/-(?:minimal|extra-low|low|medium|high|tiered|thinking)$/, '');
+    if (seen.has(logicalId)) continue;
+    seen.add(logicalId);
+    const name = typeof meta?.displayName === 'string' && meta.displayName
+      ? meta.displayName.replace(/\s*\((?:minimal|low|medium|high|tiered|thinking)\)$/i, '')
+      : logicalId;
+    out.push({
+      id: logicalId,
+      name,
+      contextWindow: Number(meta?.maxTokens) || 200_000,
+      maxTokens: Number(meta?.maxOutputTokens) || 64_000,
+      reasoning: Boolean(meta?.supportsThinking),
+      input: meta?.supportsImages ? ['text', 'image'] : ['text'],
+    });
+  }
+  return out;
+}
+
+export async function listModels(ctx) {
+  const configured = trimSlash(ctx?.baseUrl);
+  const endpoints = [...new Set([configured || ANTIGRAVITY_PRIMARY_ENDPOINT, ANTIGRAVITY_PRIMARY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT])];
+  const headers = { ...buildAntigravityHeaders(ctx, false), Accept: 'application/json' };
+  const doFetch = ctx?.fetchImpl || fetch;
+  return toDiscoveredModels(await fetchAvailableModels(endpoints, headers, doFetch, ctx?.signal));
 }
 
 export default { id, chat, listModels };

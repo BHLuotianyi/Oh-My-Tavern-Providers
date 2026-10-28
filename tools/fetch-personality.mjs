@@ -10,7 +10,7 @@
  * AA publishes the eight index percentiles for a subset of models. The rest
  * expose the 30 trait z-scores; we derive the index percentile exactly as the
  * methodology describes (mean trait z-score per index, sycophantic inverted in
- * Transparency, percentile ranked across every evaluated model). `verify()`
+ * Transparency, percentile ranked across every evaluated model). Every run
  * prints published-vs-derived deltas so a regression is visible.
  *
  *   node tools/fetch-personality.mjs            # refresh the snapshot
@@ -64,6 +64,31 @@ function flightPayload(html) {
 }
 
 /**
+ * Index just past the JSON object that opens at `start`, or -1 if truncated.
+ * @param {string} payload
+ * @param {number} start
+ * @returns {number}
+ */
+function matchObjectEnd(payload, start) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < payload.length; i++) {
+        const char = payload[i];
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (char === '\\') escaped = true;
+            else if (char === '"') inString = false;
+            continue;
+        }
+        if (char === '"') inString = true;
+        else if (char === '{') depth++;
+        else if (char === '}' && --depth === 0) return i + 1;
+    }
+    return -1;
+}
+
+/**
  * Every model record that carries trait data.
  * @param {string} payload
  */
@@ -74,25 +99,7 @@ function extractModels(payload) {
     let match;
     while ((match = re.exec(payload))) {
         const start = match.index;
-        let depth = 0;
-        let inString = false;
-        let escaped = false;
-        let end = -1;
-        for (let i = start; i < payload.length; i++) {
-            const char = payload[i];
-            if (inString) {
-                if (escaped) escaped = false;
-                else if (char === '\\') escaped = true;
-                else if (char === '"') inString = false;
-                continue;
-            }
-            if (char === '"') inString = true;
-            else if (char === '{') depth++;
-            else if (char === '}' && --depth === 0) {
-                end = i + 1;
-                break;
-            }
-        }
+        const end = matchObjectEnd(payload, start);
         if (end < 0) break;
         re.lastIndex = end;
         const chunk = payload.slice(start, end);
@@ -124,31 +131,14 @@ function indexZScores(zScores) {
 }
 
 /**
- * Percentile rank (0-100) of each index across the evaluated models.
+ * Percentile rank (0-100) of every row along one key.
  * @param {any[]} rows
+ * @param {(row: any) => number} keyFn
+ * @param {(row: any, percentile: number) => void} assign
  */
-function percentileRank(rows) {
-    for (const index of INDEX_KEYS) {
-        const sorted = [...rows].sort((a, b) => a.z[index] - b.z[index]);
-        sorted.forEach((row, position) => {
-            row.derived[index] = (position / (sorted.length - 1)) * 100;
-        });
-    }
-}
-
-/**
- * Percentile rank of individual traits across the evaluated models, so the
- * roleplay score can weigh a single trait (e.g. sycophancy) on its own.
- * @param {any[]} rows
- * @param {string[]} traits
- */
-function percentileRankTraits(rows, traits) {
-    for (const trait of traits) {
-        const sorted = [...rows].sort((a, b) => (a.raw?.[trait] ?? 0) - (b.raw?.[trait] ?? 0));
-        sorted.forEach((row, position) => {
-            row.traits[trait] = (position / (sorted.length - 1)) * 100;
-        });
-    }
+function rankBy(rows, keyFn, assign) {
+    const sorted = [...rows].sort((a, b) => keyFn(a) - keyFn(b));
+    sorted.forEach((row, position) => assign(row, (position / (sorted.length - 1)) * 100));
 }
 
 /**
@@ -171,9 +161,11 @@ async function loadPage() {
     }
 }
 
-async function main() {
-    const verifyOnly = process.argv.includes('--verify');
-    const html = await loadPage();
+/**
+ * One row per evaluated model: AA's published indexes plus derived percentiles.
+ * @param {string} html
+ */
+function buildRows(html) {
     const records = extractModels(flightPayload(html));
     if (!records.length) {
         throw new Error('no personality records found — the page layout probably changed');
@@ -199,9 +191,24 @@ async function main() {
         traits: {},
         raw: record.judged?.zScores || record.zScores,
     }));
-    percentileRank(rows);
-    percentileRankTraits(rows, ['sycophantic']);
+    for (const index of INDEX_KEYS) {
+        rankBy(rows, (row) => row.z[index], (row, percentile) => {
+            row.derived[index] = percentile;
+        });
+    }
+    // Trait percentiles let the roleplay score weigh a single trait (e.g.
+    // sycophancy) on its own.
+    rankBy(rows, (row) => row.raw?.sycophantic ?? 0, (row, percentile) => {
+        row.traits.sycophantic = percentile;
+    });
+    return rows;
+}
 
+/**
+ * Compare the derived percentiles with AA's published values.
+ * @param {any[]} rows
+ */
+function verifyPublished(rows) {
     let checked = 0;
     let worstDelta = 0;
     const deltas = [];
@@ -218,10 +225,13 @@ async function main() {
     if (deltas.length) {
         console.warn('[personality] derivation drifted from published values:\n  ' + deltas.join('\n  '));
     }
-    if (verifyOnly) {
-        return;
-    }
+}
 
+/**
+ * Write `catalog/personality.json` from the ranked rows.
+ * @param {any[]} rows
+ */
+function writeSnapshot(rows) {
     /** @type {Record<string, any>} */
     const models = {};
     for (const row of rows) {
@@ -255,6 +265,13 @@ async function main() {
     };
     fs.writeFileSync(OUT_FILE, `${JSON.stringify(payload, null, 2)}\n`);
     console.log(`[personality] wrote ${path.relative(ROOT, OUT_FILE)} (${Object.keys(models).length} models)`);
+}
+
+async function main() {
+    const rows = buildRows(await loadPage());
+    verifyPublished(rows);
+    if (process.argv.includes('--verify')) return;
+    writeSnapshot(rows);
 }
 
 await main();

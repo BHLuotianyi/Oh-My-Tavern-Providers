@@ -6,12 +6,6 @@
  * tests) without pulling in SillyTavern code.
  */
 
-/** Third-party extension folder name (manifest id). */
-export const EXTENSION_ID = 'omtp-model-hub';
-
-/** Human readable extension name. */
-export const EXTENSION_DISPLAY_NAME = 'OMTP Model Hub';
-
 /** Key under `extension_settings` that stores all plugin settings. */
 export const SETTINGS_NAMESPACE = 'omtp';
 
@@ -106,22 +100,7 @@ export const LAB_PROVIDERS = Object.freeze(new Set([
  * gateways) is hidden by the "hide non-mainstream" filter.
  */
 export const MAINSTREAM_PROVIDERS = Object.freeze(new Set([
-    // First-party labs with a usable consumer/API offering.
-    'anthropic',
-    'openai', 'openai-codex', 'openai-codex-device',
-    'google', 'google-vertex', 'google-gemini-cli', 'google-antigravity',
-    'xai', 'xai-oauth',
-    'deepseek',
-    'mistral',
-    'meta',
-    'moonshot', 'kimi-code',
-    'zai', 'zai-coding-plan', 'zhipu-coding-plan',
-    'minimax', 'minimax-cn', 'minimax-code', 'minimax-code-cn',
-    'qwen-portal', 'qianfan', 'alibaba-coding-plan', 'alibaba-token-plan',
-    'xiaomi', 'xiaomi-token-plan-ams', 'xiaomi-token-plan-cn', 'xiaomi-token-plan-sgp',
-    'nvidia',
-    'perplexity',
-    'stepfun',
+    ...LAB_PROVIDERS,
     // Aggregators people actually use for chat/RP.
     'openrouter',
     'siliconflow', 'siliconflow-cn',
@@ -136,9 +115,6 @@ export const MAINSTREAM_PROVIDERS = Object.freeze(new Set([
 
 /** Entry ref kinds. */
 export const ENTRY_KINDS = Object.freeze(['st', 'omp', 'profile']);
-
-/** Entry source badges rendered by the hub. */
-export const ENTRY_SOURCES = Object.freeze(['Native', 'Translated', 'OMTP', 'Profile']);
 
 /** Number of quick slots (`Alt+1..9`). */
 export const QUICK_SLOT_COUNT = 9;

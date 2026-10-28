@@ -323,14 +323,6 @@ export class KeyStore {
     }
 
     /**
-     * Alias for the plan's KeyStore contract.
-     * @returns {Promise<Array<{id:string, config:Record<string, any>, unreadable:boolean}>>}
-     */
-    async listProviders() {
-        return this.listProviderConfigs();
-    }
-
-    /**
      * @param {string} providerId
      * @returns {string}
      */

@@ -66,21 +66,3 @@ export async function getAdapter(id) {
         return null;
     }
 }
-
-/**
- * Warm the registry without failing when a module is missing.
- * @returns {Promise<string[]>}
- */
-export async function loadAvailableAdapters() {
-    /** @type {string[]} */
-    const available = [];
-    for (const id of ADAPTER_IDS) {
-        if (await getAdapter(id)) available.push(id);
-    }
-    return available;
-}
-
-/** @type {Record<string, string>} */
-export const ADAPTER_FILES = Object.freeze(
-    Object.fromEntries(ADAPTER_IDS.map((id) => [id, `${id}.mjs`])),
-);

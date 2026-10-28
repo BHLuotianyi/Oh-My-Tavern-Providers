@@ -5,8 +5,9 @@
  * APP_READY when it already fired, so late initialization still starts).
  * Availability-related events are debounced into a single rebuild.
  *
- * Callbacks are optional; the defaults drive the hub so that `initEvents()`
- * works when called with no arguments.
+ * Callbacks are optional: `refreshChip`, `refreshHub` and `onChatChanged`
+ * default to the hub's own functions, while the generation and catalog
+ * callbacks default to null so `initEvents()` works with no arguments.
  */
 import { eventSource, event_types } from '../../../../events.js';
 import { EVENTS, ST_EVENTS } from './constants.js';
@@ -146,7 +147,8 @@ function onAppReady() {
  * Install the event listeners. Safe to call multiple times; cleanupEvents()
  * must be called before re-initializing after a disable.
  * @param {{refreshChip?: Function, refreshHub?: Function, onChatChanged?: Function,
- *          onGenerationStarted?: Function, onGenerationEnded?: Function}} [options]
+ *          onGenerationStarted?: Function, onGenerationEnded?: Function,
+ *          onCatalogChanged?: Function}} [options]
  */
 export function initEvents(options = {}) {
     if (initialized) {

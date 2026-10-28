@@ -184,18 +184,6 @@ body.omtp-hide-native-api-selector #rm_api_block {
     font-weight: 500;
     white-space: nowrap;
 }
-.omtp-key-input-row {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    flex-wrap: wrap;
-}
-
-.omtp-key-input-row button {
-    flex: 0 0 auto;
-    white-space: nowrap;
-}
-
 .omtp-key-field {
     position: relative;
     display: flex;
@@ -229,7 +217,7 @@ body.omtp-hide-native-api-selector #rm_api_block {
     opacity: 1;
     background: rgba(255, 255, 255, 0.1);
 }
-.omtp-key-input-row input {
+.omtp-key-field input {
     flex: 1 1 auto;
     width: 100%;
     min-width: 0;
@@ -477,14 +465,6 @@ body.omtp-hide-native-api-selector #rm_api_block {
     border-radius: 9px;
 }
 
-.omtp-provider-group-title {
-    padding: 8px 8px 4px;
-    font-size: 0.72em;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    opacity: 0.55;
-}
-
 .omtp-model-pane {
     display: flex;
     flex: 1 1 auto;
@@ -626,8 +606,7 @@ body.omtp-hide-native-api-selector #rm_api_block {
 }
 
 .omtp-empty-state,
-.omtp-login-empty,
-.omtp-hint-row {
+.omtp-login-empty {
     padding: 14px 10px;
     font-size: 0.9em;
     text-align: center;
@@ -802,7 +781,6 @@ body.omtp-hide-native-api-selector #rm_api_block {
 
 #omtp-settings .omtp-settings-row input[type="text"],
 #omtp-settings .omtp-settings-row input[type="url"],
-#omtp-settings .omtp-settings-row input[type="password"],
 #omtp-settings .omtp-settings-row select {
     flex: 1 1 200px;
     min-width: 120px;
@@ -829,20 +807,6 @@ body.omtp-hide-native-api-selector #rm_api_block {
     font-size: 0.85em;
 }
 
-#omtp-settings .omtp-provider-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 0;
-    border-bottom: 1px dashed var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
-    flex-wrap: wrap;
-}
-
-#omtp-settings .omtp-provider-row .omtp-provider-name {
-    flex: 1 1 140px;
-    min-width: 100px;
-}
-
 #omtp-settings .omtp-binding-row {
     display: flex;
     align-items: center;
@@ -855,11 +819,6 @@ body.omtp-hide-native-api-selector #rm_api_block {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-#omtp-settings details.omtp-advanced summary {
-    cursor: pointer;
-    opacity: 0.75;
 }
 
 @media (max-width: 860px) {
@@ -1014,12 +973,6 @@ body.omtp-hide-native-api-selector #rm_api_block {
     font-size: 0.8em;
 }
 
-.omtp-key-link-row {
-    display: flex;
-    justify-content: flex-start;
-    margin-top: 2px;
-}
-
 .omtp-get-key {
     font-size: 0.85em;
     padding: 3px 10px;
@@ -1037,12 +990,6 @@ body.omtp-hide-native-api-selector #rm_api_block {
 /* The sign-in panel uses the full modal width; model details are irrelevant */
 #omtp-hub-body.omtp-manager-open #omtp-details {
     display: none;
-}
-
-.omtp-card-divider {
-    height: 1px;
-    margin: 6px 0 2px;
-    background: var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.14));
 }
 
 /* ------------------------------------------------------------------ */

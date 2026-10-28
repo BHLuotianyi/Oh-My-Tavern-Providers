@@ -61,15 +61,17 @@ function tokenProfile(accessToken, idToken) {
 /**
  * @param {string} code
  * @param {string} verifier
+ * @param {string} clientId
  * @param {typeof fetch} doFetch
+ * @returns {Promise<any>}
  */
-async function exchangeCode(code, verifier, doFetch) {
+async function exchangeCode(code, verifier, clientId, doFetch) {
     const response = await doFetch(TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
             grant_type: 'authorization_code',
-            client_id: CLIENT_ID,
+            client_id: clientId,
             code,
             code_verifier: verifier,
             redirect_uri: REDIRECT_URI,
@@ -114,7 +116,7 @@ export async function startOpenAICodexDevice({ providerId = 'openai-codex', env 
     if (!clientId) {
         throw new Error(
             `OAuth client credentials for ${providerId} are not configured; `
-            + `add "clientId" to ${'data/omtp/oauth-clients.json'} or set ${CLIENT_ID_ENV}.`,
+            + `add "clientId" to data/omtp/oauth-clients.json or set ${CLIENT_ID_ENV}.`,
         );
     }
     const init = await doFetch(USERCODE_URL, {
@@ -157,7 +159,7 @@ export async function startOpenAICodexDevice({ providerId = 'openai-codex', env 
                 if (!data?.authorization_code || !data?.code_verifier) {
                     throw new Error('Device polling response missing authorization_code/code_verifier');
                 }
-                return exchangeCode(String(data.authorization_code), String(data.code_verifier), doFetch);
+                return exchangeCode(String(data.authorization_code), String(data.code_verifier), clientId, doFetch);
             }
             throw new Error('Device authorization timed out');
         },

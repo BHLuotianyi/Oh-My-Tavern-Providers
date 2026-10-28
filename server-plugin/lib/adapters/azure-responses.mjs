@@ -1,12 +1,11 @@
 /** Azure OpenAI Responses API gateway adapter. */
 import {
-  JSON_HEADERS,
-  errorResponse,
   hasCredential,
-  networkError,
-  sseResponse,
+  invalidMessages,
+  missingApiKey,
+  missingBaseUrl,
+  runJsonAdapter,
   trimSlash,
-  upstreamErrorResponse,
 } from './openai.mjs';
 import {
   buildResponsesBody,
@@ -30,62 +29,26 @@ function responsesUrl(ctx) {
 }
 
 export async function chat(req, ctx) {
-  if (!ctx?.baseUrl) {
-    return errorResponse('Provider baseUrl is not configured', {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'missing_base_url',
-    });
-  }
-  if (!hasCredential(ctx)) {
-    return errorResponse(`Missing API key for provider ${ctx.provider || 'azure'}`, {
-      status: 401,
-      type: 'authentication_error',
-      code: 'missing_api_key',
-    });
-  }
+  if (!ctx?.baseUrl) return missingBaseUrl();
+  if (!hasCredential(ctx)) return missingApiKey(ctx, 'azure');
 
   const payload = buildResponsesBody(req, ctx);
-  if (payload.error) {
-    return errorResponse(payload.error, {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'invalid_messages',
-    });
-  }
+  if (payload.error) return invalidMessages();
 
   const headers = { 'Content-Type': 'application/json' };
   if (ctx.apiKey) headers['api-key'] = ctx.apiKey;
   if (ctx.headers && typeof ctx.headers === 'object') Object.assign(headers, ctx.headers);
 
-  const doFetch = ctx.fetchImpl || fetch;
-  let upstream;
-  try {
-    upstream = await doFetch(responsesUrl(ctx), {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-      signal: ctx.signal,
-    });
-  } catch (error) {
-    return networkError(error, 'Azure Responses request');
-  }
-
-  if (!upstream.ok) return upstreamErrorResponse(upstream);
-  if (payload.stream) return sseResponse(upstream, createResponsesStreamHandler(ctx.model));
-  let json;
-  try {
-    json = await upstream.json();
-  } catch (error) {
-    return errorResponse(`Invalid Azure Responses API response: ${error?.message || error}`, {
-      status: 502,
-      type: 'upstream_error',
-      code: 'invalid_response',
-    });
-  }
-  return new Response(JSON.stringify(translateResponsesCompletion(json, ctx.model)), {
-    status: 200,
-    headers: JSON_HEADERS,
+  return runJsonAdapter({
+    url: responsesUrl(ctx),
+    headers,
+    payload,
+    label: 'Azure Responses',
+    invalidLabel: 'Azure Responses API response',
+    stream: payload.stream,
+    streamHandler: () => createResponsesStreamHandler(ctx.model),
+    translate: (json) => translateResponsesCompletion(json, ctx.model),
+    ctx,
   });
 }
 

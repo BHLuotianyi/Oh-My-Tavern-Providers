@@ -1,12 +1,10 @@
 /** Google Vertex AI gateway adapter (Gemini publisher models). */
 import { createHash, createSign } from 'node:crypto';
 import {
-  JSON_HEADERS,
   errorResponse,
-  networkError,
-  sseResponse,
+  invalidMessages,
+  runJsonAdapter,
   trimSlash,
-  upstreamErrorResponse,
 } from './openai.mjs';
 import {
   buildGoogleBody,
@@ -68,7 +66,7 @@ async function mintAccessToken(account, doFetch, signal) {
     const signer = createSign('RSA-SHA256');
     signer.update(`${header}.${claims}`);
     signer.end();
-    signature = signer.sign(account.private_key).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+    signature = base64url(signer.sign(account.private_key));
   } catch (error) {
     return { error: `Failed to sign service account JWT: ${error?.message || error}` };
   }
@@ -172,49 +170,24 @@ export async function chat(req, ctx) {
   }
 
   const payload = buildGoogleBody(req, ctx);
-  if (payload.error) {
-    return errorResponse(payload.error, {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'invalid_messages',
-    });
-  }
+  if (payload.error) return invalidMessages();
 
   const model = String(ctx.model || '').replace(/^models\//, '');
   const stream = Boolean(req?.stream);
-  const url = vertexUrl(ctx, model, stream, projectId);
 
-  let upstream;
-  try {
-    upstream = await doFetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${credentials.token}`,
-        ...(ctx.headers && typeof ctx.headers === 'object' ? ctx.headers : {}),
-      },
-      body: JSON.stringify(payload),
-      signal: ctx.signal,
-    });
-  } catch (error) {
-    return networkError(error, 'Google Vertex request');
-  }
-
-  if (!upstream.ok) return upstreamErrorResponse(upstream);
-  if (stream) return sseResponse(upstream, createGoogleStreamHandler(model));
-  let json;
-  try {
-    json = await upstream.json();
-  } catch (error) {
-    return errorResponse(`Invalid Google Vertex response: ${error?.message || error}`, {
-      status: 502,
-      type: 'upstream_error',
-      code: 'invalid_response',
-    });
-  }
-  return new Response(JSON.stringify(translateGoogleCompletion(json, model)), {
-    status: 200,
-    headers: JSON_HEADERS,
+  return runJsonAdapter({
+    url: vertexUrl(ctx, model, stream, projectId),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${credentials.token}`,
+      ...(ctx.headers && typeof ctx.headers === 'object' ? ctx.headers : {}),
+    },
+    payload,
+    label: 'Google Vertex',
+    stream,
+    streamHandler: () => createGoogleStreamHandler(model),
+    translate: (json) => translateGoogleCompletion(json, model),
+    ctx,
   });
 }
 

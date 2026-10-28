@@ -209,7 +209,7 @@ export function setGlobalHotkeyHandler(handler) {
 /**
  * Remove the global hotkey listener.
  */
-export function removeGlobalHotkeyHandler() {
+function removeGlobalHotkeyHandler() {
     if (hotkeyHandler) {
         document.removeEventListener('keydown', hotkeyHandler);
         hotkeyHandler = null;

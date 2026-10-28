@@ -1,19 +1,20 @@
 /** Google Generative Language (Gemini) gateway adapter. */
 import {
-  JSON_HEADERS,
   contentToText,
-  errorResponse,
+  createFinishEmitter,
   hasCredential,
-  networkError,
+  invalidMessages,
+  missingApiKey,
+  missingBaseUrl,
   newCompletionId,
+  openAIUsage,
+  parseDataUrl,
   parseJsonObject,
   pushContent,
   resolveBaseUrl,
-  sseResponse,
+  runJsonAdapter,
   trimSlash,
-  upstreamErrorResponse,
   usageFrame,
-  openAIUsage,
 } from './openai.mjs';
 import { openAIChunk } from '../sse.mjs';
 
@@ -33,7 +34,7 @@ const FINISH_REASONS = {
   FINISH_REASON_UNSPECIFIED: 'stop',
 };
 
-export function googleRoot(baseUrl) {
+function googleRoot(baseUrl) {
   const base = trimSlash(baseUrl);
   if (/\/(v1beta|v1)$/.test(base)) return base;
   return `${base}/v1beta`;
@@ -50,8 +51,8 @@ function guessMime(url) {
 
 function imagePart(url) {
   if (!url) return null;
-  const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(url);
-  if (match) return { inlineData: { mimeType: match[1], data: match[2] } };
+  const parsed = parseDataUrl(url);
+  if (parsed) return { inlineData: { mimeType: parsed.mimeType, data: parsed.data } };
   return { fileData: { fileUri: url, mimeType: guessMime(url) } };
 }
 
@@ -177,7 +178,7 @@ export function buildGoogleBody(req, ctx) {
   return payload;
 }
 
-export function mapGoogleFinish(reason, sawTool) {
+function mapGoogleFinish(reason, sawTool) {
   if (sawTool && (!reason || reason === 'STOP')) return 'tool_calls';
   return FINISH_REASONS[reason] || 'stop';
 }
@@ -243,22 +244,20 @@ export function createGoogleStreamHandler(model) {
   let sawTool = false;
   let finishReason = null;
   let usage = null;
-  let finished = false;
 
-  const finish = (emit) => {
-    if (finished) return;
-    finished = true;
-    emit(openAIChunk({}, mapGoogleFinish(finishReason, sawTool)));
-    if (usage) {
-      emit(usageFrame(openAIUsage({
+  const finish = createFinishEmitter(
+    () => openAIChunk({}, mapGoogleFinish(finishReason, sawTool)),
+    () => {
+      if (!usage) return null;
+      return usageFrame(openAIUsage({
         prompt: Number(usage.promptTokenCount) || 0,
         completion: Number(usage.candidatesTokenCount) || 0,
         cached: Number(usage.cachedContentTokenCount) || 0,
         reasoning: Number(usage.thoughtsTokenCount) || 0,
         total: Number(usage.totalTokenCount) || 0,
-      }), model));
-    }
-  };
+      }), model);
+    },
+  );
 
   return {
     onStart(emit) {
@@ -309,29 +308,11 @@ export function createGoogleStreamHandler(model) {
 }
 
 export async function chat(req, ctx) {
-  if (!ctx?.baseUrl) {
-    return errorResponse('Provider baseUrl is not configured', {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'missing_base_url',
-    });
-  }
-  if (!hasCredential(ctx)) {
-    return errorResponse(`Missing API key for provider ${ctx.provider || 'google'}`, {
-      status: 401,
-      type: 'authentication_error',
-      code: 'missing_api_key',
-    });
-  }
+  if (!ctx?.baseUrl) return missingBaseUrl();
+  if (!hasCredential(ctx)) return missingApiKey(ctx, 'google');
 
   const payload = buildGoogleBody(req, ctx);
-  if (payload.error) {
-    return errorResponse(payload.error, {
-      status: 400,
-      type: 'invalid_request_error',
-      code: 'invalid_messages',
-    });
-  }
+  if (payload.error) return invalidMessages();
 
   const model = String(ctx.model || '').replace(/^models\//, '');
   const stream = Boolean(req?.stream);
@@ -345,37 +326,18 @@ export async function chat(req, ctx) {
     model,
   )}:${action}${query ? `?${query}` : ''}`;
 
-  const doFetch = ctx.fetchImpl || fetch;
-  let upstream;
-  try {
-    upstream = await doFetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(ctx.headers && typeof ctx.headers === 'object' ? ctx.headers : {}),
-      },
-      body: JSON.stringify(payload),
-      signal: ctx.signal,
-    });
-  } catch (error) {
-    return networkError(error, 'Google request');
-  }
-
-  if (!upstream.ok) return upstreamErrorResponse(upstream);
-  if (stream) return sseResponse(upstream, createGoogleStreamHandler(model));
-  let json;
-  try {
-    json = await upstream.json();
-  } catch (error) {
-    return errorResponse(`Invalid Google response: ${error?.message || error}`, {
-      status: 502,
-      type: 'upstream_error',
-      code: 'invalid_response',
-    });
-  }
-  return new Response(JSON.stringify(translateGoogleCompletion(json, model)), {
-    status: 200,
-    headers: JSON_HEADERS,
+  return runJsonAdapter({
+    url,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(ctx.headers && typeof ctx.headers === 'object' ? ctx.headers : {}),
+    },
+    payload,
+    label: 'Google',
+    stream,
+    streamHandler: () => createGoogleStreamHandler(model),
+    translate: (json) => translateGoogleCompletion(json, model),
+    ctx,
   });
 }
 

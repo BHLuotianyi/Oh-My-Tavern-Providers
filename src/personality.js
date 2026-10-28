@@ -90,7 +90,7 @@ export function personalityFor(entry) {
  * matters through its "not sycophantic" half — so that trait gets its own
  * weight on top of the (smaller) transparency axis.
  */
-export const RP_WEIGHTS = Object.freeze({
+const RP_WEIGHTS = Object.freeze({
     imagination: 0.26,
     warmth: 0.20,
     expressiveness: 0.18,
@@ -102,7 +102,7 @@ export const RP_WEIGHTS = Object.freeze({
 });
 
 /** Slop is penalised, but only lightly. */
-export const RP_SLOP_PENALTY = 0.08;
+const RP_SLOP_PENALTY = 0.08;
 
 /**
  * Roleplay/creative score (0-100) derived from the personality indexes plus
@@ -193,9 +193,21 @@ export function indexLabel(index) {
  * @param {string} index
  * @returns {string}
  */
-export function indexShortLabel(index) {
+function indexShortLabel(index) {
     const fallback = index.slice(0, 4).replace(/^./, (c) => c.toUpperCase());
     return tr(`omtp_pb_${index}_short`, fallback);
+}
+
+/**
+ * Text anchor for a radar axis label at horizontal offset `dx`.
+ * @param {number} dx
+ * @returns {'middle'|'start'|'end'}
+ */
+function labelAnchor(dx) {
+    if (Math.abs(dx) < 0.2) {
+        return 'middle';
+    }
+    return dx > 0 ? 'start' : 'end';
 }
 
 /**
@@ -229,7 +241,7 @@ export function personalityRadarSvg(record, { size = 236 } = {}) {
         const [x, y] = point(i, 100);
         const dx = Math.cos(angle(i));
         const dy = Math.sin(angle(i));
-        const anchor = Math.abs(dx) < 0.2 ? 'middle' : dx > 0 ? 'start' : 'end';
+        const anchor = labelAnchor(dx);
         const lx = x + dx * 8;
         const ly = y + dy * 8 + 3;
         return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${anchor}" font-size="8.5" fill="currentColor" fill-opacity="0.8">${escapeXml(indexShortLabel(index))}</text>`;
