@@ -10,18 +10,13 @@
   <a href="https://github.com/BHLuotianyi/Oh-My-Tavern-Providers/blob/main/LICENSE">
     <img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" />
   </a>
-  <img alt="SillyTavern >= 1.12.7" src="https://img.shields.io/badge/SillyTavern-%3E%3D1.12.7-10b981" />
-  <img alt="Node.js >= 18" src="https://img.shields.io/badge/Node.js-%3E%3D18.0.0-68a063?logo=node.js&logoColor=white" />
+  <img alt="SillyTavern 1.12.7+" src="https://img.shields.io/badge/SillyTavern-1.12.7%2B-10b981" />
+  <img alt="Node.js 18.0.0+" src="https://img.shields.io/badge/Node.js-18.0.0%2B-68a063?logo=node.js&logoColor=white" />
   <img alt="Catalog: 99 Providers · 5,770 Models" src="https://img.shields.io/badge/Catalog-99_Providers_%C2%B7_5,770_Models-8b5cf6" />
 </p>
 
 <p>
   <img src="assets/readme-banner.svg" width="100%" alt="OMTP Model Hub — Unified Model Hub for SillyTavern" />
-</p>
-
-<p>
-This project is a part of <strong>SpaghettiTavern Saving Plan</strong>.<br/>
-<em>“We shall meet again at the far shore of the stars”</em>
 </p>
 
 <p>
@@ -246,3 +241,11 @@ OMTP is dedicated to chat and roleplay text generation in SillyTavern; the catal
 </table>
 
 Released under the [**GNU General Public License v3.0 (GPL-3.0)**](./LICENSE), © 2026 [BHLuotianyi](https://github.com/BHLuotianyi).
+
+<div align="center">
+<br/>
+<p>
+This project is a part of <strong>SpaghettiTavern Saving Plan</strong><br/>
+<em>“We shall meet again at the far shore of the stars”</em>
+</p>
+</div>
