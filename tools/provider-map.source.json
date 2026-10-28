@@ -1,0 +1,291 @@
+{
+  "remainingGatewayAdapter": "openai",
+  "exceptions": {
+    "ai21": {
+      "stAdapter": "openai:ai21",
+      "gatewayAdapter": "openai"
+    },
+    "aimlapi": {
+      "stAdapter": "openai:aimlapi",
+      "gatewayAdapter": "openai"
+    },
+    "amazon-bedrock": {
+      "stAdapter": null,
+      "gatewayAdapter": "bedrock"
+    },
+    "anthropic": {
+      "stAdapter": "openai:claude",
+      "gatewayAdapter": "anthropic"
+    },
+    "apple": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "on-device"
+    },
+    "azure": {
+      "stAdapter": "openai:azure_openai",
+      "gatewayAdapter": "azure-responses"
+    },
+    "bedrock-mantle": {
+      "stAdapter": null,
+      "gatewayAdapter": "responses"
+    },
+    "charm-hyper": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "https://hyper.charm.land/v1"
+    },
+    "chutes": {
+      "stAdapter": "openai:chutes",
+      "gatewayAdapter": "openai"
+    },
+    "cloudflare-ai-gateway": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai"
+    },
+    "cloudflare-workers-ai": {
+      "stAdapter": "openai:workers_ai",
+      "gatewayAdapter": "openai",
+      "unsupportedReason": "accountId required"
+    },
+    "cohere": {
+      "stAdapter": "openai:cohere",
+      "gatewayAdapter": "openai"
+    },
+    "cursor": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "agent-protocol"
+    },
+    "deepseek": {
+      "stAdapter": "openai:deepseek",
+      "gatewayAdapter": "openai"
+    },
+    "devin": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "agent-protocol"
+    },
+    "electronhub": {
+      "stAdapter": "openai:electronhub",
+      "gatewayAdapter": "openai"
+    },
+    "exa": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "search-only"
+    },
+    "factory-droid": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai"
+    },
+    "firepass": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai"
+    },
+    "fireworks": {
+      "stAdapter": "openai:fireworks",
+      "gatewayAdapter": "openai"
+    },
+    "github-copilot": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "oauth-required"
+    },
+    "gitlab-duo": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "agent-protocol"
+    },
+    "gitlab-duo-agent": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "agent-protocol"
+    },
+    "google": {
+      "stAdapter": "openai:makersuite",
+      "gatewayAdapter": "google"
+    },
+    "google-antigravity": {
+      "stAdapter": null,
+      "gatewayAdapter": "antigravity"
+    },
+    "google-gemini-cli": {
+      "stAdapter": null,
+      "gatewayAdapter": "antigravity"
+    },
+    "google-vertex": {
+      "stAdapter": "openai:vertexai",
+      "gatewayAdapter": "google-vertex"
+    },
+    "groq": {
+      "stAdapter": "openai:groq",
+      "gatewayAdapter": "openai"
+    },
+    "kagi": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "search-only"
+    },
+    "kimi-code": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai"
+    },
+    "litellm": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "http://localhost:4000/v1"
+    },
+    "llama.cpp": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "http://127.0.0.1:8080/v1"
+    },
+    "lm-studio": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "http://127.0.0.1:1234/v1"
+    },
+    "minimax": {
+      "stAdapter": "openai:minimax",
+      "gatewayAdapter": "anthropic"
+    },
+    "minimax-cn": {
+      "stAdapter": "openai:minimax",
+      "gatewayAdapter": "anthropic"
+    },
+    "minimax-code": {
+      "stAdapter": null,
+      "gatewayAdapter": "anthropic"
+    },
+    "minimax-code-cn": {
+      "stAdapter": null,
+      "gatewayAdapter": "anthropic"
+    },
+    "mistral": {
+      "stAdapter": "openai:mistralai",
+      "gatewayAdapter": "openai"
+    },
+    "moonshot": {
+      "stAdapter": "openai:moonshot",
+      "gatewayAdapter": "openai"
+    },
+    "nanogpt": {
+      "stAdapter": "openai:nanogpt",
+      "gatewayAdapter": "openai"
+    },
+    "ollama": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "http://127.0.0.1:11434/v1"
+    },
+    "ollama-cloud": {
+      "stAdapter": null,
+      "gatewayAdapter": "ollama"
+    },
+    "openai": {
+      "stAdapter": "openai:openai",
+      "gatewayAdapter": "responses"
+    },
+    "openai-codex": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "oauth-required"
+    },
+    "openai-codex-device": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "oauth-required"
+    },
+    "openrouter": {
+      "stAdapter": "openai:openrouter",
+      "gatewayAdapter": "openai"
+    },
+    "parallel": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "search-only"
+    },
+    "perplexity": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "search-only"
+    },
+    "pollinations": {
+      "stAdapter": "openai:pollinations",
+      "gatewayAdapter": "openai"
+    },
+    "siliconflow": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "https://api.siliconflow.com/v1"
+    },
+    "siliconflow-cn": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "https://api.siliconflow.cn/v1"
+    },
+    "singularityapi-dev": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "https://api.singularityapi.dev/v1"
+    },
+    "singularityapi-tech": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "https://api.singularityapi.tech/v1"
+    },
+    "stencil": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "oauth-required"
+    },
+    "tavily": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "search-only"
+    },
+    "together": {
+      "stAdapter": "textgenerationwebui:togetherai",
+      "gatewayAdapter": "openai"
+    },
+    "typesafe": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "non-chat"
+    },
+    "vllm": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "http://127.0.0.1:8000/v1"
+    },
+    "web": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "non-chat"
+    },
+    "xai": {
+      "stAdapter": "openai:xai",
+      "gatewayAdapter": "responses"
+    },
+    "xai-oauth": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "oauth-required"
+    },
+    "zai": {
+      "stAdapter": "openai:zai",
+      "gatewayAdapter": "openai"
+    },
+    "zai-coding-plan": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4"
+    },
+    "zhipu-coding-plan": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4"
+    }
+  }
+}

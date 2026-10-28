@@ -1,0 +1,20 @@
+{
+  "name": "omtp-model-hub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OMTP Model Hub — SillyTavern provider/model selection plugin",
+  "license": "GPL-3.0",
+  "type": "module",
+  "engines": {
+    "node": ">= 18.0.0"
+  },
+  "scripts": {
+    "catalog": "node tools/build-catalog.mjs",
+    "validate": "node tools/validate-catalog.mjs",
+    "test": "node --test tests/unit",
+    "mock": "node tests/fixtures/mock-openai.mjs",
+    "personality": "node tools/fetch-personality.mjs",
+    "personality:verify": "node tools/fetch-personality.mjs --verify"
+  },
+  "author": "BHLuotianyi"
+}

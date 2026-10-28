@@ -1,0 +1,13 @@
+{
+  "name": "omtp-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">= 18.0.0"
+  },
+  "main": "index.mjs",
+  "description": "OMTP Gateway server plugin for SillyTavern",
+  "license": "GPL-3.0",
+  "author": "BHLuotianyi"
+}

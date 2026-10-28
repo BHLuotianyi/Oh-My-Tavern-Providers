@@ -1,0 +1,83 @@
+<div id="omtp-settings" class="extension_container">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b data-i18n="omtp_settings_title">OMTP Model Hub</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <div class="omtp-settings-section">
+                <h4 data-i18n="omtp_settings_gateway">Gateway</h4>
+                <div class="omtp-settings-row">
+                    <span id="omtp-gateway-status">
+                        <span class="omtp-status-dot"></span>
+                        <span class="omtp-gateway-status-text" data-i18n="omtp_gateway_unknown">Unknown</span>
+                    </span>
+                </div>
+                <div class="omtp-settings-row">
+                    <label for="omtp-gateway-url" data-i18n="omtp_gateway_url">Gateway URL</label>
+                    <input id="omtp-gateway-url" type="url" placeholder="http://127.0.0.1:4100/v1" />
+                </div>
+                <div class="omtp-settings-row">
+                    <label for="omtp-gateway-autostart" data-i18n="omtp_gateway_autostart">Start gateway with SillyTavern</label>
+                    <input id="omtp-gateway-autostart" type="checkbox" />
+                </div>
+                <div class="omtp-settings-row">
+                    <label for="omtp-gateway-requireauth" data-i18n="omtp_gateway_requireauth">Require gateway token</label>
+                    <input id="omtp-gateway-requireauth" type="checkbox" />
+                </div>
+                <div class="omtp-settings-row">
+                    <button id="omtp-gateway-restart" type="button" class="menu_button" data-i18n="omtp_gateway_restart">Restart gateway</button>
+                    <span id="omtp-gateway-token-status" class="omtp-muted" data-i18n="omtp_gateway_token_unknown">Token status unknown</span>
+                </div>
+            </div>
+
+            <div class="omtp-settings-section">
+                <h4 data-i18n="omtp_settings_catalog">Catalog</h4>
+                <div class="omtp-settings-row">
+                    <span id="omtp-catalog-info" class="omtp-muted" data-i18n="omtp_catalog_loading">Catalog not loaded</span>
+                </div>
+                <div class="omtp-settings-row">
+                    <label for="omtp-catalog-url" data-i18n="omtp_catalog_url">Refresh URL (optional)</label>
+                    <input id="omtp-catalog-url" type="url" placeholder="https://..." />
+                </div>
+                <div class="omtp-settings-row">
+                    <button id="omtp-catalog-refresh" type="button" class="menu_button" data-i18n="omtp_catalog_refresh">Refresh catalog</button>
+                    <button id="omtp-import-omp" type="button" class="menu_button" data-i18n="omtp_catalog_import">Import from local OMP (optional)</button>
+                </div>
+            </div>
+
+            <div class="omtp-settings-section">
+                <h4 data-i18n="omtp_settings_interface">Interface</h4>
+                <div class="omtp-settings-row">
+                    <label for="omtp-hide-native" data-i18n="omtp_hide_native">Hide native API selector</label>
+                    <input id="omtp-hide-native" type="checkbox" checked />
+                </div>
+                <div class="omtp-settings-row">
+                    <label for="omtp-hotkey" data-i18n="omtp_hotkey">Hub hotkey</label>
+                    <input id="omtp-hotkey" type="text" placeholder="alt+m" />
+                </div>
+                <div class="omtp-settings-row">
+                    <label for="omtp-auto-apply" data-i18n="omtp_auto_apply">Auto-apply chat/character bindings</label>
+                    <input id="omtp-auto-apply" type="checkbox" checked />
+                </div>
+            </div>
+
+            <div class="omtp-settings-section">
+                <h4 data-i18n="omtp_settings_bindings">Bindings</h4>
+                <div id="omtp-character-bindings" class="omtp-character-bindings"></div>
+            </div>
+
+            <div class="omtp-settings-section">
+                <h4 data-i18n="omtp_settings_maintenance">Maintenance</h4>
+                <div class="omtp-settings-row">
+                    <button id="omtp-restore-native" type="button" class="menu_button" data-i18n="omtp_restore_native">Restore native selection</button>
+                    <button id="omtp-clear-settings" type="button" class="menu_button" data-i18n="omtp_clear_settings">Clear OMTP settings</button>
+                </div>
+                <div class="omtp-settings-row">
+                    <label for="omtp-clear-keys" data-i18n="omtp_clear_keys">Also delete provider keys</label>
+                    <input id="omtp-clear-keys" type="checkbox" />
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
