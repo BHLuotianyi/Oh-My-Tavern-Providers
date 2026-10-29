@@ -225,7 +225,7 @@ git pull
 ## 隐私与安全边界 / Privacy & Security
 
 - **凭据不出本机**：所有通过 OMTP 录入的 API Key、OAuth 刷新令牌与自定义服务商配置均使用 **AES-256-GCM**（主密钥 `data/omtp/master.key`，权限 `0600`）加密保存在 `data/omtp/providers.json`。HTTP 管理接口永远只返回凭据来源与末四位字符。
-- **不内置任何第三方 OAuth Client Secret**：仓库源码与目录均不携带任何 OAuth 客户端密钥。如需使用自定义 OAuth 客户端，可通过环境变量 `OMTP_<PROVIDER>_CLIENT_ID` 或本地 `data/omtp/oauth-clients.json`（权限 `0600`，已 gitignore）自行注入。
+- **OAuth 客户端凭据按策略内置**：已安装应用的 `client_id` / `client_secret` 属于公开标识（RFC 8252 §8.1），因此为了让 Antigravity、Gemini CLI 等订阅登录开箱即用，目录会内置这类**公开客户端对**；其余服务商的凭据在构建时被剥离为环境变量引用。任何情况下都可以用 `OMTP_<PROVIDER>_CLIENT_ID` / `OMTP_<PROVIDER>_CLIENT_SECRET` 或本地 `data/omtp/oauth-clients.json`（权限 `0600`，已 gitignore）覆盖。用户自己的 API Key 与 OAuth 令牌永远只保存在加密密钥库中。
 - **零遥测、零云端中转**：OMTP 不包含任何统计上报、遥测或第三方代理服务器；网关仅监听 `127.0.0.1`，所有上游请求均由你的机器直连目标服务商官方端点。
 
 ---

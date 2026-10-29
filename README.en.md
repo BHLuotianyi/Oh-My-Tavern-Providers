@@ -222,7 +222,7 @@ git pull
 ## Privacy & Security
 
 - **Local AES-256-GCM KeyStore**: Provider API keys, OAuth tokens, and custom provider configs are encrypted with AES-256-GCM (`data/omtp/master.key`, mode `0600`) inside `data/omtp/providers.json`. Management endpoints only ever return the key source and last 4 characters.
-- **No Shipped OAuth Secrets**: The repository contains zero OAuth client secrets. Supply your own via `OMTP_<PROVIDER>_CLIENT_ID` environment variables or `data/omtp/oauth-clients.json` (mode `0600`, git-ignored).
+- **OAuth Clients Shipped by Policy**: Installed-app `client_id` / `client_secret` pairs are public identifiers (RFC 8252 §8.1). So that Antigravity, Gemini CLI and similar subscriptions work out of the box, the catalog ships those **public client pairs**; every other provider's values are scrubbed to environment references at build time. You can always override them with `OMTP_<PROVIDER>_CLIENT_ID` / `OMTP_<PROVIDER>_CLIENT_SECRET` or `data/omtp/oauth-clients.json` (mode `0600`, git-ignored). Your own API keys and OAuth tokens only ever live in the encrypted KeyStore.
 - **Zero Telemetry, Loopback Only**: The gateway binds strictly to `127.0.0.1` and connects directly to upstream provider endpoints.
 
 ---

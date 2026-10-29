@@ -1,18 +1,18 @@
 /**
- * OAuth client credentials — resolved locally, never shipped.
+ * OAuth client credentials — resolved per installation.
  *
- * OAuth `clientId` values are public identifiers and installed-app
- * `clientSecret`s are explicitly non-confidential (RFC 8252 §8.1), yet they
- * still trigger secret scanners and do not belong in a source tree. The bundled
- * catalog therefore carries only env-var references; the actual values come
- * from, in order:
+ * Installed-app `clientId` values are public identifiers and their
+ * `clientSecret`s are explicitly non-confidential (RFC 8252 §8.1). The bundled
+ * catalog therefore ships the public pair for providers whose sign-in must work
+ * out of the box (e.g. `google-antigravity`); `catalog-normalize.mjs` scrubs
+ * every other provider to env-var references. Values resolve from, in order:
  *
  *   1. the process environment (any name the catalog references), and
  *   2. `<OMTP data dir>/oauth-clients.json`:
  *        { "google-antigravity": { "clientId": "…", "clientSecret": "…" },
  *          "openai-codex":       { "clientId": "…" } }
  *
- * Both are local to the installation, so nothing secret is committed.
+ * Overrides are local to the installation; user tokens never pass through here.
  */
 import fs from 'node:fs';
 import path from 'node:path';

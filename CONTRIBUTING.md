@@ -40,7 +40,7 @@
 ### 常用命令
 
 ```bash
-# 1. 运行全量单元测试（Node.js 原生 test runner，当前 13 个测试文件 / 69 项用例）
+# 1. 运行全量单元测试（Node.js 原生 test runner，当前 15 个测试文件）
 npm test
 
 # 2. 校验内置模型目录（检查 99 家服务商、5,770+ 模型、44 个原生适配器映射及主从目录字节一致性）
@@ -83,6 +83,8 @@ Oh-My-Tavern-Providers/
 │   ├── personality.js            # 八维人格雷达 SVG 绘制与 OMTP RP 加权分计算
 │   ├── personality-match.js      # 模型 ID 到人格基准键的归一化匹配（纯函数）
 │   ├── provider-names.js         # 服务商官方中文名与地区后缀翻译
+│   ├── provider-links.js         # 服务商密钥控制台/用量页跳转地址
+│   ├── errors.js                 # 切换/选择器错误码（UI 层负责翻译）
 │   ├── reasoning.js              # 模型推理档位能力判定
 │   ├── usage-session.js          # 当前对话 Token 统计时间窗基线管理
 │   ├── events.js                 # 宿主事件桥接与清理
@@ -113,20 +115,24 @@ Oh-My-Tavern-Providers/
 │   ├── index.mjs                 # 插件入口：注册 24 条 /api/plugins/omtp 路由、管理网关与统计服务
 │   ├── catalog/omtp-catalog.json # 服务端自带目录副本（必须与 catalog/omtp-catalog.json 字节一致）
 │   └── lib/
+│       ├── config.mjs            # data/omtp 根目录、config.json 读写、原子写文件与网关令牌校验
 │       ├── gateway-server.mjs    # 独立 OpenAI 兼容网关（127.0.0.1:4100–4110）、流式计费分流器
+│       ├── gateway-ports.mjs     # 网关端口申请/复用（含跨实例令牌校验）
 │       ├── key-store.mjs         # AES-256-GCM 密钥库（providers.json + master.key）与三级密钥解析
 │       ├── provider-config.mjs   # 服务商上下文构建、9 类受支持适配器校验、探针地址推导
 │       ├── catalog-service.mjs   # 服务端四层目录合并（内置 -> 远程刷新 -> OMP 导入 -> 自定义服务商）
 │       ├── catalog-normalize.mjs # OMP 原始数据归一化与 validateCatalog 校验器
-│       ├── login-engine.mjs      # OAuth PKCE 回环监听、RFC 8628 设备码轮询、自定义登录钩子调度
+│       ├── login-engine.mjs      # OAuth PKCE 回环监听、回调策略、RFC 8628 设备码轮询、自定义登录钩子调度
+│       ├── after-exchange.mjs    # 兑换后钩子（zai 铸造密钥、Google 项目 ID、Anthropic 身份等）
 │       ├── oauth.mjs             # 结构化 OAuth 凭据解析与过期自动刷新
 │       ├── oauth-clients.mjs     # 本地 OAuth Client ID/Secret 读取（环境变量 -> oauth-clients.json）
 │       ├── import-omp.mjs        # 本地 oh-my-pi 目录与 agent.db SQLite 凭据安全导入
-│       ├── usage.mjs             # 16 家服务商实时额度查询适配器与 60 秒缓存
+│       ├── usage.mjs             # 21 家服务商 / 16 类实时额度查询适配器与 60 秒缓存
 │       ├── stats.mjs             # Token 与缓存/推理费用计算、按对话/模型/日期持久化账本
 │       ├── stats-server.mjs      # /omtp stats 独立可视化仪表盘 HTTP 服务（默认端口 3847）
 │       ├── sse.mjs               # OpenAI SSE 帧解析与构造工具
 │       ├── redact.mjs            # 控制台日志辅助
+│       ├── proxy-fetch.mjs       # 读取环境代理变量的 fetch 包装（HTTP CONNECT 隧道 + 直连回退）
 │       ├── custom-logins/        # openai-codex-device、kilo、kimi-fingerprint 专属登录实现
 │       └── adapters/             # 9 类上游协议转换器（openai, anthropic, google, google-vertex, antigravity, responses, azure-responses, bedrock, ollama）
 ├── tools/                        # 离线维护脚本（build-catalog, validate-catalog, fetch-personality）
@@ -146,7 +152,8 @@ Oh-My-Tavern-Providers/
 3. **双语翻译键 1:1 同步**：
    - `i18n/en.json` 与 `i18n/zh-cn.json` 的键集合与顺序必须完全一致。新增 UI 文案时需同时写入两份文件；不要删除动态拼接键族（`omtp_pb_*`、`omtp_source_*`、`omtp_stats_col_*`）。
 4. **安全与加密底线**：
-   - 严禁在代码、目录或测试夹具中硬编码真实的 API Key、OAuth `client_secret` 或个人路径。
+   - 严禁在代码、目录或测试夹具中硬编码**用户凭据**：API Key、OAuth 访问/刷新令牌、个人路径。
+   - 已安装应用的 OAuth `client_id` / `client_secret` 属于公开标识（RFC 8252 §8.1），目录里是否内置由 `catalog-normalize.mjs` 的 `LOCAL_ONLY_CLIENTS` 策略决定；新增或修改时需在 PR 说明理由，且不得携带任何用户令牌。
    - `key-store.mjs` 遇到无法解密的密文时必须抛出 `KeyStoreUnreadableError`（映射为 HTTP `409`），**绝不能静默覆盖损坏用户的 `providers.json`**。
    - 网关 Bearer 令牌校验必须保持 `tokensEqual` 常量时间比对。
 5. **无损切换与回滚顺序**：

@@ -12,12 +12,12 @@
 
 | 成员 | 类型 / 签名 | 说明 |
 |---|---|---|
-| `version` | `string` | 当前扩展版本号（`0.1.0`） |
+| `version` | `string` | 当前扩展版本号（与 `manifest.json` 一致） |
 | `open(options?)` | `Function` | 打开模型中心面板（可传 `{ tab: 'all' \| 'favorites' \| 'recent' \| 'profiles' \| 'providers' \| 'usage' \| 'about' }`） |
 | `close()` | `Function` | 关闭模型中心面板 |
 | `toggle()` | `Function` | 切换面板开合状态 |
 | `getCurrentSelection()` | `() => EntryRef \| null` | 返回当前激活的 `EntryRef`（`{ kind, provider, model }`），**而非**完整目录条目对象 |
-| `switchTo(selectorOrRef, { persist = true })` | `async (string\|object, object?) => EntryRef` | 解析选择器字符串或 `EntryRef` 并执行切换（`persist: false` 为仅当前会话临时切换），返回 `EntryRef` |
+| `switchTo(selectorOrRef, { persist = true })` | `async (string\|object, object?) => EntryRef` | 解析选择器字符串或 `EntryRef` 并执行切换（`persist: false` 为仅当前会话临时切换），返回 `EntryRef`；若模糊匹配命中多个模型，返回对象会附带 `warning` 字段 |
 | `registerProviderAdapter(adapter)` | `(object) => object` | 运行时注册自定义 SillyTavern 原生适配器（需包含唯一 `key`），自动触发 `omtp:catalog-changed` |
 | `registerCatalogProvider(provider)` | `(object) => object` | 运行时合并新增或覆盖目录服务商，返回合并后的完整目录并触发 `omtp:catalog-changed` |
 | `on(event, handler)` | `(string, Function) => () => void` | 订阅事件，返回取消订阅函数 |

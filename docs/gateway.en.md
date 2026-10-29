@@ -32,7 +32,7 @@ Mounted on SillyTavern's Express app under `/api/plugins/omtp` (**24 routes** to
 | | `GET /gateway/token` | Returns the local gateway Bearer token |
 | | `POST /gateway/restart` | Restarts the gateway listener |
 | | `GET /config` · `POST /config` | Reads or updates `autoStart`, `port`, `requireAuth` |
-| **Catalog & Import** | `GET /catalog` | Returns the merged catalog (stripped of any OAuth client secrets) |
+| **Catalog & Import** | `GET /catalog` | Returns the merged catalog (OAuth client fields normalized by policy: public client pairs kept, the rest scrubbed to env references) |
 | | `POST /catalog/refresh` | Fetches and validates a catalog update from a URL or upstream |
 | | `POST /import/omp` | Imports a catalog overlay and optional `agent.db` credentials from a local `oh-my-pi` checkout |
 | **Providers & Keys** | `GET /providers` | Lists provider availability, key source, `last4` fingerprint, login flows, and model counts |
@@ -48,6 +48,17 @@ Mounted on SillyTavern's Express app under `/api/plugins/omtp` (**24 routes** to
 | **Usage & Stats** | `GET /usage` | Queries provider quota windows and balances (60s cache, `?refresh=true` to force) |
 | | `GET /stats` | Returns token and cost totals (all-time, `?chat=<id>`, or `?since=<ISO>`) |
 | | `GET /stats/server` · `GET /stats/server/status` | Starts (or reuses) the local stats dashboard server (default port `3847`) or checks its status |
+
+**Login callback policy** (from `authLogin.callback` in the catalog):
+
+| Field | Behavior |
+|---|---|
+| `redirectUri` | Declared value wins: an `http://` loopback URI is bound on its own host/port/path; custom schemes (`zcode://`, `vscode://`) cannot be received here, so the flow switches to manual paste |
+| `manualOnly` | No local listener; returns the authorize link plus paste instructions |
+| `nativeScheme` | Same as above (this plugin has no OS protocol handler) |
+| `portFallback` | When the port is taken the flow no longer returns a dead `redirect_uri`; it degrades to manual paste and explains why in `instructions` |
+
+**After-exchange hooks** (`authLogin.afterExchange`): `zai-mint-key` (short-lived OAuth token → durable API key), `anthropic-identity` (account/organization), `openai-codex-profile`, `google-gemini-cli-project` / `google-antigravity-project` (project id), `muse-code-key`, `factory-droid-region`, `gitlab-duo-clear-cache`. An unknown hook is logged and ignored; it never blocks the sign-in.
 
 ---
 
@@ -110,3 +121,19 @@ Mounted on SillyTavern's Express app under `/api/plugins/omtp` (**24 routes** to
 1. **OMTP KeyStore** (`data/omtp/providers.json`)
 2. **SillyTavern Secrets** (default user's `secrets.json`, e.g., `api_key_openai`, `api_key_claude`)
 3. **Environment Variables** (provider `env` names declared in the catalog, e.g., `OPENAI_API_KEY`)
+
+---
+
+## 6. Outbound Proxy
+
+Node's built-in `fetch` ignores proxy environment variables, so the server plugin replaces `globalThis.fetch` at startup with a proxy-aware implementation (`lib/proxy-fetch.mjs`). It covers sign-in, key probes, quota lookups and gateway forwarding:
+
+| Variable | Effect |
+|---|---|
+| `HTTPS_PROXY` / `https_proxy` | HTTPS targets (HTTP `CONNECT` tunnel) |
+| `HTTP_PROXY` / `http_proxy` | HTTP targets |
+| `ALL_PROXY` / `all_proxy` | Fallback proxy (`http://` / `https://` only; SOCKS is ignored) |
+| `NO_PROXY` / `no_proxy` | Direct-connect list: `*`, `*.example.com`, `.example.com`, `host:port`, IPv6 literals |
+| `OMTP_DISABLE_PROXY=1` | Disables the wrapper entirely |
+
+Loopback and private ranges (`127.0.0.0/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`) always connect directly. A failed tunnel falls back to a direct connection; a failure after request bytes reached the tunnel is not replayed, so a completion is never billed twice.

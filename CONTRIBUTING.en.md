@@ -83,6 +83,8 @@ Oh-My-Tavern-Providers/
 │   ├── personality.js            # 8-axis radar SVG renderer and OMTP roleplay score calculation
 │   ├── personality-match.js      # Pure model ID -> personality key matcher
 │   ├── provider-names.js         # Localized Chinese provider names and region qualifiers
+│   ├── provider-links.js         # Provider API-key console URLs
+│   ├── errors.js                 # Switch/selector error codes (translated in the UI layer)
 │   ├── reasoning.js              # Reasoning effort capability helpers
 │   ├── usage-session.js          # Per-chat token accounting session baseline
 │   ├── events.js                 # Host event bridge and cleanup
@@ -113,20 +115,24 @@ Oh-My-Tavern-Providers/
 │   ├── index.mjs                 # Plugin entry: registers 24 /api/plugins/omtp routes, manages gateway & stats
 │   ├── catalog/omtp-catalog.json # Bundled server catalog copy (byte-identical to catalog/omtp-catalog.json)
 │   └── lib/
+│       ├── config.mjs            # data/omtp root, config.json I/O, atomic writes, gateway token check
 │       ├── gateway-server.mjs    # Standalone OpenAI-compatible gateway (127.0.0.1:4100–4110) & usage tap
+│       ├── gateway-ports.mjs     # Gateway port acquisition/reuse (cross-instance token check)
 │       ├── key-store.mjs         # AES-256-GCM KeyStore (providers.json + master.key) & 3-tier key resolution
 │       ├── provider-config.mjs   # Provider context builder, supported adapter checks, probe descriptors
 │       ├── catalog-service.mjs   # Layered server catalog (bundled -> cached -> imported -> custom)
 │       ├── catalog-normalize.mjs # OMP catalog normalizer & validateCatalog
-│       ├── login-engine.mjs      # OAuth PKCE loopback listener, device-code poller, custom hook runner
+│       ├── login-engine.mjs      # OAuth PKCE loopback listener, callback policy, device-code poller, custom hooks
+│       ├── after-exchange.mjs    # Post-exchange hooks (Z.ai key minting, Google project id, Anthropic identity)
 │       ├── oauth.mjs             # Structured OAuth credential parser and token refresh
 │       ├── oauth-clients.mjs     # Local OAuth client credential resolver (env -> oauth-clients.json)
 │       ├── import-omp.mjs        # Local oh-my-pi catalog & agent.db SQLite credential importer
-│       ├── usage.mjs             # 16 provider quota adapters with 60s caching
+│       ├── usage.mjs             # 21 providers across 16 quota adapters with 60s caching
 │       ├── stats.mjs             # Token & cache/reasoning cost calculator and persistent ledger
 │       ├── stats-server.mjs      # /omtp stats local dashboard HTTP server (default port 3847)
 │       ├── sse.mjs               # OpenAI SSE parser and frame builders
 │       ├── redact.mjs            # Console logging helpers
+│       ├── proxy-fetch.mjs       # Environment-proxy-aware fetch wrapper (HTTP CONNECT tunnel + direct fallback)
 │       ├── custom-logins/        # openai-codex-device, kilo, and kimi-fingerprint hooks
 │       └── adapters/             # 9 protocol adapters (openai, anthropic, google, google-vertex, antigravity, responses, azure-responses, bedrock, ollama)
 ├── tools/                        # Maintenance scripts (build-catalog, validate-catalog, fetch-personality)
@@ -146,7 +152,8 @@ Before opening a pull request, verify that these invariants hold:
 3. **Lockstep Locale Files**:
    - `i18n/en.json` and `i18n/zh-cn.json` must have identical key sets and ordering. Keep dynamic key families (`omtp_pb_*`, `omtp_source_*`, `omtp_stats_col_*`) intact.
 4. **Security & KeyStore Safety**:
-   - Never commit API keys, OAuth client secrets, tokens, or machine-specific file paths.
+   - Never commit **user credentials**: API keys, OAuth access/refresh tokens, or machine-specific file paths.
+   - Installed-app OAuth `client_id` / `client_secret` values are public identifiers (RFC 8252 §8.1); whether the catalog embeds them is governed by `LOCAL_ONLY_CLIENTS` in `catalog-normalize.mjs`. Justify any change in the PR, and never ship a user token.
    - `KeyStore` must throw `KeyStoreUnreadableError` (mapped to HTTP `409`) when ciphertext cannot be decrypted—never overwrite an unreadable `providers.json`.
    - Gateway Bearer token comparison must use constant-time `tokensEqual`.
 5. **Non-Destructive Switch & Teardown Order**:

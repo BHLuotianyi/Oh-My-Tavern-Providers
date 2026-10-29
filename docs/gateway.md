@@ -32,7 +32,7 @@
 | | `GET /gateway/token` | 读取本机网关 Bearer 令牌 |
 | | `POST /gateway/restart` | 重启本地网关监听 |
 | | `GET /config` · `POST /config` | 读取或更新 `autoStart`、`port`、`requireAuth` |
-| **目录与导入** | `GET /catalog` | 获取合并后的完整目录（已剥离 OAuth 密钥信息） |
+| **目录与导入** | `GET /catalog` | 获取合并后的完整目录（OAuth 客户端字段已按策略归一化：公开客户端对保留，其余剥离为环境变量引用） |
 | | `POST /catalog/refresh` | 从指定 `http(s)` URL 或默认上游刷新 `catalog.json` |
 | | `POST /import/omp` | 从本地 `oh-my-pi` 目录导入模型覆盖层与 `agent.db` 凭据 |
 | **服务商与密钥** | `GET /providers` | 列出所有服务商的可用性、凭据来源、后四位掩码、登录方式与模型数 |
@@ -48,6 +48,17 @@
 | **用量与统计** | `GET /usage` | 查询各订阅服务商的实时额度窗口与余额（60 秒缓存，`?refresh=true` 强制刷新） |
 | | `GET /stats` | 查询累计、按对话（`?chat=`）或按时间（`?since=`）的 Token 与费用统计 |
 | | `GET /stats/server` · `GET /stats/server/status` | 启动（或复用）独立统计面板服务（默认端口 `3847`）或查询其状态 |
+
+**登录回调策略**（来自目录的 `authLogin.callback`）：
+
+| 字段 | 行为 |
+|---|---|
+| `redirectUri` | 声明值优先：`http://` 回环地址会按原 host/port/path 监听；`zcode://`、`vscode://` 等自定义协议无法被本机接收，自动转为手动粘贴 |
+| `manualOnly` | 不启动本地监听，只返回授权链接与粘贴框说明 |
+| `nativeScheme` | 同上（本插件没有 OS 协议处理器） |
+| `portFallback` | 端口被占用时不再返回一个无人监听的 `redirect_uri`，而是降级为手动粘贴并在 `instructions` 里说明原因 |
+
+**兑换后钩子**（`authLogin.afterExchange`）：`zai-mint-key`（把短期 OAuth 令牌换成长期 API Key）、`anthropic-identity`（账号/组织信息）、`openai-codex-profile`、`google-gemini-cli-project` / `google-antigravity-project`（项目 ID）、`muse-code-key`、`factory-droid-region`、`gitlab-duo-clear-cache`。未知钩子只记录日志，不会中断登录。
 
 ---
 
@@ -110,3 +121,19 @@
 1. **OMTP 加密密钥库**（`data/omtp/providers.json`）
 2. **SillyTavern Secrets**（默认用户的 `secrets.json`，如 `api_key_openai`、`api_key_claude` 等）
 3. **系统环境变量**（各服务商在目录中声明的 `env` 变量，如 `OPENAI_API_KEY`）
+
+---
+
+## 6. 出站代理
+
+Node 内置 `fetch` 不读取代理环境变量，因此服务端插件启动时会把全局 `fetch` 替换为代理感知实现（`lib/proxy-fetch.mjs`），覆盖登录、密钥校验、额度查询与网关转发：
+
+| 变量 | 作用 |
+|---|---|
+| `HTTPS_PROXY` / `https_proxy` | HTTPS 目标（经 HTTP `CONNECT` 隧道） |
+| `HTTP_PROXY` / `http_proxy` | HTTP 目标 |
+| `ALL_PROXY` / `all_proxy` | 兜底代理（仅支持 `http://` / `https://`，SOCKS 会被忽略） |
+| `NO_PROXY` / `no_proxy` | 直连名单：支持 `*`、`*.example.com`、`.example.com`、`host:port` 与 IPv6 字面量 |
+| `OMTP_DISABLE_PROXY=1` | 完全关闭该包装 |
+
+回环与私有网段（`127.0.0.0/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）始终直连。隧道建立失败时回退直连；请求已经写入隧道后的失败不会重放，避免重复计费的补全请求。

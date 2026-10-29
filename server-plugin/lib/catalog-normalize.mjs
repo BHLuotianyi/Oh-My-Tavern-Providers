@@ -24,9 +24,12 @@ const API_TO_GATEWAY = new Map([
 ]);
 
 /**
- * Providers whose OAuth client pair stays local. `google-gemini-cli` is the
- * remaining one: its endpoints only accept the first-party app, so shipping the
- * pair is a policy decision for that provider alone.
+ * Providers whose OAuth client pair is scrubbed to env references.
+ *
+ * Installed-app pairs are public (RFC 8252 §8.1) and ship by default so a
+ * subscription can sign in out of the box. `google-gemini-cli` is the
+ * exception: its endpoints only accept the first-party app, so the catalog
+ * keeps env names for it and the pair stays on the user's machine.
  */
 const LOCAL_ONLY_CLIENTS = new Set(['google-gemini-cli']);
 

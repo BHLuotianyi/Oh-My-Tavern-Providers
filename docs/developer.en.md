@@ -12,12 +12,12 @@ While enabled, OMTP installs `globalThis.OMTP` (and restores or deletes it on te
 
 | Member | Signature / Type | Description |
 |---|---|---|
-| `version` | `string` | Extension version (`0.1.0`) |
+| `version` | `string` | Extension version (same value as `manifest.json`) |
 | `open(options?)` | `Function` | Opens the hub modal (accepts `{ tab: 'all' \| 'favorites' \| 'recent' \| 'profiles' \| 'providers' \| 'usage' \| 'about' }`) |
 | `close()` | `Function` | Closes the hub modal |
 | `toggle()` | `Function` | Toggles the hub modal |
 | `getCurrentSelection()` | `() => EntryRef \| null` | Returns the active `EntryRef` (`{ kind, provider, model }`), **not** a full catalog entry object |
-| `switchTo(selectorOrRef, { persist = true })` | `async (string\|object, object?) => EntryRef` | Resolves a selector string or `EntryRef` and switches to it (`persist: false` switches session-only); returns the `EntryRef` |
+| `switchTo(selectorOrRef, { persist = true })` | `async (string\|object, object?) => EntryRef` | Resolves a selector string or `EntryRef` and switches to it (`persist: false` switches session-only); returns the `EntryRef`, plus a `warning` field when a fuzzy selector matched several models and one was picked |
 | `registerProviderAdapter(adapter)` | `(object) => object` | Registers a custom SillyTavern native adapter at runtime (requires `adapter.key`) and emits `omtp:catalog-changed` |
 | `registerCatalogProvider(provider)` | `(object) => object` | Merges a provider overlay into the active catalog, rebuilds entries, and emits `omtp:catalog-changed` |
 | `on(event, handler)` | `(string, Function) => () => void` | Subscribes to an OMTP event and returns an unsubscribe function |
