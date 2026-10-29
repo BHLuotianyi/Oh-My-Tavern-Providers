@@ -1,6 +1,6 @@
 {
   "name": "omtp-gateway",
-  "version": "1.0.2-beta-20261029002",
+  "version": "1.0.2-beta.20261029002",
   "versionCode": 3,
   "private": true,
   "type": "module",

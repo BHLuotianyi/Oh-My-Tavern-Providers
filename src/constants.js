@@ -15,7 +15,7 @@ export const SETTINGS_NAMESPACE = 'omtp';
  * bumped on every release. `tests/unit/version.test.mjs` keeps all copies in
  * sync.
  */
-export const EXTENSION_VERSION = '1.0.2_beta-20261029002';
+export const EXTENSION_VERSION = '1.0.2_beta_20261029002';
 export const EXTENSION_VERSION_CODE = 3;
 
 /** Base path of the optional server plugin routes. */

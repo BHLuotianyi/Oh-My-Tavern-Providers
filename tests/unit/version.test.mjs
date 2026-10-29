@@ -17,12 +17,15 @@ test('release identity is consistent across manifest, packages and constants', (
     assert.equal(manifest.version, EXTENSION_VERSION);
     assert.equal(manifest.versionCode, EXTENSION_VERSION_CODE);
 
-    // npm requires semver in package.json; both copies must describe the same
-    // release as the display string.
-    const semver = EXTENSION_VERSION.replace(/^v/, '').replace(/_/g, '-');
+    // npm requires semver, so `1.0.2_beta_20261029002` becomes
+    // `1.0.2-beta.20261029002`: the first separator opens the prerelease, the
+    // remaining ones become its dot-separated identifiers.
+    const [core, ...prerelease] = EXTENSION_VERSION.replace(/^v/, '').split('_');
+    const semver = prerelease.length ? `${core}-${prerelease.join('.')}` : core;
     assert.equal(clientPackage.version, semver);
     assert.equal(serverPackage.version, semver);
     assert.equal(clientPackage.versionCode, EXTENSION_VERSION_CODE);
     assert.equal(serverPackage.versionCode, EXTENSION_VERSION_CODE);
     assert.match(semver, /^\d+\.\d+\.\d+/);
+    assert.match(EXTENSION_VERSION, /^\d+\.\d+\.\d+_[a-z]+_\d+$/);
 });
