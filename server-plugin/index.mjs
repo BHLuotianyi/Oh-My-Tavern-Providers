@@ -12,10 +12,11 @@ import {
 } from './lib/config.mjs';
 import { KeyStore, KeyStoreUnreadableError } from './lib/key-store.mjs';
 import { CatalogService } from './lib/catalog-service.mjs';
-import { GatewayServer, asyncHandler, buildGatewayContext } from './lib/gateway-server.mjs';
+import { GatewayServer, asyncHandler, buildGatewayContext, credentialStorageId, resolveProviderCredentials } from './lib/gateway-server.mjs';
 import { buildModelsProbe, buildProviderContext, isSupportedAdapter, SUPPORTED_ADAPTERS } from './lib/provider-config.mjs';
 import { parseStructuredCredential } from './lib/oauth.mjs';
 import { importFromOmp } from './lib/import-omp.mjs';
+import { installProxyFetch } from './lib/proxy-fetch.mjs';
 import { getAdapter } from './lib/adapters/index.mjs';
 import { log, logError } from './lib/redact.mjs';
 import { headerHookSupported } from './lib/custom-logins/kimi-fingerprint.mjs';
@@ -115,6 +116,44 @@ class HttpError extends Error {
 let state = null;
 
 /**
+ * Map plain `Error`s the key store and login engine throw for invalid input or
+ * unknown sessions to HTTP statuses. Anything else is a real server failure.
+ * @param {unknown} error
+ * @returns {HttpError|null}
+ */
+function asDomainHttpError(error) {
+    if (!(error instanceof Error) || error.status) return null;
+    const message = error.message;
+    if (message === 'Unknown or expired login session') {
+        return new HttpError(404, message, 'unknown_session');
+    }
+    if (message === 'Invalid provider id'
+        || message === 'This provider has no login flow'
+        || message === 'This login does not accept a pasted code'
+        || message.startsWith('Unsupported adapter:')) {
+        return new HttpError(400, message, 'invalid_request');
+    }
+    return null;
+}
+
+/**
+ * Route wrapper for handlers that write credentials or drive login flows.
+ * @param {(req:any, res:any) => Promise<any>} fn
+ * @returns {any}
+ */
+function domainHandler(fn) {
+    return asyncHandler(async (req, res) => {
+        try {
+            await fn(req, res);
+        } catch (error) {
+            const mapped = asDomainHttpError(error);
+            if (mapped) throw mapped;
+            throw error;
+        }
+    });
+}
+
+/**
  * @returns {{root:string, keyStore:KeyStore, catalogService:CatalogService, gateway:GatewayServer}}
  */
 function requireState() {
@@ -205,7 +244,9 @@ function syntheticProvider(providerId, source = {}) {
  */
 async function buildProviderStatus(providerId, keyStore, catalogService) {
     const provider = await catalogService.getProvider(providerId);
-    const { config, unreadable } = await keyStore.getConfigSafe(providerId);
+    // A login flow may store the credential under a shared row (`storeAs`).
+    const storageId = provider ? credentialStorageId(provider) : providerId;
+    const { config, unreadable } = await keyStore.getConfigSafe(storageId);
     if (!provider && !unreadable && Object.keys(config).length === 0) return null;
     const synthetic = provider || syntheticProvider(providerId, {
         label: config.label,
@@ -216,7 +257,7 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
     });
     let resolved;
     try {
-        resolved = await keyStore.resolveProvider(synthetic);
+        resolved = await resolveProviderCredentials(keyStore, synthetic);
     } catch (error) {
         logError(`failed to resolve provider ${providerId}`, error);
         resolved = {
@@ -231,6 +272,10 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
             models: synthetic.models || [],
         };
     }
+    const hasKey = resolved.keySource !== 'none';
+    // A provider with no credential at all is "not configured", not "rejected":
+    // a stale 401 from a key the user already deleted must not stick to it.
+    const authFailure = hasKey ? authFailures.get(providerId) : undefined;
     return {
         id: providerId,
         label: resolved.label || synthetic.label || providerId,
@@ -238,13 +283,13 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
         baseUrl: resolved.baseUrl,
         authKind: synthetic.authKind || 'api-key',
         custom: Boolean(resolved.custom || synthetic.custom),
-        hasKey: resolved.keySource !== 'none',
+        hasKey,
         keySource: resolved.keySource,
         last4: describeLast4(resolved),
-        available: Boolean(resolved.available) && !authFailures.has(providerId),
+        available: Boolean(resolved.available) && !authFailure,
         modelCount: Array.isArray(resolved.models) ? resolved.models.length : 0,
         unreadable,
-        keyInvalid: authFailures.has(providerId),
+        keyInvalid: Boolean(authFailure),
         loginKind: provider?.authLogin?.kind || null,
         // `custom` logins run only when we ship the provider's hook (see
         // `custom-logins/`); the rest fall back to the OMP import. Header
@@ -254,8 +299,8 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
             (provider?.authLogin?.headersHook && !headerHookSupported(provider.authLogin.headersHook))
             || (provider?.authLogin?.kind === 'custom' && !customHookSupported(provider.authLogin.hook)),
         ),
-        keyInvalidReason: authFailures.get(providerId)?.message ?? null,
-        unsupportedReason: synthetic.unsupportedReason || authFailures.get(providerId)?.message || null,
+        keyInvalidReason: authFailure?.message ?? null,
+        unsupportedReason: synthetic.unsupportedReason || authFailure?.message || null,
     };
 }
 
@@ -297,13 +342,15 @@ async function probeProvider(resolved, adapter, provider, { model = '', keyStore
     try {
         let rawModels;
         let httpStatus;
+        const ctx = keyStore
+            ? await buildGatewayContext(resolved, keyStore, model, signal, provider)
+            : buildProviderContext(resolved, model, signal, provider);
         if (adapter && typeof adapter.listModels === 'function') {
-            const ctx = keyStore
-                ? await buildGatewayContext(resolved, keyStore, model, signal, provider)
-                : buildProviderContext(resolved, model, signal, provider);
             rawModels = await adapter.listModels(ctx);
         } else {
-            const probe = buildModelsProbe(resolved);
+            // Structured credentials probe with the resolved token as well,
+            // not the stored blob's stale auth headers.
+            const probe = buildModelsProbe({ ...resolved, apiKey: ctx.apiKey, headers: ctx.headers });
             if (!probe) return { skipped: true };
             const response = await fetch(probe.url, { headers: probe.headers, signal });
             if (!response.ok) {
@@ -374,7 +421,7 @@ async function probeProviderModels(current, providerId, { refresh = false } = {}
         authKind: status.authKind,
         adapter: status.adapter,
     });
-    const resolved = await current.keyStore.resolveProvider(provider);
+    const resolved = await resolveProviderCredentials(current.keyStore, provider);
     const adapter = await getAdapter(resolved.adapter);
     const probe = await probeProvider(resolved, adapter, provider, { keyStore: current.keyStore });
     if (probe.error) {
@@ -467,13 +514,14 @@ function registerProviderRoutes(router) {
         res.json({ providers: list });
     }));
 
-    router.post('/providers/:id/key', asyncHandler(async (req, res) => {
+    router.post('/providers/:id/key', domainHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
         if (!key) throw new HttpError(400, 'key is required', 'invalid_key');
-        await current.keyStore.setProviderConfig(providerId, { apiKey: key });
+        await current.keyStore.setProviderConfig(providerId, { apiKey: key, ignoreStSecret: false });
         clearAuthFailure(providerId);
+        liveModelsCache.delete(providerId);
         current.catalogService.invalidate();
         const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
         res.json({ ok: true, provider: status });
@@ -484,12 +532,13 @@ function registerProviderRoutes(router) {
         const providerId = String(req.params.id || '');
         await current.keyStore.clearProviderKey(providerId);
         clearAuthFailure(providerId);
+        liveModelsCache.delete(providerId);
         current.catalogService.invalidate();
         const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
         res.json({ ok: true, provider: status });
     }));
 
-    router.post('/providers/:id/config', asyncHandler(async (req, res) => {
+    router.post('/providers/:id/config', domainHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -544,10 +593,10 @@ function registerProviderRoutes(router) {
             authKind: status.authKind,
             adapter: status.adapter,
         });
-        const resolved = await current.keyStore.resolveProvider(provider);
+        const resolved = await resolveProviderCredentials(current.keyStore, provider);
         const model = resolved.models?.[0]?.id || provider.defaultModel || '';
         const adapter = await getAdapter(resolved.adapter);
-        const probe = await probeProvider(resolved, adapter, provider, { model });
+        const probe = await probeProvider(resolved, adapter, provider, { model, keyStore: current.keyStore });
         if (probe.skipped) {
             res.json({ ok: true, skipped: true, message: 'Adapter does not expose a model listing endpoint' });
             return;
@@ -626,7 +675,7 @@ function registerStatsRoutes(router) {
             while (queue.length) {
                 const provider = queue.shift();
                 if (!provider) break;
-                const resolved = await current.keyStore.resolveProvider(provider).catch(() => null);
+                const resolved = await resolveProviderCredentials(current.keyStore, provider).catch(() => null);
                 // omp's usage page only lists providers it can actually read, and so
                 // do we: a provider without credentials would just be noise.
                 if (!resolved?.apiKey) {
@@ -647,7 +696,7 @@ function registerStatsRoutes(router) {
 function registerLoginRoutes(router) {
     /* ---------------- OAuth login (mirrors omp's /login) ---------------- */
 
-    router.post('/providers/:id/login', asyncHandler(async (req, res) => {
+    router.post('/providers/:id/login', domainHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         const policy = await loginPolicyFor(current, providerId);
@@ -667,18 +716,31 @@ function registerLoginRoutes(router) {
         }
         if (session.status === 'done') {
             clearAuthFailure(session.providerId);
+            liveModelsCache.delete(session.providerId);
         }
         res.json({ ok: true, ...describeSession(session) });
     }));
 
-    router.post('/providers/:id/login/:session/code', asyncHandler(async (req, res) => {
+    router.post('/providers/:id/login/:session/code', domainHandler(async (req, res) => {
+        const providerId = String(req.params.id || '');
+        const pending = getSession(req.params.session);
+        if (!pending || pending.providerId !== providerId) {
+            throw new HttpError(404, 'Unknown or expired login session', 'unknown_session');
+        }
         const code = typeof req.body?.code === 'string' ? req.body.code : '';
         const session = await submitCode(req.params.session, code);
-        if (session.status === 'done') clearAuthFailure(session.providerId);
+        if (session.status === 'done') {
+            clearAuthFailure(session.providerId);
+            liveModelsCache.delete(session.providerId);
+        }
         res.json({ ok: session.status === 'done', ...describeSession(session) });
     }));
 
     router.delete('/providers/:id/login/:session', asyncHandler(async (req, res) => {
+        const session = getSession(req.params.session);
+        if (!session || session.providerId !== String(req.params.id || '')) {
+            throw new HttpError(404, 'Unknown or expired login session', 'unknown_session');
+        }
         const removed = cancelLogin(req.params.session);
         res.json({ ok: true, canceled: removed });
     }));
@@ -688,6 +750,7 @@ function registerLoginRoutes(router) {
         const providerId = String(req.params.id || '');
         await current.keyStore.clearProviderKey(providerId);
         clearAuthFailure(providerId);
+        liveModelsCache.delete(providerId);
         current.catalogService.invalidate();
         const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
         res.json({ ok: true, provider: status });
@@ -723,9 +786,16 @@ function registerConfigRoutes(router) {
         if (typeof body.autoStart === 'boolean') patch.autoStart = body.autoStart;
         if (body.port !== undefined) patch.port = body.port;
         if (typeof body.requireAuth === 'boolean') patch.requireAuth = body.requireAuth;
+        const before = await loadConfig(current.root);
         const config = await saveConfig(current.root, patch);
+        const changed = config.autoStart !== before.autoStart
+            || config.port !== before.port
+            || config.requireAuth !== before.requireAuth;
         let status;
-        if (config.autoStart) {
+        if (!changed) {
+            // An unchanged save must not abort in-flight generations.
+            status = current.gateway.getStatus();
+        } else if (config.autoStart) {
             status = await current.gateway.restart();
         } else {
             await current.gateway.stop();
@@ -759,6 +829,7 @@ function registerImportRoutes(router) {
         // the previous key must not survive and label the new one "rejected".
         for (const id of result.credentialProviders || []) {
             clearAuthFailure(id);
+            liveModelsCache.delete(id);
         }
         res.json(result);
     }));
@@ -818,13 +889,14 @@ function registerRoutes(router) {
 async function createState() {
     const root = getOmtpRoot();
     await ensureOmtpRoot(root);
+    // Behind a system proxy Node's fetch fails as a bare "fetch failed";
+    // routing through the environment's proxy (with a direct fallback) is the
+    // only way login, probes and the gateway can reach the internet there.
+    installProxyFetch();
     const keyStore = new KeyStore({ root, resolveStSecret });
-    try {
-        const { importOmpCredentials } = await import('./lib/import-omp.mjs');
-        await importOmpCredentials({ keyStore });
-    } catch {
-        // Non-fatal if OMP is absent.
-    }
+    // Credentials are never pulled in implicitly: `POST /import/omp` with
+    // `credentials: true, confirm: true` is the only path, so a wiped
+    // `data/omtp/` stays wiped.
     const catalogService = new CatalogService({ root, keyStore });
     try {
         await catalogService.loadActive();
@@ -868,6 +940,7 @@ export async function init(router) {
 
 export async function exit() {
     stopStatsServer();
+    await state?.stats.flush();
     if (!state) return;
     try {
         await state.gateway.stop();

@@ -15,6 +15,7 @@ import { openAIErrorEnvelope } from './sse.mjs';
 import { log, logError } from './redact.mjs';
 import { getAdapter } from './adapters/index.mjs';
 import { createUsageTap, tokensFromOpenAIUsage } from './stats.mjs';
+import { acquireGatewayPort } from './gateway-ports.mjs';
 
 const GATEWAY_VERSION = (() => {
     try {
@@ -24,6 +25,22 @@ const GATEWAY_VERSION = (() => {
     }
 })();
 const FALLBACK_PORTS = Object.freeze([4100, 4101, 4102, 4103, 4104, 4105, 4106, 4107, 4108, 4109, 4110]);
+
+/** Auth headers an adapter rebuilds from `ctx.apiKey`. */
+const AUTH_HEADERS = new Set(['authorization', 'x-api-key', 'api-key', 'x-goog-api-key']);
+
+/** Hop-by-hop and connection-scoped upstream headers that must not be forwarded. */
+const STRIPPED_UPSTREAM_HEADERS = new Set([
+    'connection',
+    'keep-alive',
+    'transfer-encoding',
+    'te',
+    'trailer',
+    'upgrade',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'set-cookie',
+]);
 
 /**
  * @param {string} modelRef
@@ -35,22 +52,6 @@ function splitModelRef(modelRef) {
     const separator = trimmed.indexOf('/');
     if (separator <= 0 || separator === trimmed.length - 1) return null;
     return { provider: trimmed.slice(0, separator), model: trimmed.slice(separator + 1) };
-}
-
-/**
- * @param {number} port
- * @returns {Promise<any|null>}
- */
-async function probeHealth(port) {
-    try {
-        const response = await fetch(`http://127.0.0.1:${port}/health`, {
-            signal: AbortSignal.timeout(1200),
-        });
-        if (!response.ok) return null;
-        return await response.json();
-    } catch {
-        return null;
-    }
 }
 
 /**
@@ -132,38 +133,30 @@ export class GatewayServer {
         }
 
         const ports = [...new Set([config.port, ...FALLBACK_PORTS])].filter((port) => port >= 1 && port <= 65535);
-        for (const port of ports) {
-            try {
-                await this._listen(port);
-                this.port = port;
-                this.running = true;
-                this.external = false;
-                this.lastError = null;
-                if (port !== config.port) {
-                    await saveConfig(this.root, { port }).catch((error) => logError('failed to persist gateway port', error));
-                }
-                log(`gateway listening on 127.0.0.1:${port}`);
-                return this.getStatus();
-            } catch (error) {
-                if (/** @type {NodeJS.ErrnoException} */ (error).code === 'EADDRINUSE') {
-                    const health = await probeHealth(port);
-                    if (health?.service === 'omtp-gateway') {
-                        this.port = port;
-                        this.running = true;
-                        this.external = true;
-                        this.lastError = null;
-                        log(`reusing existing OMTP gateway on 127.0.0.1:${port}`);
-                        return this.getStatus();
-                    }
-                }
-                this.lastError = `Gateway port ${port} unavailable: ${error instanceof Error ? error.message : String(error)}`;
+        try {
+            const { port, external } = await acquireGatewayPort({
+                ports,
+                listen: (candidate) => this._listen(candidate),
+                token: this.token,
+                requireAuth: this.requireAuth,
+            });
+            this.port = port;
+            this.running = true;
+            this.external = external;
+            this.lastError = null;
+            if (!external && port !== config.port) {
+                await saveConfig(this.root, { port }).catch((error) => logError('failed to persist gateway port', error));
             }
+            log(external
+                ? `reusing existing OMTP gateway on 127.0.0.1:${port}`
+                : `gateway listening on 127.0.0.1:${port}`);
+            return this.getStatus();
+        } catch (error) {
+            this.running = false;
+            this.lastError = error instanceof Error ? error.message : String(error);
+            logError('gateway failed to start', new Error(this.lastError));
+            return this.getStatus();
         }
-
-        this.running = false;
-        this.lastError = this.lastError || 'Gateway port unavailable';
-        logError('gateway failed to start', new Error(this.lastError));
-        return this.getStatus();
     }
 
     /**
@@ -339,7 +332,7 @@ export class GatewayServer {
             res.status(404).json(openAIErrorEnvelope(`Unknown provider: ${ref.provider}`, 'invalid_request_error', 'model_not_found'));
             return null;
         }
-        const resolved = await this.keyStore.resolveProvider(catalogProvider);
+        const resolved = await resolveProviderCredentials(this.keyStore, catalogProvider);
         if (!resolved.adapter) {
             res.status(400).json(openAIErrorEnvelope(
                 `Provider ${ref.provider} is not supported by the OMTP gateway${catalogProvider.unsupportedReason ? ` (${catalogProvider.unsupportedReason})` : ''}`,
@@ -402,7 +395,8 @@ export class GatewayServer {
             }
             res.status(upstream.status || 200);
             upstream.headers.forEach((value, key) => {
-                if (key.toLowerCase() === 'content-length' || key.toLowerCase() === 'content-encoding') return;
+                const name = key.toLowerCase();
+                if (name === 'content-length' || name === 'content-encoding' || STRIPPED_UPSTREAM_HEADERS.has(name)) return;
                 res.setHeader(key, value);
             });
             const usageTap = createUsageTap(
@@ -414,8 +408,9 @@ export class GatewayServer {
                         model: ref.model,
                         price: modelInfo?.cost || null,
                         usage: tokens,
-                        // SillyTavern sends the open chat id in this header.
-                        chatId: String(req.get('x-omtp-chat') || '').replace(/^["']|["']$/g, '').trim().slice(0, 200),
+                        // SillyTavern sends the open chat id in this header,
+                        // percent-encoded so non-Latin-1 names survive HTTP.
+                        chatId: decodeChatId(req.get('x-omtp-chat')),
                     });
                 },
                 { isStream: String(upstream.headers.get('content-type') || '').includes('text/event-stream') },
@@ -497,6 +492,46 @@ async function sendUpstreamText(upstream, res, usageTap) {
 }
 
 /**
+ * SillyTavern percent-encodes the chat id header; decode it back.
+ * @param {unknown} raw
+ * @returns {string}
+ */
+function decodeChatId(raw) {
+    const text = String(raw || '').replace(/^["']|["']$/g, '').trim();
+    if (!text) return '';
+    try {
+        return decodeURIComponent(text).slice(0, 200);
+    } catch {
+        return text.slice(0, 200);
+    }
+}
+
+/**
+ * Key-store row holding a catalog provider's credentials. A login flow may
+ * write to a shared row (`authLogin.storeAs`), so the storage id and the
+ * provider id are not always the same.
+ * @param {any} provider catalog provider
+ * @returns {string}
+ */
+export function credentialStorageId(provider) {
+    return String(provider?.authLogin?.storeAs || provider?.id || '');
+}
+
+/**
+ * Resolve a catalog provider through its key-store row. The result keeps the
+ * catalog id: status, auth-failure bookkeeping and adapter policies key on it.
+ * @param {any} keyStore
+ * @param {any} provider catalog provider
+ * @returns {Promise<any>}
+ */
+export async function resolveProviderCredentials(keyStore, provider) {
+    const storageId = credentialStorageId(provider);
+    const lookup = storageId && storageId !== provider?.id ? { ...provider, id: storageId } : provider;
+    const resolved = await keyStore.resolveProvider(lookup);
+    return { ...resolved, id: String(provider?.id || resolved.id || '') };
+}
+
+/**
  * Build the adapter ctx, resolving structured OAuth credentials (refreshing
  * when expired) the way OMP's AuthStorage does before a request.
  * @returns {Promise<any>}
@@ -505,6 +540,14 @@ export async function buildGatewayContext(resolved, keyStore, model, signal, cat
     const { apiKey, credential } = await resolveAccessToken(resolved, keyStore, globalThis.fetch, '', catalogProvider?.authLogin || null);
     const ctx = buildProviderContext({ ...resolved, apiKey }, model, signal, catalogProvider, modelInfo);
     ctx.credential = credential;
+    if (credential) {
+        // The stored credential built auth headers from its JSON blob; adapters
+        // spread `ctx.headers` last, so drop them and let the adapter rebuild
+        // them from the resolved access token. User/hook headers are kept.
+        for (const name of Object.keys(ctx.headers)) {
+            if (AUTH_HEADERS.has(name.toLowerCase())) delete ctx.headers[name];
+        }
+    }
     if (credential && resolved.id === 'anthropic') ctx.extraConfig.claudeCode = true;
     if (credential?.projectId && !ctx.extraConfig.project) ctx.extraConfig.project = credential.projectId;
     return ctx;
