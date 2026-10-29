@@ -104,29 +104,60 @@ flowchart LR
 
 Requirements: **SillyTavern >= 1.12.7** and **Node.js >= 18.0.0**.
 
-### Step 1: Install the Client Extension (Required, 30 seconds)
+### 🚌 Step-by-Step Zero-CLI Tutorial (GitHub ZIP Download)
 
-Clone this repository into SillyTavern's third-party extensions folder (**the directory name must be `omtp-model-hub`**):
+> Perfect for users who prefer mouse clicks over terminals or Git commands:
 
+#### Step 1: Download & Place the Extension (Required, 30 seconds)
+1. Near the top of this GitHub repository page, click the green **`Code`** button ➡️ click **`Download ZIP`**.
+2. Unzip the downloaded file; you will get a folder named `Oh-My-Tavern-Providers-main`.
+3. **Rename this folder to `omtp-model-hub`** (⚠️ It must match this exact lowercase name).
+4. Open your SillyTavern root directory (where you run `Start.bat` or `start.sh`) and navigate to:
+   ```text
+   SillyTavern/public/scripts/extensions/third-party/
+   ```
+5. Move (or copy) your renamed `omtp-model-hub` folder directly into this directory.
+
+> 🎉 Refresh your SillyTavern browser page and you can start using it! To unlock **OAuth sign-in, live quota bars, and the local stats dashboard**, spend 1 minute on Step 2:
+
+#### Step 2: Enable the Server Plugin (Recommended — unlocks all 99 providers, OAuth & usage stats)
+1. **Copy the plugin folder**:
+   - Go inside `SillyTavern/public/scripts/extensions/third-party/omtp-model-hub/`.
+   - Right-click the **`server-plugin`** folder ➡️ select **Copy**.
+   - Navigate back to your SillyTavern root directory and open the **`plugins`** folder (if it doesn't exist, create a new folder named `plugins`).
+   - Paste the folder and **rename it to `omtp`** (final path: `SillyTavern/plugins/omtp`).
+2. **Edit the configuration file (one line)**:
+   - In the SillyTavern root directory, find **`config.yaml`**.
+   - Right-click it ➡️ Open with ➡️ **Notepad** (or your text editor).
+   - Press `Ctrl + F` and search for `enableServerPlugins`.
+   - Change `enableServerPlugins: false` to:
+     ```yaml
+     enableServerPlugins: true
+     ```
+   - Press `Ctrl + S` to save and close the editor.
+3. **Restart SillyTavern**: Restart your SillyTavern server and refresh the browser page. A green **`🟢 Gateway: :4100`** pill confirms everything is live!
+
+---
+
+<details>
+<summary><b>💻 Power Users: Git CLI Installation (Click to expand)</b></summary>
+<br/>
+
+**Step 1: Install client extension**
 ```bash
 cd SillyTavern/public/scripts/extensions/third-party/
 git clone https://github.com/BHLuotianyi/Oh-My-Tavern-Providers omtp-model-hub
 ```
 
-> If you only use providers that SillyTavern already supports natively, reload SillyTavern and you're done!
-
-### Step 2: Install the Server Plugin (Recommended — unlocks all 99 providers, OAuth & usage stats)
-
-1. Copy (or symlink) `server-plugin/` to SillyTavern's `plugins/omtp/` directory:
+**Step 2: Install server plugin**
+1. Copy plugin:
    ```bash
    cp -r SillyTavern/public/scripts/extensions/third-party/omtp-model-hub/server-plugin SillyTavern/plugins/omtp
    ```
-2. Enable server plugins in `SillyTavern/config.yaml`:
-   ```yaml
-   enableServerPlugins: true
-   ```
-3. Restart the SillyTavern server and reload the page. A green **`🟢 Gateway: :4100`** pill in the hub header confirms the gateway is live.
+2. Set `enableServerPlugins: true` in `SillyTavern/config.yaml`.
+3. Restart SillyTavern.
 
+</details>
 ---
 
 ## Quick Tour

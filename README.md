@@ -105,29 +105,60 @@ flowchart LR
 
 环境要求：**SillyTavern >= 1.12.7**，**Node.js >= 18.0.0**。
 
-### 第一步：安装客户端扩展（必选，30 秒完成）
+### 🚌 宝宝巴士版教程（0 命令行 · 点击 + 复制即可）
 
-在 SillyTavern 的第三方扩展目录下克隆本仓库（**文件夹名必须为 `omtp-model-hub`**）：
+> 适合不熟悉 Git 或命令行的朋友，全程只需用鼠标点击、复制文件夹和用记事本修改一行配置。
 
+#### 第 1 步：下载扩展并放进酒馆（必选，30 秒完成）
+1. 在本网页右上角，点击绿色的 **`Code`** 按钮 ➡️ 点击 **`Download ZIP`**（下载压缩包）。
+2. 解压下载的压缩包，你会得到一个名叫 `Oh-My-Tavern-Providers-main` 的文件夹。
+3. 把这个文件夹**重命名为 `omtp-model-hub`**（⚠️ 文件夹名字必须叫 `omtp-model-hub`，注意全是小写且带中划线）。
+4. 打开你的 SillyTavern 酒馆文件夹（平时双击 `Start.bat` 启动酒馆的地方），依次点进目录：
+   ```text
+   SillyTavern/public/scripts/extensions/third-party/
+   ```
+5. 把刚才重命名好的 `omtp-model-hub` 文件夹直接剪切（或复制）粘贴进来。
+
+> 🎉 到这里，刷新浏览器酒馆网页就可以用了！如果你想进一步开启 **OAuth 网页登录、实时额度条和 60 天统计大屏**，继续花 1 分钟完成第 2 步：
+
+#### 第 2 步：开启后台网关插件（强烈推荐，解锁全部 99 家与额度统计）
+1. **复制后台文件夹**：
+   - 点进刚才放好的 `SillyTavern/public/scripts/extensions/third-party/omtp-model-hub/`。
+   - 找到里面的 **`server-plugin`** 文件夹，鼠标右键点击它 ➡️ 选择「复制」。
+   - 回到酒馆最外层的根目录（有 `Start.bat` 的地方），点进 **`plugins`** 文件夹（如果没有这个文件夹，就空白处右键新建一个叫 `plugins` 的文件夹）。
+   - 鼠标右键粘贴进来，并把刚粘贴的文件夹**重命名为 `omtp`**（最终路径长这样：`SillyTavern/plugins/omtp`）。
+2. **修改配置文件（只改一行）**：
+   - 回到酒馆最外层根目录，找到 **`config.yaml`** 文件。
+   - 鼠标右键点击它 ➡️ 选择「打开方式」➡️「记事本」（或者 VS Code / Notepad++）。
+   - 按 `Ctrl + F` 快捷键搜索 `enableServerPlugins`。
+   - 把 `enableServerPlugins: false` 改成：
+     ```yaml
+     enableServerPlugins: true
+     ```
+   - 按 `Ctrl + S` 保存文件并关闭记事本。
+3. **重启酒馆**：关掉正在运行的酒馆黑窗口重新双击 `Start.bat`，再按 `F5` 刷新浏览器网页。打开 OMTP 面板，看到右上角亮起绿色的 **`🟢 网关: :4100`** 就大功告成了！
+
+---
+
+<details>
+<summary><b>💻 进阶玩家：Git 命令行安装方式（点击展开）</b></summary>
+<br/>
+
+**第 1 步：克隆客户端扩展**
 ```bash
 cd SillyTavern/public/scripts/extensions/third-party/
 git clone https://github.com/BHLuotianyi/Oh-My-Tavern-Providers omtp-model-hub
 ```
 
-> 如果你只使用 SillyTavern 原生已有的服务商，到这里就可以刷新网页直接使用了！
-
-### 第二步：安装服务端网关插件（强烈推荐，解锁全部 99 家服务商与额度统计）
-
-1. 将 `server-plugin` 复制（或软链接）到 SillyTavern 的 `plugins/omtp` 目录：
+**第 2 步：配置服务端插件**
+1. 复制插件目录：
    ```bash
    cp -r SillyTavern/public/scripts/extensions/third-party/omtp-model-hub/server-plugin SillyTavern/plugins/omtp
    ```
-2. 在 `SillyTavern/config.yaml` 中确认已开启服务端插件：
-   ```yaml
-   enableServerPlugins: true
-   ```
-3. 重启 SillyTavern 服务端并刷新浏览器页面。面板右上角出现绿色的 **`🟢 网关: :4100`** 即代表全功能就绪。
+2. 在 `SillyTavern/config.yaml` 中配置 `enableServerPlugins: true`。
+3. 重启 SillyTavern 并刷新网页。
 
+</details>
 ---
 
 ## 3 分钟上手 / Quick Tour
