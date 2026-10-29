@@ -24,20 +24,18 @@ const API_TO_GATEWAY = new Map([
 ]);
 
 /**
- * Providers whose OAuth client pair cannot be published: their authorize and
- * token endpoints only accept the first-party app that ships the matching
- * secret, and a `GOCSPX-…` secret in a repository trips secret scanning. Users
- * supply these locally (see `oauth-clients.mjs`) or import the OMP session.
+ * Providers whose OAuth client pair stays local. `google-gemini-cli` is the
+ * remaining one: its endpoints only accept the first-party app, so shipping the
+ * pair is a policy decision for that provider alone.
  */
-const LOCAL_ONLY_CLIENTS = new Set(['google-antigravity', 'google-gemini-cli']);
+const LOCAL_ONLY_CLIENTS = new Set(['google-gemini-cli']);
 
 /**
- * Strip OAuth material the catalog must not carry (returns a new map).
+ * Reduce OAuth material in the catalog (returns a new map).
  *
- * A `clientId` is a public application identifier (RFC 8252 §8.1) and the
- * upstream MIT catalog ships it, so it stays unless the provider needs a
- * secret we cannot publish. `clientSecret` is always reduced to an env
- * reference.
+ * Client ids and the matching installed-app secrets ship as-is for every
+ * provider except `LOCAL_ONLY_CLIENTS`, whose values are replaced by env
+ * references resolved on the user's machine (`oauth-clients.mjs`).
  * @param {Record<string, any>} providers
  * @returns {Record<string, any>}
  */
@@ -64,9 +62,7 @@ function stripClientSecrets(providerId, login) {
         const previous = Array.isArray(out[field]?.env) ? out[field].env.filter(Boolean) : [];
         // Idempotent: scrubbing an already-scrubbed layer must not grow the list.
         const env = [...new Set([`OMTP_${prefix}_${suffix}`, ...previous])];
-        const keepValue = field === 'clientId' && !localOnly
-            ? String(out[field]?.value ?? '')
-            : '';
+        const keepValue = localOnly ? '' : String(out[field]?.value ?? '');
         // Keep sibling keys (notably `encoding: 'base64'`) or the published id
         // would be sent verbatim instead of decoded.
         out[field] = { ...out[field], value: keepValue, env };

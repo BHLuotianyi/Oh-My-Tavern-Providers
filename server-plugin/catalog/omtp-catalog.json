@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": "oh-my-pi",
   "sourceLicense": "MIT",
-  "generatedAt": "2026-10-29T04:50:47.887Z",
+  "generatedAt": "2026-10-29T05:08:10.261Z",
   "providers": {
     "abliteration": {
       "id": "abliteration",
@@ -33420,14 +33420,14 @@
           "prompt": "consent"
         },
         "clientId": {
-          "value": "",
+          "value": "MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
           "encoding": "base64",
           "env": [
             "OMTP_GOOGLE_ANTIGRAVITY_CLIENT_ID"
           ]
         },
         "clientSecret": {
-          "value": "",
+          "value": "R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=",
           "encoding": "base64",
           "env": [
             "OMTP_GOOGLE_ANTIGRAVITY_CLIENT_SECRET"

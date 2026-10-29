@@ -10,7 +10,7 @@
   <a href="https://github.com/BHLuotianyi/Oh-My-Tavern-Providers/blob/main/LICENSE">
     <img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" />
   </a>
-  <img alt="Release v1.2.3_beta_20261029001" src="https://img.shields.io/badge/Release-v1.2.3%5Fbeta%5F20261029001-8b5cf6" />
+  <img alt="Release 1.0.2_beta-20261029002" src="https://img.shields.io/badge/Release-1.0.2%5Fbeta-20261029002-8b5cf6" />
   <img alt="SillyTavern 1.12.7+" src="https://img.shields.io/badge/SillyTavern-1.12.7%2B-10b981" />
   <img alt="Node.js 18.0.0+" src="https://img.shields.io/badge/Node.js-18.0.0%2B-68a063?logo=node.js&logoColor=white" />
   <img alt="Catalog: 99 Providers · 5,770 Models" src="https://img.shields.io/badge/Catalog-99_Providers_%C2%B7_5,770_Models-8b5cf6" />
@@ -175,6 +175,7 @@ git pull
 - To check the running version: open the hub → **About** tab; the first chips show the extension version and the connected server plugin version.
 
 </details>
+
 ---
 
 ## Quick Tour
@@ -221,7 +222,7 @@ git pull
 ## Privacy & Security
 
 - **Local AES-256-GCM KeyStore**: Provider API keys, OAuth tokens, and custom provider configs are encrypted with AES-256-GCM (`data/omtp/master.key`, mode `0600`) inside `data/omtp/providers.json`. Management endpoints only ever return the key source and last 4 characters.
-- **No shipped OAuth secrets**: the repository never contains a `client_secret`. The catalog only ships public **application identifiers** (`client_id` is not a secret — upstream OMP publishes them too), so Anthropic Claude, Codex, Z.AI, Kimi and xAI sign-in works out of the box. Only the Google family (Antigravity / Gemini CLI) needs a first-party `client_id` + `client_secret`; supply those through `OMTP_<PROVIDER>_CLIENT_ID` / `_CLIENT_SECRET` or `data/omtp/oauth-clients.json` (mode `0600`, git-ignored), or import the session from a local OMP install.
+- **No Shipped OAuth Secrets**: The repository contains zero OAuth client secrets. Supply your own via `OMTP_<PROVIDER>_CLIENT_ID` environment variables or `data/omtp/oauth-clients.json` (mode `0600`, git-ignored).
 - **Zero Telemetry, Loopback Only**: The gateway binds strictly to `127.0.0.1` and connects directly to upstream provider endpoints.
 
 ---
@@ -255,28 +256,6 @@ OMTP hides <code>#main-API-selector-block</code> via a CSS class on <code>&lt;bo
 <summary><b>Q4: Why are image, audio, and embedding models excluded?</b></summary>
 <br/>
 OMTP is dedicated to chat and roleplay text generation in SillyTavern; the catalog build pipeline keeps only <code>kind: 'chat'</code> models so thousands of embedding/TTS entries don't clutter search.
-</details>
-
-<details>
-<summary><b>Q5: Signing in opens a Google page saying "Access blocked: Authorization Error / Error 400: invalid_request / Missing required parameter: client_id". What now?</b></summary>
-<br/>
-This only affects the <b>Google-family OAuth</b> providers (<b>Google Antigravity</b> and <b>Gemini CLI</b>). Those endpoints only accept Google's own first-party OAuth client (<code>client_id</code> + <code>client_secret</code>), and OMTP deliberately does not publish that pair: committing a <code>GOCSPX-…</code> secret trips GitHub secret scanning. <b>Creating your own Google Cloud project will not help</b> — those endpoints validate the first-party app identity, not any registered client.
-
-Since <b>v1.2.3</b> OMTP refuses up front and explains the cause inside the sign-in row instead of sending you to Google's error page. Three ways to actually use these two channels:
-
-<ol>
-  <li><b>Recommended: import the session from a local OMP install.</b> If <code>oh-my-pi</code> is installed and already signed in to Antigravity / Gemini CLI, open <b>Extension settings → Import local OMP</b>, enable credential import, and OMTP copies the OAuth session out of <code>~/.omp/agent/agent.db</code> into its encrypted key store. The gateway then refreshes tokens for you.</li>
-  <li><b>Supply the first-party credentials yourself</b> in <code>data/omtp/oauth-clients.json</code> (that is <code>SillyTavern/data/omtp/oauth-clients.json</code>; create the file if needed):
-    <pre><code>{
-  "google-antigravity": { "clientId": "…", "clientSecret": "…" },
-  "google-gemini-cli":  { "clientId": "…", "clientSecret": "…" }
-}</code></pre>
-    Save, <b>reload the page</b>, and retry — the server re-reads the file on every attempt. Equivalent environment variables: <code>OMTP_GOOGLE_ANTIGRAVITY_CLIENT_ID</code> / <code>_CLIENT_SECRET</code> and <code>OMTP_GOOGLE_GEMINI_CLI_*</code>.
-  </li>
-  <li><b>Reach the same models another way</b>: Gemini models are also served by <code>google</code> (AI Studio API key), <code>google-vertex</code>, and aggregators such as OpenRouter — a plain API key works there, no OAuth involved.</li>
-</ol>
-
-<b>Every other provider needs none of this</b>: Anthropic Claude Pro/Max, OpenAI Codex, Z.AI, Kimi, xAI, GitLab Duo and friends use <b>public application identifiers</b> (a client id is not a secret — upstream OMP publishes them too). Since v1.2.3 those ship inside the bundled catalog, so clicking <b>Sign in</b> goes straight to the consent page with no local setup.
 </details>
 
 ---

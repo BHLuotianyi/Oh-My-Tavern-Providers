@@ -274,5 +274,5 @@
     "omtp_about_omp_label": "Reference project",
     "omtp_about_omp_name": "OMP (oh-my-pi)",
     "omtp_about_omp_body": "The gateway, the sign-in flow, the usage pages and the stats dashboard follow OMP's design and commands (`/login`, `/usage`, `stats`); the bundled catalog is derived from OMP's models.json.",
-    "omtp_login_needs_client_id": "Set the OAuth client id in data/omtp/oauth-clients.json (README → FAQ Q5)."
+    "omtp_login_needs_client_id": "Set the OAuth client id in data/omtp/oauth-clients.json or the OMTP_*_CLIENT_ID environment variable."
 }

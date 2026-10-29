@@ -100,7 +100,7 @@
 | `gateway-token` | `0600` 明文 hex | 本地网关 Bearer 通信令牌（非加密，仅本机可读） |
 | `master.key` | `0600` 32 字节 hex | 用于加密 `providers.json` 的 AES-256-GCM 主密钥 |
 | `providers.json` | `0600` AES-256-GCM | 加密存储的服务商 API Key、OAuth 令牌与自定义服务商配置（`enc:v1:...`） |
-| `oauth-clients.json` | `0600` JSON（可选） | 仅 Google 系（`google-antigravity`、`google-gemini-cli`）需要的第一方 `clientId` / `clientSecret`；其他服务商的公开 `clientId` 已随目录内置 |
+| `oauth-clients.json` | `0600` JSON（可选） | 用户自行配置的 OAuth `clientId` / `clientSecret` |
 | `kimi-device-id` | 文本 | `kimi-fingerprint` 登录钩子生成的稳定设备指纹 ID |
 | `usage-stats.json` | JSON | 按对话、模型、日期持久化的 Token 与预估费用账本 |
 | `catalog.json` | JSON（可选） | 在线刷新拉取的目录缓存层 |

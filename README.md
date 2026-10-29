@@ -10,7 +10,7 @@
   <a href="https://github.com/BHLuotianyi/Oh-My-Tavern-Providers/blob/main/LICENSE">
     <img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" />
   </a>
-  <img alt="Release v1.2.3_beta_20261029001" src="https://img.shields.io/badge/Release-v1.2.3%5Fbeta%5F20261029001-8b5cf6" />
+  <img alt="Release 1.0.2_beta-20261029002" src="https://img.shields.io/badge/Release-1.0.2%5Fbeta-20261029002-8b5cf6" />
   <img alt="SillyTavern 1.12.7+" src="https://img.shields.io/badge/SillyTavern-1.12.7%2B-10b981" />
   <img alt="Node.js 18.0.0+" src="https://img.shields.io/badge/Node.js-18.0.0%2B-68a063?logo=node.js&logoColor=white" />
   <img alt="Catalog: 99 Providers · 5,770 Models" src="https://img.shields.io/badge/Catalog-99_Providers_%C2%B7_5,770_Models-8b5cf6" />
@@ -176,6 +176,7 @@ git pull
 - 想确认当前版本：打开 OMTP 面板 → **关于 (About)** 标签页，第一行会显示扩展版本与已连接的服务端插件版本。
 
 </details>
+
 ---
 
 ## 3 分钟上手 / Quick Tour
@@ -224,7 +225,7 @@ git pull
 ## 隐私与安全边界 / Privacy & Security
 
 - **凭据不出本机**：所有通过 OMTP 录入的 API Key、OAuth 刷新令牌与自定义服务商配置均使用 **AES-256-GCM**（主密钥 `data/omtp/master.key`，权限 `0600`）加密保存在 `data/omtp/providers.json`。HTTP 管理接口永远只返回凭据来源与末四位字符。
-- **不内置任何 OAuth 密钥（Client Secret）**：仓库源码与目录**永远不携带** `client_secret`。目录里只内置公开的**应用标识**（`client_id` 本身不是秘密，OMP 上游同样公开），因此 Anthropic Claude、Codex、Z.AI、Kimi、xAI 等登录开箱即用；仅 Google 系（Antigravity / Gemini CLI）需要第一方 `client_id` + `client_secret`，请通过环境变量 `OMTP_<PROVIDER>_CLIENT_ID/_CLIENT_SECRET` 或本地 `data/omtp/oauth-clients.json`（权限 `0600`，已 gitignore）自行注入，或从本地 OMP 导入登录会话。
+- **不内置任何第三方 OAuth Client Secret**：仓库源码与目录均不携带任何 OAuth 客户端密钥。如需使用自定义 OAuth 客户端，可通过环境变量 `OMTP_<PROVIDER>_CLIENT_ID` 或本地 `data/omtp/oauth-clients.json`（权限 `0600`，已 gitignore）自行注入。
 - **零遥测、零云端中转**：OMTP 不包含任何统计上报、遥测或第三方代理服务器；网关仅监听 `127.0.0.1`，所有上游请求均由你的机器直连目标服务商官方端点。
 
 ---
@@ -258,28 +259,6 @@ OMTP 默认通过给 <code>&lt;body&gt;</code> 添加 CSS 类隐藏了原生选�
 <summary><b>Q4：为什么目录里没有画图（Image）、语音（TTS/ASR）或向量嵌入（Embedding）模型？</b></summary>
 <br/>
 OMTP 专注于 SillyTavern 的对话与角色扮演文本生成体验，目录构建流水线会过滤非对话模态（仅保留 <code>kind: 'chat'</code>），避免数千个嵌入/语音条目干扰搜索。
-</details>
-
-<details>
-<summary><b>Q5：点「登录」后弹出 Google 页面报「禁止访问：发生了授权错误 / 错误 400: invalid_request / Missing required parameter: client_id」怎么办？</b></summary>
-<br/>
-这个报错只会出现在 <strong>Google 系 OAuth</strong>（<strong>Google Antigravity</strong>、<strong>Gemini CLI</strong>）。原因是这两个流程只认 Google 自家第一方应用的 OAuth 客户端（<code>client_id</code> + <code>client_secret</code>），而 OMTP 出于安全原因<strong>不会</strong>把这份凭据写进仓库（提交 <code>GOCSPX-…</code> 这类密钥会直接触发 GitHub 密钥扫描）。<strong>注意：自己新建一个 Google Cloud 项目拿到的 client_id 也过不了这两个接口</strong>，因为它们校验的是第一方应用身份。
-
-从 <b>v1.2.3</b> 起，遇到这种情况 OMTP 会<strong>直接拦下</strong>并在登录行里用中文提示原因，不再把你送去 Google 的报错页。想要真正用上这两个渠道，有三条路：
-
-<ol>
-  <li><b>推荐：从本地 OMP 导入登录状态</b>。如果你电脑上装过 <code>oh-my-pi</code> 并且已经登录过 Antigravity / Gemini CLI，打开「扩展设置 → 导入本地 OMP」，勾选导入凭据，OMTP 会把 <code>~/.omp/agent/agent.db</code> 里的 OAuth 会话导入加密密钥库，之后这些模型直接可用（网关会自动刷新令牌）。</li>
-  <li><b>手动填入第一方客户端凭据</b>：在 <code>data/omtp/oauth-clients.json</code>（即 <code>SillyTavern/data/omtp/oauth-clients.json</code>，没有就新建）里写入：
-    <pre><code>{
-  "google-antigravity": { "clientId": "…", "clientSecret": "…" },
-  "google-gemini-cli":  { "clientId": "…", "clientSecret": "…" }
-}</code></pre>
-    保存后<strong>刷新网页</strong>重试即可（服务端每次都会热读取该文件）。等价的环境变量是 <code>OMTP_GOOGLE_ANTIGRAVITY_CLIENT_ID</code> / <code>_CLIENT_SECRET</code> 与 <code>OMTP_GOOGLE_GEMINI_CLI_*</code>。
-  </li>
-  <li><b>换个渠道用同一批模型</b>：Gemini 系模型在 <code>google</code>（AI Studio API Key）、<code>google-vertex</code>、以及 OpenRouter 等聚合源里都有，填 API Key 即可，不涉及 OAuth。</li>
-</ol>
-
-<strong>其他服务商不需要这一步</strong>：Anthropic Claude Pro/Max、OpenAI Codex、Z.AI/智谱、Kimi、xAI、GitLab Duo 等登录流程使用<strong>公开的应用标识</strong>（client id 本身不是秘密，OMP 上游也是公开的），从 v1.2.3 起已随目录内置，点「登录」即可直接跳转授权，无需任何本地配置。
 </details>
 
 ---

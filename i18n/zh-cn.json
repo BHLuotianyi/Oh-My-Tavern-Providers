@@ -274,5 +274,5 @@
     "omtp_about_omp_label": "参考项目",
     "omtp_about_omp_name": "OMP (oh-my-pi)",
     "omtp_about_omp_body": "网关、登录流程、用量页与统计面板均对齐 OMP 的设计与命令（`/login`、`/usage`、`stats`）；内置模型目录由 OMP 的 models.json 衍生构建。",
-    "omtp_login_needs_client_id": "请把 OAuth 客户端 ID 写进 data/omtp/oauth-clients.json（见 README 常见问题 Q5）。"
+    "omtp_login_needs_client_id": "请在 data/omtp/oauth-clients.json 或 OMTP_*_CLIENT_ID 环境变量中提供 OAuth 客户端 ID。"
 }

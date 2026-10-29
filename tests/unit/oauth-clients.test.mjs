@@ -59,10 +59,10 @@ test('missing or malformed local config resolves to empty credentials', () => {
 test('catalog layers keep public client ids but never secrets', async () => {
     const { stripCatalogCredentials } = await import('../../server-plugin/lib/catalog-normalize.mjs');
     const providers = {
-        'google-antigravity': {
+        'google-gemini-cli': {
             authLogin: {
-                clientId: { value: 'MTA3MTAwNjA2MDU5MS10', encoding: 'base64' },
-                clientSecret: { value: 'R09DU1BYLUs1', encoding: 'base64' },
+                clientId: { value: 'NjgxMjU1ODA5Mzk1LW9vOGZ0', encoding: 'base64' },
+                clientSecret: { value: 'R09DU1BYLTR1SGdNUG0t', encoding: 'base64' },
                 kind: 'oauth-code',
             },
         },
@@ -71,17 +71,16 @@ test('catalog layers keep public client ids but never secrets', async () => {
         plain: { label: 'No login' },
     };
     const stripped = stripCatalogCredentials(providers);
-    // Google-family flows only accept the first-party app, whose secret cannot
-    // be published: both halves stay local.
-    assert.deepEqual(stripped['google-antigravity'].authLogin.clientId, {
+    // Providers in LOCAL_ONLY_CLIENTS keep both halves on the user's machine.
+    assert.deepEqual(stripped['google-gemini-cli'].authLogin.clientId, {
         value: '',
         encoding: 'base64',
-        env: ['OMTP_GOOGLE_ANTIGRAVITY_CLIENT_ID'],
+        env: ['OMTP_GOOGLE_GEMINI_CLI_CLIENT_ID'],
     });
-    assert.deepEqual(stripped['google-antigravity'].authLogin.clientSecret, {
+    assert.deepEqual(stripped['google-gemini-cli'].authLogin.clientSecret, {
         value: '',
         encoding: 'base64',
-        env: ['OMTP_GOOGLE_ANTIGRAVITY_CLIENT_SECRET'],
+        env: ['OMTP_GOOGLE_GEMINI_CLI_CLIENT_SECRET'],
     });
     // A client id is a public app identifier, so it ships (upstream does too).
     assert.deepEqual(stripped['openai-codex'].authLogin.clientId, {
@@ -93,7 +92,7 @@ test('catalog layers keep public client ids but never secrets', async () => {
         encoding: 'base64',
         env: ['OMTP_ANTHROPIC_CLIENT_ID'],
     });
-    assert.equal(stripped['google-antigravity'].authLogin.kind, 'oauth-code');
+    assert.equal(stripped['google-gemini-cli'].authLogin.kind, 'oauth-code');
     assert.equal(stripped.plain.label, 'No login');
     // Input untouched.
     assert.equal(providers['openai-codex'].authLogin.clientId.value, 'test-codex-client');
