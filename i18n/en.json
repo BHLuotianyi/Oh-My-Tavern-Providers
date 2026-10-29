@@ -385,5 +385,8 @@
     "omtp_err_no_favorites": "No favorites available",
     "omtp_err_no_recents": "No recent models available",
     "omtp_err_no_chat": "Open a chat before binding a model",
-    "omtp_err_no_character": "Select a character first (character bindings are unavailable in group chats)"
+    "omtp_err_no_character": "Select a character first (character bindings are unavailable in group chats)",
+    "omtp_profiles_provider": "Connection Profiles",
+    "omtp_profiles_count": "${0} profiles",
+    "omtp_profile_meta": "Saved connection"
 }

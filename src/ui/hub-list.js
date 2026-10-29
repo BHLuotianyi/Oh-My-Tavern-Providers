@@ -30,6 +30,7 @@ import {
     sourceOf,
 } from './hub-utils.js';
 import { filteredEntries, getCurrentRef, providerLabel } from './hub-catalog.js';
+import { PROFILE_PROVIDER_ID } from '../constants.js';
 import { renderDetails, renderProviderHeader, toggleFavorite } from './hub-details.js';
 import { refreshHub } from './hub-quick.js';
 
@@ -366,6 +367,19 @@ function renderDashboard(listElement, appendRow) {
             recents.forEach(appendRow);
         }
     }
+    if (state.selectedProvider === PROFILE_PROVIDER_ID) {
+        const profiles = filteredEntries().filter((entry) => entry.kind === 'profile');
+        if (!profiles.length) {
+            appendEmptyState(listElement, tr(
+                'omtp_profiles_empty',
+                'No connection profiles yet — create one in SillyTavern (API settings → Connection Profiles).',
+            ));
+            return;
+        }
+        listElement.append(renderProviderHeader(state.selectedProvider, profiles.length));
+        profiles.forEach(appendRow);
+        return;
+    }
     if (state.selectedProvider) {
         const models = filteredEntries().filter((entry) => entry.kind !== 'profile'
             && (entry.providerId === state.selectedProvider || entry.provider === state.selectedProvider));
@@ -427,7 +441,9 @@ function renderRow(entry, index) {
 
     const main = el('div', 'omtp-row-main');
     const name = el('div', 'omtp-row-name', entry.modelLabel || entry.model);
-    const metaParts = [displayProviderName(entry), entry.model];
+    const metaParts = entry.kind === 'profile'
+        ? [entry.profile?.model || tr('omtp_profile_meta', 'Saved connection')]
+        : [displayProviderName(entry), entry.model];
     if (entry.contextWindow) {
         metaParts.push(formatNumber(entry.contextWindow));
     }

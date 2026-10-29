@@ -197,7 +197,7 @@ git pull
 | **Native** | Provider is natively supported by SillyTavern and the native control accepts the model ID | No | ✅ Preserved |
 | **Translated** | Catalog provider mapped to a native SillyTavern adapter (e.g. `minimax-cn`) | No | ✅ Preserved |
 | **OMTP** | Routed through the local `127.0.0.1:4100/v1` gateway via SillyTavern's Custom OpenAI source | **Yes** | Restores prior snapshot on disable |
-| **Profile** | Connection Manager extension profile | No | ✅ Preserved |
+| **Profile** | A saved connection from SillyTavern's Connection Manager; listed in the provider column as a connection, not a model (editing stays in SillyTavern) | No | ✅ Preserved |
 
 ### ⌨️ Slash Commands & Terminal-Style Quick Picker
 

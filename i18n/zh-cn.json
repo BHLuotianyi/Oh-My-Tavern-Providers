@@ -385,5 +385,8 @@
     "omtp_err_no_favorites": "没有可用的收藏模型",
     "omtp_err_no_recents": "没有可用的最近模型",
     "omtp_err_no_chat": "请先打开一个对话再绑定模型",
-    "omtp_err_no_character": "请先选择一个角色（群聊中无法使用角色绑定）"
+    "omtp_err_no_character": "请先选择一个角色（群聊中无法使用角色绑定）",
+    "omtp_profiles_provider": "配置档案",
+    "omtp_profiles_count": "${0} 个档案",
+    "omtp_profile_meta": "已保存的连接"
 }

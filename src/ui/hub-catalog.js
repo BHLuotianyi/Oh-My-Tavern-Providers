@@ -7,7 +7,7 @@ import * as catalogApi from '../catalog.js';
 import * as engine from '../switch-engine.js';
 import { loadPersonality, personalityFor } from '../personality.js';
 import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
-import { LAB_PROVIDERS, MAINSTREAM_PROVIDERS } from '../constants.js';
+import { LAB_PROVIDERS, MAINSTREAM_PROVIDERS, PROFILE_PROVIDER_ID } from '../constants.js';
 import { tr } from './dom.js';
 import { notify } from './helpers.js';
 import { state } from './hub-state.js';
@@ -268,7 +268,12 @@ export function providerGroupFromStatus(id, label, status) {
  * @returns {{unlocked: any[], invalid: any[], locked: any[]}}
  */
 export function partitionProviders(groups) {
-    const byId = (a, b) => String(a.id).localeCompare(String(b.id));
+    const byId = (a, b) => {
+        // Profiles are a fixed, user-managed section: keep it on top.
+        if (a.id === PROFILE_PROVIDER_ID) return -1;
+        if (b.id === PROFILE_PROVIDER_ID) return 1;
+        return String(a.id).localeCompare(String(b.id));
+    };
     return {
         unlocked: groups.filter((group) => group.unlocked).sort(byId),
         invalid: groups.filter((group) => !group.unlocked && group.invalid).sort(byId),
@@ -285,6 +290,21 @@ export function partitionProviders(groups) {
  */
 export function buildProviderGroups(list) {
     const map = new Map();
+    // Connection profiles are connections, not models: they get their own
+    // provider row instead of showing up as a model list.
+    const profiles = list.filter((entry) => entry.kind === 'profile');
+    if (profiles.length) {
+        map.set(PROFILE_PROVIDER_ID, {
+            id: PROFILE_PROVIDER_ID,
+            label: tr('omtp_profiles_provider', 'Connection Profiles'),
+            count: profiles.length,
+            availableCount: profiles.length,
+            unlocked: true,
+            invalid: false,
+            reason: null,
+            profiles: true,
+        });
+    }
     for (const entry of list) {
         if (entry.kind === 'profile') continue;
         const pid = entry.providerId || entry.provider;

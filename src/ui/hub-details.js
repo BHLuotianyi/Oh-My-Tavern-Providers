@@ -109,6 +109,11 @@ export function renderProviderHeader(providerId, count) {
     const group = state.providerGroups.get(providerId);
     const headerRow = el('div', 'omtp-section-header-row');
     const titleElem = el('div', 'omtp-section-title', `${providerLabel(providerId, group?.label)} · ${count}`);
+    if (group?.profiles) {
+        // A profile is a saved connection; there is no upstream model list.
+        headerRow.append(titleElem);
+        return headerRow;
+    }
     const refreshBtn = el('button', 'omtp-provider-refresh-btn', '🔄 ' + tr('omtp_refresh_live_models', 'Refresh live models'));
     refreshBtn.title = tr('omtp_refresh_live_models_hint', 'Fetch the current model list from this provider API');
     refreshBtn.addEventListener('click', async (event) => {

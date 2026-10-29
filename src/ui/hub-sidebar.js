@@ -140,7 +140,11 @@ export function renderProviderList() {
         buckets = partitionProviders([...allMap.values()]);
     }
     if (mainstreamOnly()) {
-        const keep = (group) => group.id === state.selectedProvider || isMainstreamProvider(group.id);
+        // Profiles are user-managed connections, not providers with a tier;
+        // the mainstream filter must never hide them.
+        const keep = (group) => Boolean(group.profiles)
+            || group.id === state.selectedProvider
+            || isMainstreamProvider(group.id);
         buckets = {
             unlocked: buckets.unlocked.filter(keep),
             invalid: buckets.invalid.filter(keep),
@@ -165,6 +169,9 @@ export function renderProviderList() {
 
 /** @param {any} group */
 function providerItemTitle(group) {
+    if (group.profiles) {
+        return trf('omtp_profiles_count', '${0} profiles', group.count);
+    }
     if (group.unlocked) {
         return `${group.label} — ${group.availableCount} models`;
     }
