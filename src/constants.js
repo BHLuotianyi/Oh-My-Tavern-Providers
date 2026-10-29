@@ -9,6 +9,15 @@
 /** Key under `extension_settings` that stores all plugin settings. */
 export const SETTINGS_NAMESPACE = 'omtp';
 
+/**
+ * Release identity. `EXTENSION_VERSION` is the display string (also written to
+ * `manifest.json#version`); `EXTENSION_VERSION_CODE` is the monotonic integer
+ * bumped on every release. `tests/unit/version.test.mjs` keeps all copies in
+ * sync.
+ */
+export const EXTENSION_VERSION = 'v1.2.3_beta_20261029001';
+export const EXTENSION_VERSION_CODE = 1;
+
 /** Base path of the optional server plugin routes. */
 export const API_BASE = '/api/plugins/omtp';
 

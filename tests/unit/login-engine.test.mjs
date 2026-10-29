@@ -12,6 +12,7 @@ import {
     pickLocale,
     policyValue,
     startLogin,
+    submitCode,
 } from '../../server-plugin/lib/login-engine.mjs';
 
 const anthropicPolicy = {
@@ -255,4 +256,65 @@ test('kimi fingerprint headers identify the CLI and stay stable per install', as
     assert.deepEqual(headersForHook('unknown-hook', root), {});
     assert.equal(headerHookSupported('kimi-fingerprint'), true);
     fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('buildAuthorizeUrl refuses a standard flow with no local client id', () => {
+    // `stripCatalogCredentials` leaves `{ value: '', env: [...] }` behind; an
+    // empty client_id makes Google answer `invalid_request`.
+    assert.throws(
+        () => buildAuthorizeUrl({
+            ...anthropicPolicy,
+            clientId: { value: '', env: ['OMTP_ANTHROPIC_CLIENT_ID'] },
+        }, {
+            state: 'state',
+            challenge: 'challenge',
+            redirectUri: 'http://localhost:54545/callback',
+            env: {},
+        }),
+        /OMTP_ANTHROPIC_CLIENT_ID/,
+    );
+});
+
+test('oauth-code exchange sends the locally resolved client id', async () => {
+    const stored = {};
+    const calls = [];
+    const doFetch = async (url, init) => {
+        calls.push({ url: String(url), body: init?.body });
+        return new Response(JSON.stringify({
+            access_token: 'access',
+            refresh_token: 'refresh',
+            expires_in: 3600,
+        }), { status: 200 });
+    };
+    const policy = {
+        ...anthropicPolicy,
+        clientId: { value: '', env: ['OMTP_ANTHROPIC_CLIENT_ID'] },
+        token: { url: { value: 'https://api.anthropic.com/v1/oauth/token' }, body: 'json', standard: true },
+        // A random high port keeps parallel test files from colliding; a busy
+        // port only falls back to the manual paste path.
+        callback: { port: 50_000 + Math.floor(Math.random() * 10_000), path: '/callback' },
+    };
+    const started = await startLogin('anthropic', policy, {
+        keyStore: {
+            async setProviderConfig(target, patch) {
+                stored[target] = patch;
+            },
+        },
+        env: { OMTP_ANTHROPIC_CLIENT_ID: 'local-client-id' },
+        doFetch,
+    });
+    try {
+        assert.match(started.url, /client_id=local-client-id/);
+        await submitCode(started.id, 'auth-code');
+        assert.equal(getSession(started.id).status, 'done');
+
+        const tokenCall = calls.find((call) => call.url === 'https://api.anthropic.com/v1/oauth/token');
+        assert.ok(tokenCall, 'expected a token exchange request');
+        const body = JSON.parse(tokenCall.body);
+        assert.equal(body.client_id, 'local-client-id');
+        assert.equal(body.code, 'auth-code');
+        assert.ok(stored.anthropic?.apiKey, 'expected the credential to be stored');
+    } finally {
+        cancelLogin(started.id);
+    }
 });

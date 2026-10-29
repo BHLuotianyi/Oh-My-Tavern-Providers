@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import http from 'node:http';
 import { Readable, Transform } from 'node:stream';
 import express from 'express';
@@ -15,7 +16,13 @@ import { log, logError } from './redact.mjs';
 import { getAdapter } from './adapters/index.mjs';
 import { createUsageTap, tokensFromOpenAIUsage } from './stats.mjs';
 
-const GATEWAY_VERSION = '0.1.0';
+const GATEWAY_VERSION = (() => {
+    try {
+        return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || 'unknown';
+    } catch {
+        return 'unknown';
+    }
+})();
 const FALLBACK_PORTS = Object.freeze([4100, 4101, 4102, 4103, 4104, 4105, 4106, 4107, 4108, 4109, 4110]);
 
 /**
@@ -495,7 +502,7 @@ async function sendUpstreamText(upstream, res, usageTap) {
  * @returns {Promise<any>}
  */
 export async function buildGatewayContext(resolved, keyStore, model, signal, catalogProvider = null, modelInfo = null) {
-    const { apiKey, credential } = await resolveAccessToken(resolved, keyStore);
+    const { apiKey, credential } = await resolveAccessToken(resolved, keyStore, globalThis.fetch, '', catalogProvider?.authLogin || null);
     const ctx = buildProviderContext({ ...resolved, apiKey }, model, signal, catalogProvider, modelInfo);
     ctx.credential = credential;
     if (credential && resolved.id === 'anthropic') ctx.extraConfig.claudeCode = true;

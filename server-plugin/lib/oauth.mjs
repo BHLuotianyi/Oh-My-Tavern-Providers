@@ -8,7 +8,7 @@
  * (packages/catalog/src/compat/rules/auth/*.kdl).
  */
 import { logError } from './redact.mjs';
-import { resolveOAuthClient } from './oauth-clients.mjs';
+import { resolveOAuthClient, policyValue } from './oauth-clients.mjs';
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const ANTHROPIC_TOKEN_URL = 'https://api.anthropic.com/v1/oauth/token';
@@ -48,11 +48,16 @@ export function parseStructuredCredential(apiKey) {
  * @param {{access:string, refresh?:string}} credential
  * @param {typeof fetch} doFetch
  * @param {string} [root] OMTP data dir holding `oauth-clients.json`
+ * @param {any} [login] compiled login policy (public client id fallback)
  */
-async function refreshCredential(providerId, credential, doFetch, root = '') {
+async function refreshCredential(providerId, credential, doFetch, root = '', login = null) {
     const spec = OAUTH_PROVIDERS[providerId];
     if (!spec || !credential.refresh) throw new Error(`No refresh token for ${providerId}`);
-    const { clientId, clientSecret } = resolveOAuthClient(root, providerId);
+    const local = resolveOAuthClient(root, providerId);
+    // Providers whose client id ships in the catalog (a public app identifier)
+    // refresh without any local configuration; Google-family ones never do.
+    const clientId = local.clientId || policyValue(login?.clientId);
+    const clientSecret = local.clientSecret || policyValue(login?.clientSecret);
     if (!clientId || (spec.needsSecret && !clientSecret)) {
         throw new Error(
             `OAuth client credentials for ${providerId} are not configured; `
@@ -105,16 +110,17 @@ async function refreshCredential(providerId, credential, doFetch, root = '') {
  * @param {{id:string, apiKey?:string, keySource?:string}} resolved
  * @param {{setProviderConfig?:Function}|null} keyStore
  * @param {typeof fetch} [doFetch]
+ * @param {any} [login] compiled login policy, for the public client id fallback
  * @returns {Promise<{apiKey:string, credential:any|null}>}
  */
-export async function resolveAccessToken(resolved, keyStore, doFetch = globalThis.fetch, root = '') {
+export async function resolveAccessToken(resolved, keyStore, doFetch = globalThis.fetch, root = '', login = null) {
     const credential = parseStructuredCredential(resolved?.apiKey);
     if (!credential) return { apiKey: resolved?.apiKey || '', credential: null };
     const expires = Number(credential.expires || 0);
     if (expires && expires > Date.now() + 60_000) return { apiKey: credential.access, credential };
     if (!credential.refresh) return { apiKey: credential.access, credential };
     try {
-        const next = await refreshCredential(resolved.id, credential, doFetch, root || keyStore?.root || '');
+        const next = await refreshCredential(resolved.id, credential, doFetch, root || keyStore?.root || '', login);
         if (keyStore?.setProviderConfig && resolved.keySource === 'omtp') {
             await keyStore.setProviderConfig(resolved.id, { apiKey: JSON.stringify(next) });
         }

@@ -35,9 +35,9 @@ import {
 /** Server plugin version, read once from its own package.json. */
 const SERVER_VERSION = (() => {
     try {
-        return JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version || '0.1.0';
+        return JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version || 'unknown';
     } catch {
-        return '0.1.0';
+        return 'unknown';
     }
 })();
 

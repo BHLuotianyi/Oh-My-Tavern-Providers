@@ -6,7 +6,7 @@
  * it still points at the API installed by this module.
  */
 import { eventSource } from '../../../../events.js';
-import { EVENTS } from './constants.js';
+import { EVENTS, EXTENSION_VERSION } from './constants.js';
 import { getActiveCatalog, getEntries, invalidateNativeCache, mergeCatalog, resolveEntry, setActiveCatalog, withProviderAvailability } from './catalog.js';
 import { isValidRef, getSettings, parseEntryKey } from './store.js';
 import { captureSelection, switchToEntry } from './switch-engine.js';
@@ -197,7 +197,7 @@ export function initPublicApi(api = {}) {
     }
 
     const impl = {
-        version: typeof api?.version === 'string' ? api.version : '0.1.0',
+        version: typeof api?.version === 'string' ? api.version : EXTENSION_VERSION,
         open: typeof api?.open === 'function' ? api.open : openHub,
         close: typeof api?.close === 'function' ? api.close : closeHub,
         toggle: typeof api?.toggle === 'function' ? api.toggle : toggleHub,

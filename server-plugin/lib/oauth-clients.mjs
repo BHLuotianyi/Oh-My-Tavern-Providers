@@ -102,6 +102,37 @@ export function resolveOAuthClient(root, providerId, env = process.env) {
 }
 
 /**
+ * Resolve a policy value that may be a literal, a base64 blob or an env hook.
+ * @param {{value?: string, encoding?: string, hook?: string, env?: string[], fallback?: string}|string|undefined} field
+ * @param {Record<string, string|undefined>} [env]
+ * @returns {string}
+ */
+export function policyValue(field, env = process.env) {
+    if (!field) return '';
+    if (typeof field === 'string') return field;
+    if (field.hook) {
+        // Hook-backed values are provider code we do not ship; the literal
+        // fallback (if any) is still usable.
+        return field.fallback || '';
+    }
+    if (Array.isArray(field.env)) {
+        for (const name of field.env) {
+            const fromEnv = env?.[name];
+            if (fromEnv) return fromEnv;
+        }
+    }
+    const value = String(field.value ?? '');
+    if (field.encoding === 'base64') {
+        try {
+            return Buffer.from(value, 'base64').toString('utf8');
+        } catch {
+            return value;
+        }
+    }
+    return value;
+}
+
+/**
  * Environment overlay for the login engine: the catalog references
  * `OMTP_<PROVIDER>_CLIENT_ID/_SECRET`, and those names get the local values.
  * @param {string} root

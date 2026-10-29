@@ -245,7 +245,7 @@
     "omtp_about_license_link": "GNU General Public License v3.0",
     "omtp_about_version": "Extension version",
     "omtp_about_server_version": "Server plugin",
-    "omtp_about_server_version_ok": "v${0} · connected",
+    "omtp_about_server_version_ok": "${0} · connected",
     "omtp_about_server_version_missing": "Not installed",
     "omtp_about_st_version": "SillyTavern",
     "omtp_about_gateway": "Gateway",
@@ -273,5 +273,6 @@
     "omtp_footer_model_other": "${0} usable models",
     "omtp_about_omp_label": "Reference project",
     "omtp_about_omp_name": "OMP (oh-my-pi)",
-    "omtp_about_omp_body": "The gateway, the sign-in flow, the usage pages and the stats dashboard follow OMP's design and commands (`/login`, `/usage`, `stats`); the bundled catalog is derived from OMP's models.json."
+    "omtp_about_omp_body": "The gateway, the sign-in flow, the usage pages and the stats dashboard follow OMP's design and commands (`/login`, `/usage`, `stats`); the bundled catalog is derived from OMP's models.json.",
+    "omtp_login_needs_client_id": "Set the OAuth client id in data/omtp/oauth-clients.json (README → FAQ Q5)."
 }

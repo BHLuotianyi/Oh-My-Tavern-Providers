@@ -59,6 +59,18 @@ function shortVersion(raw) {
     return match ? match[0] : text;
 }
 
+/**
+ * Render a version for display: never double the `v` prefix, since the
+ * manifest ships `v1.2.3_beta_…` while the server package ships plain semver.
+ * @param {unknown} value
+ * @returns {string}
+ */
+function versionLabel(value) {
+    const text = String(value ?? '').trim();
+    if (!text || text === '—') return 'v—';
+    return /^v/i.test(text) ? text : `v${text}`;
+}
+
 /** SillyTavern's own version, from whichever source is available. */
 function sillyTavernVersion() {
     try {
@@ -125,7 +137,7 @@ export async function mountAboutPanel(container) {
     const hero = el('div', 'omtp-about-hero');
     hero.append(el('h3', 'omtp-about-name', tr('omtp_about_name', 'Oh My Tavern Providers')));
     const chips = el('div', 'omtp-about-chips');
-    chips.append(el('span', 'omtp-about-chip', `v${facts.extension.version || '—'}`));
+    chips.append(el('span', 'omtp-about-chip', versionLabel(facts.extension.version)));
     chips.append(el('span', 'omtp-about-chip omtp-about-chip-license', LICENSE));
     hero.append(chips);
     hero.append(el('p', 'omtp-about-tagline', tr(
@@ -157,9 +169,9 @@ export async function mountAboutPanel(container) {
     licenceCell.append(document.createTextNode(`${LICENSE} · `));
     licenceCell.append(link(LICENSE_URL, tr('omtp_about_license_link', 'GNU General Public License v3.0')));
     fact(meta, tr('omtp_about_license', 'License'), licenceCell);
-    fact(meta, tr('omtp_about_version', 'Extension version'), `v${facts.extension.version || '—'}`);
+    fact(meta, tr('omtp_about_version', 'Extension version'), versionLabel(facts.extension.version));
     fact(meta, tr('omtp_about_server_version', 'Server plugin'), facts.status?.serverPlugin
-        ? trf('omtp_about_server_version_ok', 'v${0} · connected', facts.status.serverVersion || '0.1.0')
+        ? trf('omtp_about_server_version_ok', '${0} · connected', versionLabel(facts.status.serverVersion))
         : tr('omtp_about_server_version_missing', 'Not installed'));
     fact(meta, tr('omtp_about_st_version', 'SillyTavern'), sillyTavernVersion());
     fact(meta, tr('omtp_about_gateway', 'Gateway'), gatewayValue(facts.status));

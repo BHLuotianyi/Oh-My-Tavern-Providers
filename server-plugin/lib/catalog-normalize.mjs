@@ -24,7 +24,20 @@ const API_TO_GATEWAY = new Map([
 ]);
 
 /**
- * Scrub every provider's `authLogin` in place-safe fashion (returns a new map).
+ * Providers whose OAuth client pair cannot be published: their authorize and
+ * token endpoints only accept the first-party app that ships the matching
+ * secret, and a `GOCSPX-…` secret in a repository trips secret scanning. Users
+ * supply these locally (see `oauth-clients.mjs`) or import the OMP session.
+ */
+const LOCAL_ONLY_CLIENTS = new Set(['google-antigravity', 'google-gemini-cli']);
+
+/**
+ * Strip OAuth material the catalog must not carry (returns a new map).
+ *
+ * A `clientId` is a public application identifier (RFC 8252 §8.1) and the
+ * upstream MIT catalog ships it, so it stays unless the provider needs a
+ * secret we cannot publish. `clientSecret` is always reduced to an env
+ * reference.
  * @param {Record<string, any>} providers
  * @returns {Record<string, any>}
  */
@@ -38,20 +51,25 @@ export function stripCatalogCredentials(providers) {
 }
 
 /**
- * Never ship OAuth client material: the catalog keeps only env references, the
- * values are resolved locally (see `oauth-clients.mjs`).
  * @param {string} providerId
  * @param {Record<string, any>} login
  * @returns {Record<string, any>}
  */
 function stripClientSecrets(providerId, login) {
     const prefix = providerEnvPrefix(providerId);
+    const localOnly = LOCAL_ONLY_CLIENTS.has(providerId);
     const out = { ...login };
     for (const [field, suffix] of [['clientId', 'CLIENT_ID'], ['clientSecret', 'CLIENT_SECRET']]) {
         if (!(field in out)) continue;
         const previous = Array.isArray(out[field]?.env) ? out[field].env.filter(Boolean) : [];
         // Idempotent: scrubbing an already-scrubbed layer must not grow the list.
-        out[field] = { value: '', env: [...new Set([`OMTP_${prefix}_${suffix}`, ...previous])] };
+        const env = [...new Set([`OMTP_${prefix}_${suffix}`, ...previous])];
+        const keepValue = field === 'clientId' && !localOnly
+            ? String(out[field]?.value ?? '')
+            : '';
+        // Keep sibling keys (notably `encoding: 'base64'`) or the published id
+        // would be sent verbatim instead of decoded.
+        out[field] = { ...out[field], value: keepValue, env };
     }
     return out;
 }

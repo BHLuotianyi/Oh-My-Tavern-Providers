@@ -120,7 +120,7 @@ Oh-My-Tavern-Providers/
 │       ├── catalog-normalize.mjs # OMP catalog normalizer & validateCatalog
 │       ├── login-engine.mjs      # OAuth PKCE loopback listener, device-code poller, custom hook runner
 │       ├── oauth.mjs             # Structured OAuth credential parser and token refresh
-│       ├── oauth-clients.mjs     # Local OAuth client credential resolver (env -> oauth-clients.json)
+│       ├── oauth-clients.mjs     # Public client_id + local Google-family secret resolver (env -> oauth-clients.json)
 │       ├── import-omp.mjs        # Local oh-my-pi catalog & agent.db SQLite credential importer
 │       ├── usage.mjs             # 16 provider quota adapters with 60s caching
 │       ├── stats.mjs             # Token & cache/reasoning cost calculator and persistent ledger
@@ -147,6 +147,7 @@ Before opening a pull request, verify that these invariants hold:
    - `i18n/en.json` and `i18n/zh-cn.json` must have identical key sets and ordering. Keep dynamic key families (`omtp_pb_*`, `omtp_source_*`, `omtp_stats_col_*`) intact.
 4. **Security & KeyStore Safety**:
    - Never commit API keys, OAuth client secrets, tokens, or machine-specific file paths.
+   - The catalog may ship **public application identifiers** (`client_id`) only; the Google-family pair (`google-antigravity`, `google-gemini-cli`) must stay local, enforced by `LOCAL_ONLY_CLIENTS` in `catalog-normalize.mjs`.
    - `KeyStore` must throw `KeyStoreUnreadableError` (mapped to HTTP `409`) when ciphertext cannot be decrypted—never overwrite an unreadable `providers.json`.
    - Gateway Bearer token comparison must use constant-time `tokensEqual`.
 5. **Non-Destructive Switch & Teardown Order**:

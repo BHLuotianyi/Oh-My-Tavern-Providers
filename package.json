@@ -1,6 +1,7 @@
 {
   "name": "omtp-model-hub",
-  "version": "0.1.0",
+  "version": "1.2.3-beta-20261029001",
+  "versionCode": 1,
   "private": true,
   "description": "OMTP Model Hub — SillyTavern provider/model selection plugin",
   "license": "GPL-3.0",

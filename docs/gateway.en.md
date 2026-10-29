@@ -100,7 +100,7 @@ Mounted on SillyTavern's Express app under `/api/plugins/omtp` (**24 routes** to
 | `gateway-token` | `0600` plaintext hex | Local gateway Bearer token (not encrypted) |
 | `master.key` | `0600` 32-byte hex | AES-256-GCM master key for `providers.json` |
 | `providers.json` | `0600` AES-256-GCM | Encrypted provider API keys, OAuth tokens, and custom provider configs (`enc:v1:...`) |
-| `oauth-clients.json` | `0600` JSON (optional) | User-supplied OAuth `clientId` / `clientSecret` pairs |
+| `oauth-clients.json` | `0600` JSON (optional) | First-party `clientId` / `clientSecret` needed only by the Google family (`google-antigravity`, `google-gemini-cli`); every other provider ships its public `clientId` in the catalog |
 | `kimi-device-id` | Text | Stable device ID used by the `kimi-fingerprint` login hook |
 | `usage-stats.json` | JSON | Token and estimated cost ledger per chat, per model, and per day |
 | `catalog.json` | JSON (optional) | Cached online catalog refresh |

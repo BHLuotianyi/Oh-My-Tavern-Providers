@@ -56,7 +56,7 @@ test('missing or malformed local config resolves to empty credentials', () => {
     assert.deepEqual(loginEnv(root, 'anthropic', {}), {});
 });
 
-test('catalog layers never carry OAuth client material', async () => {
+test('catalog layers keep public client ids but never secrets', async () => {
     const { stripCatalogCredentials } = await import('../../server-plugin/lib/catalog-normalize.mjs');
     const providers = {
         'google-antigravity': {
@@ -67,23 +67,59 @@ test('catalog layers never carry OAuth client material', async () => {
             },
         },
         'openai-codex': { authLogin: { clientId: { value: 'test-codex-client' } } },
+        anthropic: { authLogin: { clientId: { value: 'test-anthropic-client', encoding: 'base64' } } },
         plain: { label: 'No login' },
     };
     const stripped = stripCatalogCredentials(providers);
+    // Google-family flows only accept the first-party app, whose secret cannot
+    // be published: both halves stay local.
     assert.deepEqual(stripped['google-antigravity'].authLogin.clientId, {
         value: '',
+        encoding: 'base64',
         env: ['OMTP_GOOGLE_ANTIGRAVITY_CLIENT_ID'],
     });
     assert.deepEqual(stripped['google-antigravity'].authLogin.clientSecret, {
         value: '',
+        encoding: 'base64',
         env: ['OMTP_GOOGLE_ANTIGRAVITY_CLIENT_SECRET'],
     });
+    // A client id is a public app identifier, so it ships (upstream does too).
     assert.deepEqual(stripped['openai-codex'].authLogin.clientId, {
-        value: '',
+        value: 'test-codex-client',
         env: ['OMTP_OPENAI_CODEX_CLIENT_ID'],
+    });
+    assert.deepEqual(stripped.anthropic.authLogin.clientId, {
+        value: 'test-anthropic-client',
+        encoding: 'base64',
+        env: ['OMTP_ANTHROPIC_CLIENT_ID'],
     });
     assert.equal(stripped['google-antigravity'].authLogin.kind, 'oauth-code');
     assert.equal(stripped.plain.label, 'No login');
     // Input untouched.
     assert.equal(providers['openai-codex'].authLogin.clientId.value, 'test-codex-client');
+});
+
+test('token refresh falls back to the catalog client id', async () => {
+    const { resolveAccessToken } = await import('../../server-plugin/lib/oauth.mjs');
+    const root = tempRoot();
+    const calls = [];
+    const doFetch = async (url, init) => {
+        calls.push({ url: String(url), body: init?.body });
+        return new Response(JSON.stringify({ access_token: 'fresh', refresh_token: 'next', expires_in: 3600 }), { status: 200 });
+    };
+    // Expired structured credential with no local oauth-clients.json: the public
+    // client id in the catalog policy is the only source.
+    const resolved = {
+        id: 'anthropic',
+        keySource: 'omtp',
+        apiKey: JSON.stringify({ type: 'oauth', access: 'stale', refresh: 'refresh-token', expires: 1 }),
+    };
+    const result = await resolveAccessToken(resolved, null, doFetch, root, {
+        clientId: { value: 'catalog-client' },
+    });
+    assert.equal(result.apiKey, 'fresh');
+    const body = JSON.parse(calls[0].body);
+    assert.equal(body.client_id, 'catalog-client');
+    assert.equal(body.refresh_token, 'refresh-token');
+    fs.rmSync(root, { recursive: true, force: true });
 });

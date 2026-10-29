@@ -19,6 +19,10 @@ import crypto from 'node:crypto';
 import { logError } from './redact.mjs';
 import { HOOKS as CODEX_HOOKS } from './custom-logins/openai-codex-device.mjs';
 import { HOOKS as KILO_HOOKS } from './custom-logins/kilo.mjs';
+import { policyValue } from './oauth-clients.mjs';
+
+/** Policy-value resolution lives with the credential helpers. */
+export { policyValue };
 
 /** Sessions live for this long before they are garbage-collected. */
 const SESSION_TTL_MS = 10 * 60_000;
@@ -119,37 +123,6 @@ p{margin:1rem 0 0}
 
 const b64url = (buffer) => Buffer.from(buffer).toString('base64url');
 
-/**
- * Resolve a policy value that may be a literal, a base64 blob or an env hook.
- * @param {{value?: string, encoding?: string, hook?: string}|string|undefined} field
- * @param {Record<string, string|undefined>} [env]
- * @returns {string}
- */
-export function policyValue(field, env = process.env) {
-    if (!field) return '';
-    if (typeof field === 'string') return field;
-    if (field.hook) {
-        // Hook-backed values are provider code we do not ship; the literal
-        // fallback (if any) is still usable.
-        return field.fallback || '';
-    }
-    if (Array.isArray(field.env)) {
-        for (const name of field.env) {
-            const fromEnv = env[name];
-            if (fromEnv) return fromEnv;
-        }
-    }
-    const value = String(field.value ?? '');
-    if (field.encoding === 'base64') {
-        try {
-            return Buffer.from(value, 'base64').toString('utf8');
-        } catch {
-            return value;
-        }
-    }
-    return value;
-}
-
 /** Replace `{name}` placeholders in a policy string. */
 export function fillTemplate(text, vars) {
     return String(text).replace(/\{([a-z_]+)\}/gi, (match, name) => (
@@ -187,6 +160,12 @@ export function buildAuthorizeUrl(login, { state, challenge, redirectUri, env = 
     const url = new URL(base);
     const clientId = policyValue(login.clientId, env);
     const standard = login.standardAuthorizeParams !== false;
+    // A scrubbed catalog client id (see `catalog-normalize.mjs`) would send
+    // `client_id=` and the provider answers `invalid_request`. Say what to set
+    // instead of opening a broken consent page.
+    if (standard && !clientId) {
+        throw new Error(missingClientIdMessage(login));
+    }
     if (standard) {
         url.searchParams.set('client_id', clientId);
         url.searchParams.set('response_type', 'code');
@@ -210,6 +189,19 @@ export function buildAuthorizeUrl(login, { state, challenge, redirectUri, env = 
         }
     }
     return url.toString();
+}
+
+/**
+ * Actionable error for a provider whose OAuth client id was never supplied.
+ * @param {any} login
+ * @returns {string}
+ */
+function missingClientIdMessage(login) {
+    const names = Array.isArray(login?.clientId?.env) ? login.clientId.env.filter(Boolean) : [];
+    const hint = names.length
+        ? `set ${names.join(' or ')}`
+        : "set the provider's OMTP_*_CLIENT_ID variable";
+    return `This provider needs an OAuth client id: ${hint}, or add "clientId" to data/omtp/oauth-clients.json`;
 }
 
 /**
@@ -302,21 +294,21 @@ export function mapCredential(credential, token, { provider = '', now = Date.now
  * @param {Record<string, string>} params
  * @param {string} redirectUri
  */
-function tokenRequestBody(login, params, redirectUri) {
+function tokenRequestBody(login, params, redirectUri, env = process.env) {
     const standard = login.token?.standard !== false;
     /** @type {Record<string, string>} */
     const body = {};
     if (standard) {
-        body.client_id = policyValue(login.clientId);
+        body.client_id = policyValue(login.clientId, env);
         if (redirectUri) body.redirect_uri = redirectUri;
         Object.assign(body, params);
-        const secret = policyValue(login.clientSecret);
+        const secret = policyValue(login.clientSecret, env);
         if (secret) body.client_secret = secret;
     }
     const vars = {
         ...params,
         redirect_uri: redirectUri,
-        client_id: policyValue(login.clientId),
+        client_id: policyValue(login.clientId, env),
         code: params.code || '',
         code_verifier: params.code_verifier || '',
         state: params.state || '',
@@ -366,10 +358,10 @@ async function postToken(url, body, mode, headers, doFetch) {
  * @param {{code: string, verifier?: string, redirectUri: string, provider?: string}} options
  * @returns {Promise<object>} structured credential
  */
-async function exchangeCode(login, { code, verifier, redirectUri, provider = '', result = '' }, doFetch = fetch) {
+async function exchangeCode(login, { code, verifier, redirectUri, provider = '', result = '' }, doFetch = fetch, env = process.env) {
     const params = { code, grant_type: 'authorization_code' };
     if (login.pkce && verifier) params.code_verifier = verifier;
-    const body = tokenRequestBody(login, params, redirectUri);
+    const body = tokenRequestBody(login, params, redirectUri, env);
     const token = await postToken(policyValue(login.token?.url), body, login.token?.body || 'json', login.token?.headers || {}, doFetch);
     return mapCredential(login.credential, token, { provider, result });
 }
@@ -434,7 +426,7 @@ async function pollDeviceToken(login, grant, { signal, env = process.env } = {},
         const body = tokenRequestBody(login, {
             device_code: grant.deviceCode,
             grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-        }, '');
+        }, '', env);
         try {
             const token = await postToken(url, body, login.token?.body || 'form', login.token?.headers || {}, doFetch);
             return mapCredential(login.credential, token, { provider: grant.provider || '', result: login.result || '' });
@@ -730,7 +722,7 @@ async function finishWithCode(session, input) {
             redirectUri: session.redirectUri,
             provider: session.providerId,
             result: session.login.result || '',
-        }, session.doFetch);
+        }, session.doFetch, session.env);
         await session.keyStore.setProviderConfig(credentialTarget(session.login, session.providerId), {
             apiKey: credentialToStore(credential),
         });

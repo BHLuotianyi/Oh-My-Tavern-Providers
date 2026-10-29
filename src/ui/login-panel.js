@@ -309,9 +309,21 @@ async function startLogin(provider, row, actions) {
             }
         }
         renderLoginFlow(id, started, panel, popup, actions);
-        pollSession(id, started.id, panel, popup);
+        pollSession(id, started.id, panel, popup, actions);
     } catch (error) {
-        panel.replaceChildren(el('div', 'omtp-login-error', String(error.message || error)));
+        // The server refused to build the flow (e.g. no OAuth client id): the
+        // placeholder tab is still blank, so close it and let the row retry.
+        try {
+            popup?.close();
+        } catch {
+            // the browser may refuse to close a cross-origin tab
+        }
+        const message = String(error.message || error);
+        const hint = /OAuth client id/i.test(message)
+            ? tr('omtp_login_needs_client_id', 'Set the OAuth client id in data/omtp/oauth-clients.json (README → FAQ Q5).')
+            : '';
+        panel.replaceChildren(el('div', 'omtp-login-error', hint ? `${message} — ${hint}` : message));
+        setRowButtonsDisabled(actions, false);
     }
 }
 
@@ -391,7 +403,7 @@ function stopPolling(providerId) {
     activeSessions.delete(providerId);
 }
 
-function pollSession(providerId, sessionId, panel, popup = null) {
+function pollSession(providerId, sessionId, panel, popup = null, actions = null) {
     stopPolling(providerId);
     const timer = setInterval(async () => {
         try {
@@ -401,6 +413,9 @@ function pollSession(providerId, sessionId, panel, popup = null) {
             } else if (status.status === 'error') {
                 stopPolling(providerId);
                 panel.append(el('div', 'omtp-login-error', status.error || 'Login failed'));
+                if (actions) {
+                    setRowButtonsDisabled(actions, false);
+                }
             }
         } catch {
             stopPolling(providerId);

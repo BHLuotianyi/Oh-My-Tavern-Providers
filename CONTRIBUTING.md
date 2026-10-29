@@ -120,7 +120,7 @@ Oh-My-Tavern-Providers/
 │       ├── catalog-normalize.mjs # OMP 原始数据归一化与 validateCatalog 校验器
 │       ├── login-engine.mjs      # OAuth PKCE 回环监听、RFC 8628 设备码轮询、自定义登录钩子调度
 │       ├── oauth.mjs             # 结构化 OAuth 凭据解析与过期自动刷新
-│       ├── oauth-clients.mjs     # 本地 OAuth Client ID/Secret 读取（环境变量 -> oauth-clients.json）
+│       ├── oauth-clients.mjs     # 公开 client_id 与本地 Google 系 client_secret 的解析（env -> oauth-clients.json）
 │       ├── import-omp.mjs        # 本地 oh-my-pi 目录与 agent.db SQLite 凭据安全导入
 │       ├── usage.mjs             # 16 家服务商实时额度查询适配器与 60 秒缓存
 │       ├── stats.mjs             # Token 与缓存/推理费用计算、按对话/模型/日期持久化账本
@@ -147,6 +147,7 @@ Oh-My-Tavern-Providers/
    - `i18n/en.json` 与 `i18n/zh-cn.json` 的键集合与顺序必须完全一致。新增 UI 文案时需同时写入两份文件；不要删除动态拼接键族（`omtp_pb_*`、`omtp_source_*`、`omtp_stats_col_*`）。
 4. **安全与加密底线**：
    - 严禁在代码、目录或测试夹具中硬编码真实的 API Key、OAuth `client_secret` 或个人路径。
+   - 目录只允许携带**公开的应用标识**（`client_id`）；Google 系（`google-antigravity`、`google-gemini-cli`）的 `client_id` + `client_secret` 必须留在本地，由 `LOCAL_ONLY_CLIENTS`（`catalog-normalize.mjs`）强制。
    - `key-store.mjs` 遇到无法解密的密文时必须抛出 `KeyStoreUnreadableError`（映射为 HTTP `409`），**绝不能静默覆盖损坏用户的 `providers.json`**。
    - 网关 Bearer 令牌校验必须保持 `tokensEqual` 常量时间比对。
 5. **无损切换与回滚顺序**：

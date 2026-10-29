@@ -22,7 +22,7 @@ import * as publicApi from '../public-api.js';
 import * as usagePanel from './usage-panel.js';
 import * as usageChip from './usage-chip.js';
 import { initSlashCommands, teardownSlashCommands } from '../slash-commands.js';
-import { EVENTS, ST_EVENTS } from '../constants.js';
+import { EVENTS, EXTENSION_VERSION, ST_EVENTS } from '../constants.js';
 import {
     applyNativeSelectorVisibility,
     cleanupDom,
@@ -331,7 +331,7 @@ export async function init() {
     invokeInit(() => extraBody.initExtraBody(), 'extra body init');
     invokeInit(() => events.initEvents(), 'events init');
     invokeInit(() => publicApi.initPublicApi({
-        version: '0.1.0',
+        version: EXTENSION_VERSION,
         open: openHub,
         close: closeHub,
         toggle: toggleHub,
