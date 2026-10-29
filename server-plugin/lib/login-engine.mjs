@@ -26,6 +26,7 @@ import { applyAfterExchange } from './after-exchange.mjs';
 import { HOOKS as CODEX_HOOKS } from './custom-logins/openai-codex-device.mjs';
 import { HOOKS as KILO_HOOKS } from './custom-logins/kilo.mjs';
 import { policyValue } from './oauth-clients.mjs';
+import { describeFetchFailure } from './proxy-fetch.mjs';
 
 /** Policy-value resolution lives with the credential helpers. */
 export { policyValue };
@@ -377,7 +378,14 @@ async function postToken(url, body, mode, headers, doFetch) {
         init.headers['Content-Type'] = 'application/json';
         init.body = JSON.stringify(body);
     }
-    const response = await doFetch(url, init);
+    let response;
+    try {
+        response = await doFetch(url, init);
+    } catch (error) {
+        // Undici reports every network problem as a bare `fetch failed`; show
+        // the underlying cause (ECONNREFUSED, ENOTFOUND, proxy refused, …).
+        throw new Error(`Token exchange request failed: ${describeFetchFailure(error)}`);
+    }
     const text = await response.text();
     let json = null;
     try {

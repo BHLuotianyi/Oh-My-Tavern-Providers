@@ -4,7 +4,15 @@ import http from 'node:http';
 import net from 'node:net';
 import zlib from 'node:zlib';
 
-import { createProxyFetch, proxyFor } from '../../server-plugin/lib/proxy-fetch.mjs';
+import {
+    createProxyFetch,
+    describeFetchFailure,
+    detectSystemProxy,
+    installProxyFetch,
+    parseScutilProxy,
+    parseWindowsProxyServer,
+    proxyFor,
+} from '../../server-plugin/lib/proxy-fetch.mjs';
 
 const listen = (server) => new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => resolve(server.address().port));
@@ -261,4 +269,78 @@ test('redirects are followed, rewriting methods and re-entering the proxy decisi
         await close(proxy);
         await close(origin);
     }
+});
+
+
+test('Windows registry proxy values are parsed in both forms', () => {
+    assert.deepEqual(parseWindowsProxyServer('127.0.0.1:7890'), { all: '127.0.0.1:7890' });
+    assert.deepEqual(
+        parseWindowsProxyServer('http=127.0.0.1:7890;https=127.0.0.1:7891;socks=127.0.0.1:1080'),
+        { http: '127.0.0.1:7890', https: '127.0.0.1:7891', all: 'socks5://127.0.0.1:1080' },
+    );
+    assert.deepEqual(parseWindowsProxyServer(''), {});
+});
+
+test('macOS scutil output becomes http/https proxies only when enabled', () => {
+    const text = `<dictionary> {
+  HTTPEnable : 1
+  HTTPPort : 7890
+  HTTPProxy : 127.0.0.1
+  HTTPSEnable : 1
+  HTTPSPort : 7891
+  HTTPSProxy : 127.0.0.1
+  SOCKSEnable : 0
+}`;
+    assert.deepEqual(parseScutilProxy(text), { http: 'http://127.0.0.1:7890', https: 'http://127.0.0.1:7891' });
+    assert.deepEqual(parseScutilProxy('  HTTPEnable : 0\n  HTTPProxy : 127.0.0.1\n'), {});
+});
+
+test('detectSystemProxy reads the platform settings and never throws', () => {
+    const windows = detectSystemProxy({
+        platform: 'win32',
+        run: (_file, args) => {
+            const value = args[args.length - 1];
+            if (value === 'ProxyEnable') return '    ProxyEnable    REG_DWORD    0x1';
+            if (value === 'ProxyServer') return '    ProxyServer    REG_SZ    127.0.0.1:7890';
+            return '';
+        },
+    });
+    assert.deepEqual(windows, { all: '127.0.0.1:7890' });
+
+    const linux = detectSystemProxy({
+        platform: 'linux',
+        run: (_file, args) => {
+            const key = args[args.length - 1];
+            if (args[1] === 'org.gnome.system.proxy' && key === 'mode') return "'manual'";
+            if (key === 'host') return "'127.0.0.1'";
+            if (key === 'port') return '7890';
+            return '';
+        },
+    });
+    assert.deepEqual(linux, { http: 'http://127.0.0.1:7890', https: 'http://127.0.0.1:7890' });
+
+    const broken = detectSystemProxy({ platform: 'linux', run: () => { throw new Error('no gsettings'); } });
+    assert.deepEqual(broken, {});
+});
+
+test('installProxyFetch falls back to the system proxy and can be restored', () => {
+    const original = globalThis.fetch;
+    try {
+        const installed = installProxyFetch({
+            env: {},
+            platform: 'darwin',
+            run: () => '  HTTPEnable : 1\n  HTTPPort : 7890\n  HTTPProxy : 127.0.0.1\n',
+        });
+        assert.equal(installed, true);
+        assert.notEqual(globalThis.fetch, original);
+    } finally {
+        globalThis.fetch = original;
+    }
+});
+
+test('describeFetchFailure exposes the undici cause', () => {
+    const error = new TypeError('fetch failed');
+    error.cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:7890'), { code: 'ECONNREFUSED' });
+    assert.match(describeFetchFailure(error), /fetch failed \(ECONNREFUSED/);
+    assert.equal(describeFetchFailure(new Error('boom')), 'boom');
 });

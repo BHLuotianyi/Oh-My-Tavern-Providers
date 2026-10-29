@@ -15,6 +15,7 @@ import http from 'node:http';
 import https from 'node:https';
 import tls from 'node:tls';
 import zlib from 'node:zlib';
+import { execFileSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 
 import { log, logError } from './redact.mjs';
@@ -386,28 +387,190 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch } 
 }
 
 /**
+ * Parse a Windows `ProxyServer` value.
+ *
+ * Windows stores either `host:port` (applies to every protocol) or a
+ * semicolon-separated `http=host:port;https=host:port;socks=host:port` list.
+ *
+ * @param {string} raw
+ * @returns {{http?: string, https?: string, all?: string}}
+ */
+export function parseWindowsProxyServer(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return {};
+    /** @type {{http?: string, https?: string, all?: string}} */
+    const out = {};
+    if (!text.includes('=')) {
+        out.all = text;
+        return out;
+    }
+    for (const part of text.split(';')) {
+        const index = part.indexOf('=');
+        if (index < 0) continue;
+        const scheme = part.slice(0, index).trim().toLowerCase();
+        const value = part.slice(index + 1).trim();
+        if (!value) continue;
+        if (scheme === 'http') out.http = value;
+        else if (scheme === 'https') out.https = value;
+        else if (scheme === 'socks' || scheme === 'socks5') {
+            // CONNECT cannot drive SOCKS; remember it only as a last resort.
+            out.all = out.all || `socks5://${value}`;
+        }
+    }
+    return out;
+}
+
+/**
+ * Parse `scutil --proxy` output (macOS) into env-style values.
+ * @param {string} text
+ * @returns {{http?: string, https?: string}}
+ */
+export function parseScutilProxy(text) {
+    /** @type {Record<string, string>} */
+    const values = {};
+    for (const line of String(text || '').split('\n')) {
+        const match = line.match(/^\s*([A-Za-z]+)\s*:\s*(.+?)\s*$/);
+        if (match) values[match[1]] = match[2];
+    }
+    const read = (prefix) => {
+        if (values[`${prefix}Enable`] !== '1') return '';
+        const host = values[`${prefix}Proxy`];
+        const port = values[`${prefix}Port`];
+        return host ? `http://${host}${port ? `:${port}` : ''}` : '';
+    };
+    /** @type {{http?: string, https?: string}} */
+    const out = {};
+    const http = read('HTTP');
+    const httpsProxy = read('HTTPS');
+    if (http) out.http = http;
+    if (httpsProxy) out.https = httpsProxy;
+    return out;
+}
+
+/**
+ * @param {string} file
+ * @param {string[]} args
+ * @returns {string}
+ */
+function runCommand(file, args) {
+    return String(execFileSync(file, args, {
+        encoding: 'utf8',
+        timeout: 1500,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+    }) || '');
+}
+
+/**
+ * Read the operating system's proxy settings.
+ *
+ * A system proxy (Clash, v2ray, corporate agents) is usually configured in the
+ * OS, not in the environment, so Node's fetch cannot see it at all. This is a
+ * best-effort read of the platform's own settings; any failure means "no proxy".
+ *
+ * @param {{platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string}} [options]
+ * @returns {{http?: string, https?: string, all?: string}}
+ */
+export function detectSystemProxy({ platform = process.platform, run = runCommand } = {}) {
+    try {
+        if (platform === 'win32') {
+            const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+            const enabled = run('reg', ['query', key, '/v', 'ProxyEnable']);
+            if (!/ProxyEnable\s+REG_DWORD\s+0x1/i.test(enabled)) return {};
+            const server = run('reg', ['query', key, '/v', 'ProxyServer']);
+            const match = server.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
+            return match ? parseWindowsProxyServer(match[1].trim()) : {};
+        }
+        if (platform === 'darwin') {
+            return parseScutilProxy(run('scutil', ['--proxy']));
+        }
+        if (platform === 'linux') {
+            const mode = run('gsettings', ['get', 'org.gnome.system.proxy', 'mode']).trim().replace(/^'|'$/g, '');
+            if (mode !== 'manual') return {};
+            const read = (schema, key) => run('gsettings', ['get', schema, key]).trim().replace(/^'|'$/g, '');
+            /** @type {{http?: string, https?: string}} */
+            const out = {};
+            const httpHost = read('org.gnome.system.proxy.http', 'host');
+            const httpPort = read('org.gnome.system.proxy.http', 'port');
+            if (httpHost) out.http = `http://${httpHost}${httpPort ? `:${httpPort}` : ''}`;
+            const httpsHost = read('org.gnome.system.proxy.https', 'host');
+            const httpsPort = read('org.gnome.system.proxy.https', 'port');
+            if (httpsHost) out.https = `http://${httpsHost}${httpsPort ? `:${httpsPort}` : ''}`;
+            return out;
+        }
+    } catch {
+        // Missing tool, no desktop session, restricted registry: treat as none.
+    }
+    return {};
+}
+
+/**
+ * Merge OS proxy settings into an env map without overriding explicit values.
+ * @param {Record<string, string|undefined>} env
+ * @param {{http?: string, https?: string, all?: string}} system
+ * @returns {Record<string, string|undefined>}
+ */
+function withSystemProxy(env, system) {
+    const merged = { ...env };
+    if (!merged.HTTP_PROXY && !merged.http_proxy && system.http) merged.HTTP_PROXY = system.http;
+    if (!merged.HTTPS_PROXY && !merged.https_proxy && system.https) merged.HTTPS_PROXY = system.https;
+    if (!merged.ALL_PROXY && !merged.all_proxy && system.all) merged.ALL_PROXY = system.all;
+    return merged;
+}
+
+/**
+ * Explain a `fetch failed` rejection with the underlying network cause.
+ * Undici hides ECONNREFUSED/ENOTFOUND inside `error.cause`, which made a proxy
+ * problem look like an unexplainable failure in the sign-in panel.
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function describeFetchFailure(error) {
+    const message = String(/** @type {any} */ (error)?.message || error);
+    if (!/fetch failed/i.test(message)) return message;
+    const cause = /** @type {any} */ (error)?.cause;
+    const detail = [cause?.code, cause?.message].filter(Boolean).join(' ');
+    return detail ? `${message} (${detail})` : message;
+}
+
+/**
  * Install the proxy-aware fetch as `globalThis.fetch` (idempotent).
  *
  * Adapters resolve `fetch` at call time (`ctx.fetchImpl || fetch`), so one
  * replacement covers the gateway, probes and the OAuth flows alike.
  *
- * @param {{env?: Record<string,string|undefined>, force?: boolean}} [options]
+ * @param {{env?: Record<string,string|undefined>, force?: boolean, system?: boolean,
+ *          platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string}} [options]
  * @returns {boolean} whether a proxy is configured
  */
-export function installProxyFetch({ env = process.env, force = false } = {}) {
-    if (!force && (env.OMTP_DISABLE_PROXY === '1' || env.NODE_USE_ENV_PROXY === '1')) {
-        // Node already routes global fetch through the environment's proxy.
+export function installProxyFetch({ env = process.env, force = false, system = true, platform, run } = {}) {
+    // Node >= 24 can route its own fetch through the environment's proxy; on
+    // older runtimes the variable is inert and we must install the wrapper.
+    const nodeMajor = Number(String(process.versions.node || '0').split('.')[0]) || 0;
+    const nodeHandlesEnvProxy = env.NODE_USE_ENV_PROXY === '1' && nodeMajor >= 24;
+    if (!force && (env.OMTP_DISABLE_PROXY === '1' || nodeHandlesEnvProxy)) {
         return Boolean(env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy);
     }
     const current = globalThis.fetch;
     if (!current || wrapped.has(current)) return false;
-    const hasProxy = Boolean(
+    const envHasProxy = Boolean(
         env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy || env.ALL_PROXY || env.all_proxy,
     );
-    if (!hasProxy) return false;
-    const proxyFetch = createProxyFetch({ env, base: current });
+    const systemProxy = system && !envHasProxy ? detectSystemProxy({ platform, run }) : {};
+    const effective = withSystemProxy(env, systemProxy);
+    const hasProxy = Boolean(
+        effective.HTTPS_PROXY || effective.https_proxy || effective.HTTP_PROXY || effective.http_proxy
+        || effective.ALL_PROXY || effective.all_proxy,
+    );
+    if (!hasProxy) {
+        log('no outbound proxy configured; requests connect directly');
+        return false;
+    }
+    const proxyFetch = createProxyFetch({ env: effective, base: current });
     wrapped.add(proxyFetch);
     globalThis.fetch = proxyFetch;
-    log(`outbound requests use the proxy from the environment (${proxyFor(new URL('https://example.com'), env)?.host || 'n/a'})`);
+    const proxy = proxyFor(new URL('https://example.com'), effective);
+    const source = envHasProxy ? 'environment' : 'system';
+    log(`outbound requests use the ${source} proxy (${proxy?.host || 'n/a'})`);
     return true;
 }
