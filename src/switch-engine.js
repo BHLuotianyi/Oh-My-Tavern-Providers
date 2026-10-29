@@ -12,8 +12,9 @@
  */
 
 import { getSettings, saveSettings, getEntryKey, parseEntryKey } from './store.js';
+import { codedError } from './errors.js';
 import { resolveEntry } from './catalog.js';
-import { API_BASE, EVENTS, MAX_RECENTS, REASONING_LEVELS } from './constants.js';
+import { API_BASE, EVENTS, MAX_RECENTS, PROFILE_PROVIDER_ID, REASONING_LEVELS } from './constants.js';
 import { currentChatId } from './usage-session.js';
 import { NATIVE_ADAPTERS } from './adapters/native.js';
 import {
@@ -29,6 +30,7 @@ import { textgenerationwebui_settings } from '../../../../textgen-settings.js';
 import { nai_settings } from '../../../../nai-settings.js';
 import { yaml } from '../../../../../lib.js';
 import { SlashCommandParser } from '../../../../slash-commands/SlashCommandParser.js';
+import { extension_settings } from '../../../../extensions.js';
 
 const SWITCH_TIMEOUT_MS = 8000;
 const STATUS_TIMEOUT_MS = 8000;
@@ -227,14 +229,59 @@ function normalizeRef(ref) {
       return null;
     }
   }
-  if (typeof ref !== 'object' || !ref.kind || !ref.provider) {
+  if (typeof ref !== 'object') {
     return null;
+  }
+  if (!ref.kind || !ref.provider) {
+    // Same `{ key }` shape the public API accepts.
+    return typeof ref.key === 'string' ? normalizeRef(parseEntryKey(ref.key)) : null;
   }
   return { kind: ref.kind, provider: ref.provider, model: String(ref.model ?? '') };
 }
 
 function isEntryRef(value) {
   return !!value && typeof value === 'object' && typeof value.kind === 'string' && typeof value.provider === 'string';
+}
+
+/**
+ * Is the selected Connection Profile still the live connection?
+ *
+ * SillyTavern keeps `selectedProfile` after the user edits the API settings by
+ * hand, so the dropdown alone is not proof. A profile stores the model it
+ * applied; when the live model no longer matches, the profile is stale and the
+ * marker must fall back to native detection.
+ * @param {any} profile
+ * @returns {boolean}
+ */
+function profileStillApplied(profile) {
+  const model = String(profile?.model ?? '');
+  if (model && model !== String(currentModel() ?? '')) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * SillyTavern's profile dropdown is authoritative: a profile picked there is
+ * the active connection even when OMTP never applied it.
+ * @returns {{kind:'profile', provider:string, model:string}|null}
+ */
+function detectCurrentProfile() {
+  try {
+    const manager = extension_settings?.connectionManager;
+    const selectedId = String(manager?.selectedProfile || '');
+    if (!selectedId) {
+      return null;
+    }
+    const profiles = Array.isArray(manager.profiles) ? manager.profiles : [];
+    const profile = profiles.find((item) => item?.id === selectedId);
+    if (!profile || !profileStillApplied(profile)) {
+      return null;
+    }
+    return { kind: 'profile', provider: PROFILE_PROVIDER_ID, model: selectedId };
+  } catch {
+    return null;
+  }
 }
 
 function detectCurrentRef() {
@@ -248,6 +295,14 @@ function detectCurrentRef() {
       return { kind: 'omp', provider: customModel.slice(0, separator), model: customModel.slice(separator + 1) };
     }
     return null;
+  }
+
+  // A Connection Profile is the active connection when SillyTavern still has
+  // it selected; without this the hub forgets the profile the moment it is
+  // applied and only ever marks native/gateway models as current.
+  const profileRef = detectCurrentProfile();
+  if (profileRef) {
+    return profileRef;
   }
 
   const adapter = currentAdapter();
@@ -320,7 +375,7 @@ function withTimeout(promise, timeoutMs, message) {
 export function applyGlobalReasoning(level) {
   const target = String(level || '').trim().toLowerCase();
   if (!REASONING_LEVELS.includes(target)) {
-    throw new Error(`Unknown reasoning level: ${level}`);
+    throw codedError('reasoning_level', [level], `Unknown reasoning level: ${level}`);
   }
   if (main_api !== 'openai') {
     return { applied: false, level: target };
@@ -363,17 +418,32 @@ function writeCustomFields(snapshot) {
 const CHAT_HEADER = 'X-OMTP-Chat';
 
 /**
+ * HTTP header values are Latin-1 only: a chat named in Chinese or with an emoji
+ * made SillyTavern throw `Invalid Character in header content ["X-OMTP-Chat"]`
+ * before the request was ever sent. Percent-encoding keeps it ASCII; the
+ * gateway decodes it again.
+ * @param {string} [chatId]
+ * @returns {string}
+ */
+function encodeChatId(chatId) {
+  const text = String(chatId || '');
+  if (!text) {
+    return '';
+  }
+  try {
+    return encodeURIComponent(text);
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Keep the `X-OMTP-Chat` header in sync with the open chat. Called on
  * CHAT_CHANGED while in gateway mode; a no-op for native providers.
  * @param {string} [chatId]
  */
 export function syncChatHeader(chatId = currentChatId()) {
-  const settings = getSettings();
   if (!isGatewayMode()) {
-    return false;
-  }
-  const url = normalizeUrl(settings.gatewayUrl);
-  if (!url) {
     return false;
   }
   // Drop the header entirely when no chat is open, so we never send a blank id.
@@ -390,7 +460,7 @@ export function syncChatHeader(chatId = currentChatId()) {
     }
   }
   if (chatId) {
-    parsed[CHAT_HEADER] = chatId;
+    parsed[CHAT_HEADER] = encodeChatId(chatId);
   } else {
     delete parsed[CHAT_HEADER];
   }
@@ -545,7 +615,7 @@ function withSwitchLock(fn) {
 
 function assertCanSwitch() {
   if (isGenerating()) {
-    throw new Error('Cannot switch while generating');
+    throw codedError('generating', [], 'Cannot switch while generating');
   }
 }
 
@@ -561,7 +631,13 @@ export function isGatewayMode() {
     return false;
   }
   const settings = getSettings();
-  const candidates = [...new Set([activeGatewayUrl, settings?.gatewayUrl].map(normalizeUrl).filter(Boolean))];
+  // `activeUrl` is the URL actually written to `custom_url`; without it a reload
+  // on a fallback port (the server plugin may bind 4100-4110) reported native.
+  const candidates = [...new Set([
+    activeGatewayUrl,
+    settings?.gatewayUrl,
+    settings?.gateway?.activeUrl,
+  ].map(normalizeUrl).filter(Boolean))];
   return candidates.some(url => current === url || current.startsWith(`${url}/`));
 }
 
@@ -604,6 +680,11 @@ async function restoreCustomState(snapshot, { fast = false, fieldsOnly = false }
   }
   writeCustomFields(snapshot);
   if (fieldsOnly) {
+    // This path skips restoreSelection(), which is where the full restore
+    // writes the reasoning control.
+    if (typeof snapshot.reasoningEffort === 'string' && snapshot.reasoningEffort) {
+      setReasoningValue(snapshot.reasoningEffort);
+    }
     saveSettingsDebounced();
     return true;
   }
@@ -686,10 +767,14 @@ export function applyReasoning(entry, level) {
   const key = ref ? getEntryKey(ref) : null;
   const requested = typeof level === 'string' ? level.trim().toLowerCase() : '';
   const stored = key ? String(settings.reasoningByEntry?.[key] ?? '').trim().toLowerCase() : '';
-  const target = requested || stored;
+  let target = requested || stored;
 
   if (!target) {
-    return;
+    // Without a level for this model the previous model's effort would leak in.
+    if (main_api !== 'openai') {
+      return;
+    }
+    target = 'auto';
   }
   if (!REASONING_LEVELS.includes(target)) {
     console.debug('[omtp] ignoring unknown reasoning level', target);
@@ -716,18 +801,23 @@ export function applyReasoning(entry, level) {
  * @returns {object} the native adapter
  */
 function requireNativeAdapter(entry) {
+  if (entry?.available === false) {
+    throw entry.unsupportedReason
+      ? new Error(entry.unsupportedReason)
+      : codedError('unavailable', [entry.model], `Model ${entry.model} is not available in SillyTavern`);
+  }
   const adapter = entry?.nativeAdapter;
   if (!adapter) {
-    throw new Error(`No native SillyTavern adapter for ${entry?.provider ?? 'unknown provider'}`);
+    throw codedError('no_native_adapter', [entry?.provider ?? 'unknown provider'], `No native SillyTavern adapter for ${entry?.provider ?? 'unknown provider'}`);
   }
   if (adapter.readOnlyReason) {
     throw new Error(adapter.readOnlyReason);
   }
   if (adapter.modelControl && typeof adapter.supportsModel === 'function' && !adapter.supportsModel(entry.model)) {
-    throw new Error(`Model ${entry.model} is not available in ${adapter.label || adapter.key}`);
+    throw codedError('model_unavailable', [entry.model, adapter.label || adapter.key], `Model ${entry.model} is not available in ${adapter.label || adapter.key}`);
   }
   if (!jq('#main_api')) {
-    throw new Error('SillyTavern UI is not ready');
+    throw codedError('ui_not_ready', [], 'SillyTavern UI is not ready');
   }
   return adapter;
 }
@@ -735,26 +825,29 @@ function requireNativeAdapter(entry) {
 /**
  * Restore ST's own custom-source state when the previous selection came from
  * the gateway, so a native switch does not leave gateway fields behind.
+ * The saved state is left in place: the caller clears it once the whole switch
+ * has succeeded, so a failure can still restore the gateway selection.
  * @param {object} settings
+ * @returns {Promise<boolean>} whether the gateway fields were replaced
  */
 async function leaveGatewayMode(settings) {
   if (!gatewaySettings(settings).savedCustom) {
-    return;
+    return false;
   }
   // Resolve the live gateway port so isGatewayMode() is accurate after a reload.
   await getGatewayStatus();
   if (!isGatewayMode()) {
-    return;
+    return false;
   }
   await restoreCustomState(gatewaySettings(settings).savedCustom, { fast: true, fieldsOnly: true });
-  gatewaySettings(settings).savedCustom = null;
+  return true;
 }
 
 /** Write ST's main API and wait for it to settle. */
 async function selectNativeApi(adapter) {
   setControlValue('#main_api', adapter.mainApi, 'change');
   await waitFor(() => main_api === adapter.mainApi).catch(() => {
-    throw new Error(`Failed to switch the API to ${adapter.mainApi}`);
+    throw codedError('api_switch', [adapter.mainApi], `Failed to switch the API to ${adapter.mainApi}`);
   });
 }
 
@@ -762,30 +855,30 @@ async function selectNativeApi(adapter) {
 async function selectNativeSource(entry, adapter) {
   if (adapter.mainApi === 'openai' && adapter.source) {
     if (!setControlValue('#chat_completion_source', adapter.source, 'change')) {
-      throw new Error(`Failed to select the chat completion source ${adapter.source}`);
+      throw codedError('source_switch', [adapter.source], `Failed to select the chat completion source ${adapter.source}`);
     }
     await waitFor(() => oai_settings.chat_completion_source === adapter.source).catch(() => {
-      throw new Error(`Failed to select the chat completion source ${adapter.source}`);
+      throw codedError('source_switch', [adapter.source], `Failed to select the chat completion source ${adapter.source}`);
     });
     return;
   }
 
   if (adapter.mainApi === 'textgenerationwebui' && adapter.type) {
     if (!setControlValue('#textgen_type', adapter.type, 'change')) {
-      throw new Error(`Failed to select the text generation type ${adapter.type}`);
+      throw codedError('textgen_switch', [adapter.type], `Failed to select the text generation type ${adapter.type}`);
     }
     await waitFor(() => textgenerationwebui_settings.type === adapter.type).catch(() => {
-      throw new Error(`Failed to select the text generation type ${adapter.type}`);
+      throw codedError('textgen_switch', [adapter.type], `Failed to select the text generation type ${adapter.type}`);
     });
     return;
   }
 
   if (adapter.mainApi === 'novel') {
     if (!setControlValue('#model_novel_select', entry.model, 'change')) {
-      throw new Error(`Model ${entry.model} is not available in NovelAI`);
+      throw codedError('model_unavailable', [entry.model, 'NovelAI'], `Model ${entry.model} is not available in NovelAI`);
     }
     await waitFor(() => nai_settings.model_novel === entry.model).catch(() => {
-      throw new Error(`Failed to select the NovelAI model ${entry.model}`);
+      throw codedError('novel_model', [entry.model], `Failed to select the NovelAI model ${entry.model}`);
     });
   }
 }
@@ -793,70 +886,95 @@ async function selectNativeSource(entry, adapter) {
 /** Select the model in the adapter's control and wait for ST to store it. */
 async function selectNativeModel(entry, adapter) {
   if (!jq(adapter.modelControl)) {
-    throw new Error(`Native model control not found: ${adapter.modelControl}`);
+    throw codedError('control_missing', [adapter.modelControl], `Native model control not found: ${adapter.modelControl}`);
   }
   if (!setControlValue(adapter.modelControl, entry.model)) {
-    throw new Error(`Model ${entry.model} is not available in ${adapter.label || adapter.key}`);
+    throw codedError('model_unavailable', [entry.model, adapter.label || adapter.key], `Model ${entry.model} is not available in ${adapter.label || adapter.key}`);
   }
   await waitFor(() => String(readSettingField(adapter.mainApi, adapter.modelField) ?? '') === String(entry.model)).catch(() => {
-    throw new Error(`Failed to apply the model ${entry.model}`);
+    throw codedError('model_apply', [entry.model], `Failed to apply the model ${entry.model}`);
   });
 }
 
-/** Click the adapter's connect button when ST reports no connection. */
-async function ensureNativeConnection(adapter, previous) {
+/**
+ * Click the adapter's connect button when ST reports no connection.
+ * @param {object} adapter
+ * @returns {Promise<boolean>} false when the connection did not come up
+ */
+async function ensureNativeConnection(adapter) {
   if (online_status !== 'no_connection' || !adapter.connectButton) {
-    return;
+    return true;
   }
   const button = jq(adapter.connectButton);
   if (!button) {
-    return;
+    return true;
   }
   button.trigger('click');
   try {
     await waitFor(() => online_status !== 'no_connection', STATUS_TIMEOUT_MS);
+    return true;
   } catch {
-    await restoreSelection(previous, { fast: true });
-    throw new Error(`Connection failed for ${adapter.label || adapter.key}`);
+    return false;
   }
 }
 
-async function switchToNative(entry, { level, persist = true } = {}) {
+async function switchToNative(entry, { level, persist = true, reason } = {}) {
   const adapter = requireNativeAdapter(entry);
   const settings = getSettings();
+  // Taken before leaving the gateway so a failed switch can put ST back on it.
   const previous = captureSelection();
+  const previousWasGateway = isGatewayMode();
+  const leftGateway = await leaveGatewayMode(settings);
 
-  await leaveGatewayMode(settings);
-  await selectNativeApi(adapter);
-  await selectNativeSource(entry, adapter);
+  let connected = true;
+  try {
+    await selectNativeApi(adapter);
+    await selectNativeSource(entry, adapter);
 
-  if (!adapter.modelControl) {
-    throw new Error('Read-only provider; manage it in the native UI');
+    if (!adapter.modelControl) {
+      throw codedError('unsupported', [entry?.providerLabel || entry?.provider || ''], 'Read-only provider; manage it in the native UI');
+    }
+    if (adapter.mainApi !== 'novel') {
+      await selectNativeModel(entry, adapter);
+    }
+
+    applyReasoning(entry, level);
+    saveSettingsDebounced();
+    connected = await ensureNativeConnection(adapter);
+  } catch (error) {
+    if (previousWasGateway || leftGateway) {
+      await restoreSelection(previous, { fast: true }).catch(() => {});
+    }
+    throw error;
   }
-  if (adapter.mainApi !== 'novel') {
-    await selectNativeModel(entry, adapter);
+
+  if (!connected) {
+    await restoreSelection(previous, { fast: true }).catch(() => {});
+    throw codedError('connect_failed', [adapter.label || adapter.key], `Connection failed for ${adapter.label || adapter.key}`);
   }
 
-  applyReasoning(entry, level);
-  saveSettingsDebounced();
-  await ensureNativeConnection(adapter, previous);
-
+  // Only now is the native switch complete; the gateway snapshot is obsolete.
+  gatewaySettings(settings).savedCustom = null;
   recordSelection(entry, { native: true, persist });
   saveSettings();
-  emitSelectionChanged(entry);
+  emitSelectionChanged(entry, { reason });
   return entry;
 }
 
 /** Reject entries the gateway cannot drive. */
 function requireGatewayEntry(entry) {
   if (!entry?.gatewayAdapter) {
-    throw new Error(entry?.unsupportedReason || `Provider ${entry?.providerLabel || entry?.provider || 'unknown'} is not supported`);
+    throw entry?.unsupportedReason
+      ? new Error(entry.unsupportedReason)
+      : codedError('unsupported', [entry?.providerLabel || entry?.provider || 'unknown'], `Provider ${entry?.providerLabel || entry?.provider || 'unknown'} is not supported`);
   }
   if (entry.available === false) {
-    throw new Error(entry.unsupportedReason || `Provider ${entry.providerLabel || entry.provider} has no usable API key`);
+    throw entry.unsupportedReason
+      ? new Error(entry.unsupportedReason)
+      : codedError('needs_key', [entry.providerLabel || entry.provider], `Provider ${entry.providerLabel || entry.provider} has no usable API key`);
   }
   if (!String(entry.model ?? '')) {
-    throw new Error('Gateway model id is missing');
+    throw codedError('gateway_model_id', [], 'Gateway model id is missing');
   }
 }
 
@@ -870,23 +988,25 @@ function requireGatewayEntry(entry) {
 async function resolveGatewayTarget(entry, settings) {
   const status = await getGatewayStatus();
   if (!status.running) {
-    throw new Error(status.lastError ? `OMTP Gateway unavailable: ${status.lastError}` : 'OMTP Gateway unavailable (enable server plugins)');
+    throw status.lastError
+    ? codedError('gateway_reason', [status.lastError], `OMTP Gateway unavailable: ${status.lastError}`)
+    : codedError('gateway_off', [], 'OMTP Gateway unavailable (enable server plugins)');
   }
   const providerStatuses = await getProviderStatuses();
   const providerStatus = providerStatuses?.get(String(entry.provider));
   if (providerStatus && providerStatus.available === false) {
     const label = providerStatus.label || entry.provider;
-    throw new Error(providerStatus.keyInvalidReason
-      ? `Provider ${label} rejected its key (${providerStatus.keyInvalidReason})`
-      : `Provider ${label} needs an API key; configure it in OMTP settings`);
+    throw providerStatus.keyInvalidReason
+      ? codedError('key_rejected', [label, providerStatus.keyInvalidReason], `Provider ${label} rejected its key (${providerStatus.keyInvalidReason})`)
+      : codedError('needs_key', [label], `Provider ${label} needs an API key; configure it in OMTP settings`);
   }
   const gatewayUrl = status.url || normalizeUrl(settings.gatewayUrl);
   if (!gatewayUrl) {
-    throw new Error('OMTP Gateway URL is not configured');
+    throw codedError('gateway_url', [], 'OMTP Gateway URL is not configured');
   }
   const token = await resolveGatewayToken({ ...status, url: gatewayUrl });
   if (status.requireAuth && !token) {
-    throw new Error('OMTP Gateway token is unavailable');
+    throw codedError('gateway_token', [], 'OMTP Gateway token is unavailable');
   }
   return { status, gatewayUrl, token };
 }
@@ -897,11 +1017,15 @@ async function resolveGatewayTarget(entry, settings) {
  * validates the endpoint.
  */
 function writeGatewayEndpoint(target, model) {
+  // Remember the URL actually written; the server plugin may bind a fallback
+  // port, so `settings.gatewayUrl` alone cannot identify gateway mode after a
+  // reload.
+  gatewaySettings(getSettings()).activeUrl = target.gatewayUrl;
   oai_settings.custom_url = target.gatewayUrl;
   setControlValue('#custom_api_url_text', target.gatewayUrl);
 
   const additions = {
-    [CHAT_HEADER]: currentChatId() || undefined,
+    [CHAT_HEADER]: encodeChatId(currentChatId()) || undefined,
   };
   if (target.status.requireAuth && target.token) {
     additions.Authorization = `Bearer ${target.token}`;
@@ -918,13 +1042,13 @@ function writeGatewayEndpoint(target, model) {
 async function selectCustomSource() {
   if (jq('#chat_completion_source')) {
     if (!setControlValue('#chat_completion_source', 'custom', 'change')) {
-      throw new Error('Failed to select the custom chat completion source');
+      throw codedError('custom_source', [], 'Failed to select the custom chat completion source');
     }
   } else {
     oai_settings.chat_completion_source = 'custom';
   }
   await waitFor(() => oai_settings.chat_completion_source === 'custom').catch(() => {
-    throw new Error('Failed to select the custom chat completion source');
+    throw codedError('custom_source', [], 'Failed to select the custom chat completion source');
   });
 }
 
@@ -944,67 +1068,110 @@ async function applyGatewayModel(model) {
   oai_settings.custom_model = model;
   setControlValue('#custom_model_id', model);
   await waitFor(() => oai_settings.custom_model === model).catch(() => {
-    throw new Error(`Failed to set the gateway model ${model}`);
+    throw codedError('gateway_model', [model], `Failed to set the gateway model ${model}`);
   });
 }
 
-async function switchToGateway(entry, { level, persist = true } = {}) {
+async function switchToGateway(entry, { level, persist = true, reason } = {}) {
   const settings = getSettings();
   requireGatewayEntry(entry);
   const model = `${entry.provider}/${String(entry.model ?? '')}`;
 
   const target = await resolveGatewayTarget(entry, settings);
   if (!jq('#main_api')) {
-    throw new Error('SillyTavern UI is not ready');
+    throw codedError('ui_not_ready', [], 'SillyTavern UI is not ready');
   }
 
-  if (!isGatewayMode()) {
-    gatewaySettings(settings).savedCustom = captureCustomState();
+  // Snapshot before touching ST: a half-applied gateway switch must roll back.
+  const previous = captureSelection();
+  const previousSavedCustom = gatewaySettings(settings).savedCustom;
+  const previousActiveUrl = gatewaySettings(settings).activeUrl;
+
+  try {
+    if (!isGatewayMode()) {
+      gatewaySettings(settings).savedCustom = captureCustomState();
+    }
+
+    setControlValue('#main_api', 'openai', 'change');
+    await waitFor(() => main_api === 'openai').catch(() => {
+      throw codedError('api_switch', ['openai'], 'Failed to switch the API to openai');
+    });
+
+    writeGatewayEndpoint(target, model);
+    await selectCustomSource();
+    await applyGatewayModel(model);
+  } catch (error) {
+    // Restore the URL first so restoreSelection sees the previous gateway and
+    // does not demote the saved snapshot to a native one.
+    gatewaySettings(settings).activeUrl = previousActiveUrl;
+    await restoreSelection(previous, { fast: true }).catch(() => {});
+    gatewaySettings(settings).savedCustom = previousSavedCustom;
+    saveSettings();
+    throw error;
   }
-
-  setControlValue('#main_api', 'openai', 'change');
-  await waitFor(() => main_api === 'openai').catch(() => {
-    throw new Error('Failed to switch the API to openai');
-  });
-
-  writeGatewayEndpoint(target, model);
-  await selectCustomSource();
-  await applyGatewayModel(model);
-  await waitFor(() => online_status !== 'no_connection', STATUS_TIMEOUT_MS).catch(() => {
-    console.debug('[omtp] gateway status did not settle; continuing');
-  });
 
   applyReasoning(entry, level);
   saveSettingsDebounced();
   recordSelection(entry, { native: false, persist });
   saveSettings();
-  emitSelectionChanged(entry);
+  emitSelectionChanged(entry, { reason });
+  // Never delay the switch for the connection check; report the timeout only.
+  waitFor(() => online_status !== 'no_connection', STATUS_TIMEOUT_MS).catch(() => {
+    console.debug('[omtp] gateway status did not settle; continuing');
+  });
   return entry;
 }
 
-async function switchToProfile(entry) {
+async function switchToProfile(entry, { level, persist = true, reason } = {}) {
   const command = SlashCommandParser?.commands?.profile;
   if (!command || typeof command.callback !== 'function') {
-    throw new Error('Connection Profiles extension is not enabled');
+    throw codedError('profile_disabled', [], 'Connection Profiles extension is not enabled in SillyTavern');
   }
   const name = entry?.profile?.name || entry?.modelLabel || entry?.model;
   if (!name) {
-    throw new Error('Connection profile name is missing');
+    throw codedError('profile_name', [], 'Connection profile name is missing');
   }
 
   const settings = getSettings();
-  await leaveGatewayMode(settings);
+  // Taken before leaving the gateway so a failed apply can put ST back on it.
+  const previous = captureSelection();
+  const previousWasGateway = isGatewayMode();
+  const leftGateway = await leaveGatewayMode(settings);
 
-  await withTimeout(
-    Promise.resolve(command.callback({ quiet: 'true', await: 'true' }, name)),
-    PROFILE_TIMEOUT_MS,
-    `Connection profile "${name}" did not load`,
-  );
+  try {
+    // The command resolves to the profile it applied and to '' when SillyTavern
+    // cannot find it; reporting success regardless made a no-op look applied.
+    const applied = await withTimeout(
+      Promise.resolve(command.callback({ quiet: 'true', await: 'true' }, name)),
+      PROFILE_TIMEOUT_MS,
+      `Connection profile "${name}" did not load (the Connection Profiles extension may be disabled)`,
+    );
+    if (!applied) {
+      throw codedError('profile_unknown', [name], `SillyTavern does not know the connection profile "${name}"`);
+    }
+    if (String(applied) !== String(name)) {
+      // SillyTavern fuzzy-matches profile names, so a typo silently applies a
+      // different connection; say so instead of claiming the requested one.
+      throw codedError('profile_mismatch', [applied, name], `SillyTavern applied "${applied}" instead of "${name}"`);
+    }
+    const selected = extension_settings?.connectionManager?.selectedProfile;
+    if (entry?.model && selected !== undefined && String(selected) !== String(entry.model)) {
+      throw codedError('profile_not_switched', [name], `SillyTavern did not switch to the connection profile "${name}"`);
+    }
+  } catch (error) {
+    if (previousWasGateway || leftGateway) {
+      await restoreSelection(previous, { fast: true }).catch(() => {});
+    }
+    throw error;
+  }
 
+  // The profile was applied; the gateway snapshot is no longer needed.
+  gatewaySettings(settings).savedCustom = null;
+  applyReasoning(entry, level);
   saveSettingsDebounced();
-  recordSelection(entry, { native: true });
+  recordSelection(entry, { native: true, persist });
   saveSettings();
-  emitSelectionChanged(entry);
+  emitSelectionChanged(entry, { reason });
   return entry;
 }
 
@@ -1015,13 +1182,13 @@ async function switchToProfile(entry) {
 export async function switchToEntry(ref, { reason, level, persist = true } = {}) {
   const entryRef = normalizeRef(ref);
   if (!entryRef) {
-    throw new Error('Invalid model reference');
+    throw codedError('invalid_ref', [], 'Invalid model reference');
   }
   // Auto-routing: natively supported models write ST settings directly;
   // other models route through OMTP gateway automatically without requiring manual toggle.
   const entry = resolveEntry(entryRef);
   if (!entry) {
-    throw new Error(`Unknown model: ${entryRef.provider}/${entryRef.model}`);
+    throw codedError('unknown_model', [`${entryRef.provider}/${entryRef.model}`], `Unknown model: ${entryRef.provider}/${entryRef.model}`);
   }
 
   return withSwitchLock(async () => {
@@ -1029,7 +1196,7 @@ export async function switchToEntry(ref, { reason, level, persist = true } = {})
     console.debug('[omtp] switching', getEntryKey(entryRef), reason ? `(${reason})` : '');
 
     if (entry.kind === 'profile') {
-      return switchToProfile(entry);
+      return switchToProfile(entry, { level, persist, reason });
     }
 
     const adapter = entry.nativeAdapter;
@@ -1038,14 +1205,16 @@ export async function switchToEntry(ref, { reason, level, persist = true } = {})
         || typeof adapter.supportsModel !== 'function'
         || adapter.supportsModel(entry.model);
       if (supported) {
-        return switchToNative(entry, { level, persist });
+        return switchToNative(entry, { level, persist, reason });
       }
     }
 
     if (entry.gatewayAdapter) {
-      return switchToGateway(entry, { level, persist });
+      return switchToGateway(entry, { level, persist, reason });
     }
 
-    throw new Error(entry.unsupportedReason || `Model ${entry.model} is not supported`);
+    throw entry.unsupportedReason
+      ? new Error(entry.unsupportedReason)
+      : codedError('unsupported', [entry.model], `Model ${entry.model} is not supported`);
   });
 }

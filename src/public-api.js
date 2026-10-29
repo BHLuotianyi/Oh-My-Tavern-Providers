@@ -9,6 +9,7 @@ import { eventSource } from '../../../../events.js';
 import { EVENTS, EXTENSION_VERSION } from './constants.js';
 import { getActiveCatalog, getEntries, invalidateNativeCache, mergeCatalog, resolveEntry, setActiveCatalog, withProviderAvailability } from './catalog.js';
 import { isValidRef, getSettings, parseEntryKey } from './store.js';
+import { codedError } from './errors.js';
 import { captureSelection, switchToEntry } from './switch-engine.js';
 import { resolveSelector } from './selector.js';
 import { registerNativeAdapter } from './adapters/native.js';
@@ -61,11 +62,12 @@ async function switchTo(selectorOrRef, { persist = true } = {}) {
     const settings = getSettings();
     let ref = null;
     let level;
+    let warning = '';
     let resolvedEntry = null;
     if (typeof selectorOrRef === 'string') {
         const input = selectorOrRef.trim();
         if (!input) {
-            throw new Error('Enter a model selector');
+            throw codedError('selector_empty', [], 'Enter a model selector');
         }
         const keyRef = parseEntryKey(input);
         if (keyRef) {
@@ -77,14 +79,14 @@ async function switchTo(selectorOrRef, { persist = true } = {}) {
                 quickSlots: settings.quickSlots,
             });
             if (result?.error) {
-                throw new Error(result.error);
+                throw result.errorCode
+                    ? codedError(result.errorCode, result.errorParams || [], result.error)
+                    : new Error(result.error);
             }
             if (!result?.entry) {
-                throw new Error(`Unknown model: ${selectorOrRef}`);
+                throw codedError('unknown_model', [String(selectorOrRef)], `Unknown model: ${selectorOrRef}`);
             }
-            if (result.warning) {
-                console.debug('[omtp]', result.warning);
-            }
+            warning = result.warning || '';
             resolvedEntry = result.entry;
             ref = {
                 kind: result.entry.kind,
@@ -98,21 +100,25 @@ async function switchTo(selectorOrRef, { persist = true } = {}) {
     }
 
     if (!isValidRef(ref)) {
-        throw new Error('Invalid selection');
+        throw codedError('invalid_selection', [], 'Invalid selection');
     }
     if (!resolvedEntry) {
         const rawEntry = resolveEntry(ref);
         if (!rawEntry) {
-            throw new Error(`Unknown model: ${ref.provider}/${ref.model}`);
+            throw codedError('unknown_model', [`${ref.provider}/${ref.model}`], `Unknown model: ${ref.provider}/${ref.model}`);
         }
         resolvedEntry = withProviderAvailability(rawEntry);
     }
     if (resolvedEntry.available === false) {
-        throw new Error(resolvedEntry.unsupportedReason || `Model ${resolvedEntry.model} is unavailable`);
+        throw resolvedEntry.unsupportedReason
+            ? new Error(resolvedEntry.unsupportedReason)
+            : codedError('unavailable', [resolvedEntry.model], `Model ${resolvedEntry.model} is unavailable`);
     }
 
     await switchToEntry(ref, { reason: 'public-api', level, persist });
-    return ref;
+    // A fuzzy match can pick one of several candidates; surface that instead of
+    // letting the caller believe the selector was exact.
+    return warning ? { ...ref, warning } : ref;
 }
 
 /**
@@ -157,10 +163,11 @@ function on(event, handler) {
         throw new TypeError('OMTP.on requires an event name and handler');
     }
     if (!eventSource?.on) {
-        return;
+        return () => {};
     }
     eventSource.on(event, handler);
     apiListeners.push([event, handler]);
+    return () => off(event, handler);
 }
 
 function off(event, handler) {

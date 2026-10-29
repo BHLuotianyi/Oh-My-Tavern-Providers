@@ -27,7 +27,7 @@ import { currentChatId } from './usage-session.js';
 import { getSettings } from './store.js';
 import { applyGlobalReasoning, applyReasoning, captureSelection } from './switch-engine.js';
 import { openQuickPicker } from './ui/quick-picker.js';
-import { tr, trf } from './ui/dom.js';
+import { describeError, tr, trf } from './ui/dom.js';
 
 /** Names this module owns; used for idempotent teardown. */
 const OWNED = ['omtp', 'model', 'switch', 'effort', 'usage'];
@@ -35,6 +35,12 @@ const OWNED = ['omtp', 'model', 'switch', 'effort', 'usage'];
 let registered = false;
 /** @type {Function|null} */
 let openHubFn = null;
+/**
+ * Commands replaced at registration time (SillyTavern ships its own `/model`),
+ * keyed by owned name, so teardown can restore them.
+ * @type {Map<string, {command: object|null, helpString: string|undefined}>}
+ */
+let previousCommands = new Map();
 
 function openHub(options = {}) {
     const opener = openHubFn || globalThis.OMTP?.open;
@@ -231,12 +237,36 @@ async function applySelector(rawSelector, persist) {
     if (!selector) {
         throw new Error(tr('omtp_selector_required', 'Enter a model selector'));
     }
-    const ref = await switchToSelector(selector, { persist });
+    let ref;
+    try {
+        ref = await switchToSelector(selector, { persist });
+    } catch (error) {
+        // The engine throws coded errors; show the user's language.
+        throw new Error(describeError(error));
+    }
     const entry = resolveEntry(ref);
     const name = entry ? label(entry) : `${ref.provider}/${ref.model}`;
-    return persist
+    const message = persist
         ? trf('omtp_model_set', 'Model set to ${0}.', name)
         : trf('omtp_switch_session', 'Session-only model: ${0}.', name);
+    // A fuzzy selector can resolve to one of several candidates; say so.
+    return ref.warning ? `${message}\n${ref.warning}` : message;
+}
+
+/**
+ * Remember what each owned name currently holds, so teardown can put foreign
+ * commands (notably SillyTavern's built-in `/model`) back.
+ */
+function snapshotOwnedCommands() {
+    const commands = SlashCommandParser.commands;
+    const helpStrings = SlashCommandParser.helpStrings;
+    previousCommands = new Map();
+    for (const name of OWNED) {
+        previousCommands.set(name, {
+            command: commands?.[name] ?? null,
+            helpString: helpStrings?.[name],
+        });
+    }
 }
 
 /**
@@ -253,6 +283,7 @@ export function initSlashCommands(hooks = {}) {
     registered = true;
 
     try {
+        snapshotOwnedCommands();
         SlashCommandParser.addCommandObject(SlashCommand.fromProps({
             name: 'omtp',
             callback: async (_named, subcommand) => {
@@ -406,16 +437,27 @@ export function teardownSlashCommands() {
     registered = false;
     openHubFn = null;
     const commands = SlashCommandParser.commands;
+    const helpStrings = SlashCommandParser.helpStrings;
     for (const name of OWNED) {
         const command = commands?.[name];
-        if (!command) {
-            continue;
-        }
-        for (const key of [command.name, ...(command.aliases || [])]) {
-            if (commands[key] === command) {
-                delete commands[key];
+        if (command) {
+            for (const key of [command.name, ...(command.aliases || [])]) {
+                if (commands[key] === command) {
+                    delete commands[key];
+                }
             }
         }
-        delete SlashCommandParser.helpStrings?.[name];
+        const previous = previousCommands.get(name);
+        if (previous?.command) {
+            commands[name] = previous.command;
+        }
+        if (helpStrings) {
+            if (previous?.helpString !== undefined) {
+                helpStrings[name] = previous.helpString;
+            } else {
+                delete helpStrings[name];
+            }
+        }
     }
+    previousCommands = new Map();
 }

@@ -52,3 +52,32 @@ test('resolveSelector returns an entry and level', () => {
   });
   assert.equal(fav.entry.key, 'omp/openrouter/z-ai/glm-4.7');
 });
+
+test('failures carry a translation code and its parameters', () => {
+  const slot = resolveSelector('@2', entries, { quickSlots: [] });
+  assert.equal(slot.errorCode, 'slot_empty');
+  assert.deepEqual(slot.errorParams, ['2']);
+
+  const unknown = resolveSelector('no-such-model', entries, {});
+  assert.equal(unknown.errorCode, 'unknown_model');
+  assert.deepEqual(unknown.errorParams, ['no-such-model']);
+
+  const none = resolveSelector('@fav', entries, { favorites: [] });
+  assert.equal(none.errorCode, 'no_favorites');
+  assert.deepEqual(none.errorParams, []);
+
+  const empty = resolveSelector('   ', entries, {});
+  assert.equal(empty.errorCode, 'selector_empty');
+});
+
+test('an ambiguous selector reports which model it picked', () => {
+  const many = [
+    { key: 'omp/ollama/llama3', kind: 'omp', provider: 'ollama', model: 'llama3', providerLabel: 'Ollama', modelLabel: 'Llama 3' },
+    { key: 'omp/ollama/llama3-70b', kind: 'omp', provider: 'ollama', model: 'llama3-70b', providerLabel: 'Ollama', modelLabel: 'Llama 3 70B' },
+  ];
+  const result = resolveSelector('llama', many, {});
+  assert.ok(result.entry);
+  assert.match(result.warning, /2 matches; selected/);
+  const exact = resolveSelector('llama3', many, {});
+  assert.equal(exact.warning, null);
+});

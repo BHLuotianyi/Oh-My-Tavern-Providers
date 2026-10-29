@@ -35,6 +35,70 @@ export function tr(key, fallback) {
 }
 
 /**
+ * Messages for errors thrown by the switch engine and the selector.
+ * Keys are the `code` values from `errors.js`.
+ * @type {Record<string, [string, string]>}
+ */
+const ERROR_TEXT = {
+    generating: ['omtp_err_generating', 'Cannot switch while generating'],
+    invalid_ref: ['omtp_err_invalid_ref', 'Invalid model reference'],
+    invalid_selection: ['omtp_err_invalid_selection', 'Invalid selection'],
+    unknown_model: ['omtp_err_unknown_model', 'Unknown model: ${0}'],
+    unsupported: ['omtp_err_unsupported', 'Model ${0} is not supported'],
+    unavailable: ['omtp_err_unavailable', 'Model ${0} is unavailable'],
+    no_native_adapter: ['omtp_err_no_native_adapter', 'No native SillyTavern adapter for ${0}'],
+    model_unavailable: ['omtp_err_model_unavailable', 'Model ${0} is not available in ${1}'],
+    ui_not_ready: ['omtp_err_ui_not_ready', 'SillyTavern UI is not ready'],
+    api_switch: ['omtp_err_api_switch', 'Failed to switch the API to ${0}'],
+    source_switch: ['omtp_err_source_switch', 'Failed to select the chat completion source ${0}'],
+    textgen_switch: ['omtp_err_textgen_switch', 'Failed to select the text generation type ${0}'],
+    novel_model: ['omtp_err_novel_model', 'Failed to select the NovelAI model ${0}'],
+    control_missing: ['omtp_err_control_missing', 'Native model control not found: ${0}'],
+    model_apply: ['omtp_err_model_apply', 'Failed to apply the model ${0}'],
+    connect_failed: ['omtp_err_connect_failed', 'Connection failed for ${0}'],
+    gateway_off: ['omtp_err_gateway_off', 'OMTP Gateway unavailable (enable server plugins)'],
+    gateway_reason: ['omtp_err_gateway_reason', 'OMTP Gateway unavailable: ${0}'],
+    gateway_url: ['omtp_err_gateway_url', 'OMTP Gateway URL is not configured'],
+    gateway_token: ['omtp_err_gateway_token', 'OMTP Gateway token is unavailable'],
+    gateway_model: ['omtp_err_gateway_model', 'Failed to set the gateway model ${0}'],
+    gateway_model_id: ['omtp_err_gateway_model_id', 'Gateway model id is missing'],
+    custom_source: ['omtp_err_custom_source', 'Failed to select the custom chat completion source'],
+    key_rejected: ['omtp_err_key_rejected', 'Provider ${0} rejected its key (${1})'],
+    needs_key: ['omtp_err_needs_key', 'Provider ${0} needs an API key; configure it in OMTP settings'],
+    profile_disabled: ['omtp_err_profile_disabled', 'Connection Profiles extension is not enabled in SillyTavern'],
+    profile_name: ['omtp_err_profile_name', 'Connection profile name is missing'],
+    profile_unknown: ['omtp_err_profile_unknown', 'SillyTavern does not know the connection profile "${0}"'],
+    profile_mismatch: ['omtp_err_profile_mismatch', 'SillyTavern applied "${0}" instead of "${1}"'],
+    profile_not_switched: ['omtp_err_profile_not_switched', 'SillyTavern did not switch to the connection profile "${0}"'],
+    reasoning_level: ['omtp_err_reasoning_level', 'Unknown reasoning level: ${0}'],
+    selector_empty: ['omtp_err_selector_empty', 'Enter a model selector'],
+    slot_empty: ['omtp_err_slot_empty', 'Quick slot ${0} is empty'],
+    slot_unavailable: ['omtp_err_slot_unavailable', 'Quick slot ${0} points to an unavailable model'],
+    no_favorites: ['omtp_err_no_favorites', 'No favorites available'],
+    no_recents: ['omtp_err_no_recents', 'No recent models available'],
+    no_chat: ['omtp_err_no_chat', 'Open a chat before binding a model'],
+    no_character: ['omtp_err_no_character', 'Select a character first (character bindings are unavailable in group chats)'],
+};
+
+/**
+ * Human-readable, translated text for a thrown value.
+ * Unknown codes fall back to the error's own message.
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function describeError(error) {
+    const code = /** @type {any} */ (error)?.code;
+    const entry = typeof code === 'string' ? ERROR_TEXT[code] : undefined;
+    if (!entry) {
+        return String(/** @type {any} */ (error)?.message || error);
+    }
+    const params = Array.isArray(/** @type {any} */ (error)?.params)
+        ? /** @type {any} */ (error).params.map(String)
+        : [];
+    return params.length ? trf(entry[0], entry[1], ...params) : tr(entry[0], entry[1]);
+}
+
+/**
  * Translate a key and fill `${0}`, `${1}`, … placeholders.
  * @param {string} key
  * @param {string} fallback
@@ -183,7 +247,9 @@ export function injectApiDrawerTools({ onOpen, onShowNative } = {}) {
 }
 
 /**
- * Toggle the body class that hides SillyTavern's native API selector block.
+ * Toggle the body class that hides SillyTavern's native API selector and keep
+ * the drawer shortcut label in step (the label is otherwise computed once, on
+ * injection).
  * @param {object} [settings]
  */
 export function applyNativeSelectorVisibility(settings = getSettings()) {
@@ -193,6 +259,12 @@ export function applyNativeSelectorVisibility(settings = getSettings()) {
     const apiDrawer = apiStatusButton?.closest?.('.drawer');
     if (apiDrawer) {
         apiDrawer.style.display = hide ? 'none' : '';
+    }
+    const nativeButton = document.getElementById('omtp-show-native-api');
+    if (nativeButton) {
+        nativeButton.textContent = hide
+            ? tr('omtp_show_native_selector', 'Show native API selector')
+            : tr('omtp_hide_native_selector', 'Hide native API selector');
     }
 }
 

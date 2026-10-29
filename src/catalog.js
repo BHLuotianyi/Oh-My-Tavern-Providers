@@ -313,9 +313,13 @@ const providerAvailabilityCache = new Map();
 const liveModelsCache = new Map();
 
 export function setProviderAvailability(mapOrList) {
+    // Replace instead of merge: a provider that disappears (disabled server
+    // plugin, removed key) must not keep its stale availability forever.
     if (mapOrList instanceof Map) {
+        providerAvailabilityCache.clear();
         for (const [k, v] of mapOrList.entries()) providerAvailabilityCache.set(k, v);
     } else if (Array.isArray(mapOrList)) {
+        providerAvailabilityCache.clear();
         for (const p of mapOrList) if (p?.id) providerAvailabilityCache.set(p.id, p);
     }
     invalidateNativeCache();

@@ -20,6 +20,7 @@ import { applyReasoning, captureSelection, switchToEntry } from '../switch-engin
 import { getEntries, loadCatalog, resolveEntry } from '../catalog.js';
 import { tr } from './dom.js';
 import { isPlainObject, notify } from './helpers.js';
+import { codedError } from '../errors.js';
 
 const APPLY_DELAY_MS = 150;
 const GENERATION_WAIT_MS = 120000;
@@ -171,11 +172,11 @@ async function refreshHubSelection() {
 export function bindChat(refOrEntry, options = {}) {
     const ref = normalizeRef(refOrEntry);
     if (!ref) {
-        throw new Error('Invalid model reference');
+        throw codedError('invalid_ref', [], 'Invalid model reference');
     }
     const chatId = getCurrentChatId?.();
     if (!chatId) {
-        throw new Error('Open a chat before binding a model');
+        throw codedError('no_chat', [], 'Open a chat before binding a model');
     }
     const binding = buildBinding(ref, options);
     chat_metadata.omtp = binding;
@@ -196,11 +197,11 @@ export function bindChat(refOrEntry, options = {}) {
 export function bindCharacter(refOrEntry, options = {}) {
     const ref = normalizeRef(refOrEntry);
     if (!ref) {
-        throw new Error('Invalid model reference');
+        throw codedError('invalid_ref', [], 'Invalid model reference');
     }
     const avatar = getCurrentAvatar();
     if (!avatar) {
-        throw new Error('Select a character first (character bindings are unavailable in group chats)');
+        throw codedError('no_character', [], 'Select a character first (character bindings are unavailable in group chats)');
     }
     const settings = getSettings();
     settings.characterBindings ??= {};

@@ -262,9 +262,21 @@ function compareRanked(a, b) {
 }
 
 /**
+ * Build a coded failure result. `error` stays an English message for callers
+ * that do not translate (and for the tests); `errorCode`/`errorParams` let the
+ * UI render it in the user's language.
+ * @param {string} code
+ * @param {string[]} params
+ * @param {string} message
+ */
+function failure(code, params, message) {
+    return { error: message, errorCode: code, errorParams: params };
+}
+
+/**
  * Resolve a selector string against the current entry list.
  *
- * @returns {{entry: object, level: string|undefined, warning: string|null}|{error: string}}
+ * @returns {{entry: object, level: string|undefined, warning: string|null}|{error: string, errorCode: string, errorParams: string[]}}
  */
 export function resolveSelector(input, entries, options = {}) {
     const list = Array.isArray(entries) ? entries.filter(Boolean) : [];
@@ -272,27 +284,40 @@ export function resolveSelector(input, entries, options = {}) {
     const parsed = parseSelector(input, { ...options, providers, entries: options.entries ?? list });
 
     if (parsed.kind === 'empty') {
-        return { error: 'Enter a model selector' };
+        return failure('selector_empty', [], 'Enter a model selector');
     }
 
     const byKey = new Map(list.map((entry) => [lower(entry.key), entry]));
+    // A saved ref keeps its `kind` (`st/` vs `omp/`), which flips when the same
+    // model changes route; fall back to the route-independent provider/model.
+    const byProviderModel = new Map(list.map((entry) => [
+        `${lower(entry.provider)}/${lower(entry.model)}`,
+        entry,
+    ]));
     const findRef = (ref) => {
         const key = lower(refKey(ref));
         if (!key) {
             return null;
         }
-        return byKey.get(key) ?? null;
+        const exact = byKey.get(key);
+        if (exact) {
+            return exact;
+        }
+        if (!ref || typeof ref !== 'object') {
+            return null;
+        }
+        return byProviderModel.get(`${lower(ref.provider)}/${lower(ref.model)}`) ?? null;
     };
 
     if (parsed.kind === 'slot') {
         const slots = Array.isArray(options.quickSlots) ? options.quickSlots : [];
         const ref = slots[parsed.slot];
         if (!ref) {
-            return { error: `Quick slot ${parsed.slot + 1} is empty` };
+            return failure('slot_empty', [String(parsed.slot + 1)], `Quick slot ${parsed.slot + 1} is empty`);
         }
         const entry = findRef(ref);
         if (!entry || entry.available === false) {
-            return { error: `Quick slot ${parsed.slot + 1} points to an unavailable model` };
+            return failure('slot_unavailable', [String(parsed.slot + 1)], `Quick slot ${parsed.slot + 1} points to an unavailable model`);
         }
         return { entry, level: parsed.level ?? undefined, warning: null };
     }
@@ -311,16 +336,16 @@ export function resolveSelector(input, entries, options = {}) {
                 };
             }
         }
-        return {
-            error: parsed.alias === 'favorites' ? 'No favorites available' : 'No recent models available',
-        };
+        return parsed.alias === 'favorites'
+            ? failure('no_favorites', [], 'No favorites available')
+            : failure('no_recents', [], 'No recent models available');
     }
 
     if (parsed.kind === 'ref') {
         const match = list.find((entry) => lower(entry.provider) === lower(parsed.provider)
             && lower(entry.model) === lower(parsed.model));
         if (!match) {
-            return { error: `Unknown model: ${parsed.provider}/${parsed.model}` };
+            return failure('unknown_model', [`${parsed.provider}/${parsed.model}`], `Unknown model: ${parsed.provider}/${parsed.model}`);
         }
         return { entry: match, level: parsed.level ?? undefined, warning: null };
     }
@@ -333,7 +358,7 @@ export function resolveSelector(input, entries, options = {}) {
 
     const ranked = rankEntries(list, parsed.model, { ...options, limit: 25 });
     if (ranked.length === 0) {
-        return { error: `Unknown model: ${parsed.raw}` };
+        return failure('unknown_model', [parsed.raw], `Unknown model: ${parsed.raw}`);
     }
 
     const entry = ranked[0];
