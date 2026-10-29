@@ -26,6 +26,13 @@ const KIND_RANK = new Map([
 /** @type {Map<string, {timer: number|null}>} */
 const activeSessions = new Map();
 
+/**
+ * Last failed row action per provider. Kept outside the DOM so a hub refresh
+ * that re-renders the roster cannot swallow the error.
+ * @type {Map<string, string>}
+ */
+const actionErrors = new Map();
+
 let host = null;
 /** @type {(() => void)|null} */
 let onChanged = null;
@@ -66,7 +73,15 @@ function statusText(provider) {
         return trf('omtp_login_status_invalid', 'Key rejected — ${0}', provider.keyInvalidReason || 'auth error') + fingerprint(provider);
     }
     if (provider.hasKey) {
-        return trf('omtp_login_status_signed_in', 'Signed in${0}', fingerprint(provider));
+        // Say where the key comes from: a key inherited from SillyTavern's own
+        // secrets is not stored here and signs out through this panel.
+        const label = provider.keySource === 'st'
+            ? 'omtp_login_status_signed_in_tavern'
+            : 'omtp_login_status_signed_in';
+        const fallback = provider.keySource === 'st'
+            ? 'Signed in via SillyTavern${0}'
+            : 'Signed in${0}';
+        return trf(label, fallback, fingerprint(provider));
     }
     if (provider.authKind === 'none') {
         return tr('omtp_login_status_keyless', 'No sign-in needed');
@@ -123,6 +138,23 @@ function renderRows(providers) {
     host.append(list, footer);
 }
 
+/** Show a failed action on its row (and keep it across a re-render). */
+function showActionError(row, providerId, message) {
+    actionErrors.set(providerId, message);
+    let hint = row.querySelector('.omtp-login-action-error');
+    if (!hint) {
+        hint = el('div', 'omtp-login-hint omtp-login-error omtp-login-action-error');
+        row.append(hint);
+    }
+    hint.textContent = message;
+}
+
+/** Clear a row's failed-action hint before a new attempt. */
+function clearActionError(row, providerId) {
+    actionErrors.delete(providerId);
+    row?.querySelector?.('.omtp-login-action-error')?.remove();
+}
+
 function renderRow(provider) {
     const id = String(provider.id);
     const row = el('div', 'omtp-login-row');
@@ -166,7 +198,7 @@ function renderRow(provider) {
     // for plain api-key providers and custom hooks we cannot drive.
     const hasLoginFlow = kind === 'oauth-code' || kind === 'device-code' || (kind === 'custom' && !provider.loginNeedsHook);
     if (provider.authKind !== 'none' && !hasLoginFlow) {
-        actions.append(renderKeyEntry(provider));
+        actions.append(renderKeyEntry(provider, row));
     }
 
     const consoleUrl = apiKeyUrlFor(id);
@@ -182,13 +214,15 @@ function renderRow(provider) {
         const out = el('button', 'menu_button', tr('omtp_logout', 'Sign out'));
         out.type = 'button';
         out.addEventListener('click', async () => {
+            clearActionError(row, id);
             out.disabled = true;
             try {
                 await api(`/providers/${encodeURIComponent(id)}/logout`, { method: 'POST' });
                 onChanged?.();
                 await refresh();
             } catch (error) {
-                onChanged?.(error);
+                showActionError(row, id, trf('omtp_login_logout_failed', 'Could not sign out: ${0}', error.message || error));
+                onChanged?.();
             } finally {
                 out.disabled = false;
             }
@@ -197,19 +231,24 @@ function renderRow(provider) {
     }
 
     row.append(actions);
+    if (actionErrors.has(id)) {
+        row.append(el('div', 'omtp-login-hint omtp-login-error omtp-login-action-error', actionErrors.get(id)));
+    }
     return row;
 }
 
 /** Placeholder value shown for a stored key; never sent back to the server. */
 const KEY_MASK = '••••••••••••';
 
-function renderKeyEntry(provider) {
+function renderKeyEntry(provider, row) {
+    const id = String(provider.id);
     const wrap = el('div', 'omtp-login-key');
     const field = el('div', 'omtp-key-field');
     const input = document.createElement('input');
     input.type = 'password';
     input.autocomplete = 'new-password';
     input.placeholder = tr('omtp_provider_key', 'API key');
+    input.setAttribute('aria-label', tr('omtp_provider_key', 'API key'));
     const stored = Boolean(provider.hasKey);
     if (stored) {
         input.value = KEY_MASK;
@@ -247,9 +286,10 @@ function renderKeyEntry(provider) {
             return;
         }
         hint.textContent = '';
+        clearActionError(row, id);
         save.disabled = true;
         try {
-            await api(`/providers/${encodeURIComponent(provider.id)}/key`, {
+            await api(`/providers/${encodeURIComponent(id)}/key`, {
                 method: 'POST',
                 body: JSON.stringify({ key }),
             });
@@ -257,7 +297,8 @@ function renderKeyEntry(provider) {
             onChanged?.();
             await refresh();
         } catch (error) {
-            onChanged?.(error);
+            showActionError(row, id, trf('omtp_login_save_failed', 'Could not save the key: ${0}', error.message || error));
+            onChanged?.();
         } finally {
             save.disabled = false;
         }
@@ -291,6 +332,7 @@ function openLoginPopup() {
 
 async function startLogin(provider, row, actions) {
     const id = String(provider.id);
+    clearActionError(row, id);
     setRowButtonsDisabled(actions, true);
     const popup = openLoginPopup();
     const panel = el('div', 'omtp-login-flow');
@@ -320,7 +362,7 @@ async function startLogin(provider, row, actions) {
         }
         const message = String(error.message || error);
         const hint = /OAuth client id/i.test(message)
-            ? tr('omtp_login_needs_client_id', 'Set the OAuth client id in data/omtp/oauth-clients.json (README → FAQ Q5).')
+            ? tr('omtp_login_needs_client_id', 'Set the OAuth client id in data/omtp/oauth-clients.json or the OMTP_*_CLIENT_ID environment variable.')
             : '';
         panel.replaceChildren(el('div', 'omtp-login-error', hint ? `${message} — ${hint}` : message));
         setRowButtonsDisabled(actions, false);
@@ -492,6 +534,7 @@ export function disposeLoginPanel() {
     for (const id of [...activeSessions.keys()]) {
         stopPolling(id);
     }
+    actionErrors.clear();
     host = null;
     onChanged = null;
 }

@@ -15,8 +15,8 @@ import {
 } from '../personality.js';
 import { normalizeEffortList } from '../reasoning.js';
 import * as extraBody from './extra-body.js';
-import { tr, trf } from './dom.js';
-import { el } from './helpers.js';
+import { describeError, tr, trf } from './dom.js';
+import { el, notify } from './helpers.js';
 import { state } from './hub-state.js';
 import {
     entryKey,
@@ -30,7 +30,6 @@ import {
     settings,
     sourceLabel,
     sourceOf,
-    toast,
 } from './hub-utils.js';
 import { getSelectedEntry, providerLabel, rebuildEntries } from './hub-catalog.js';
 import { renderList } from './hub-list.js';
@@ -75,10 +74,10 @@ function actionButton(id, label, handler, extraClass = '') {
         try {
             const result = handler();
             if (result?.catch) {
-                result.catch((error) => toast(error?.message || String(error), 'error'));
+                result.catch((error) => notify('error', describeError(error)));
             }
         } catch (error) {
-            toast(error?.message || String(error), 'error');
+            notify('error', describeError(error));
         }
     });
     return button;
@@ -90,13 +89,13 @@ function actionButton(id, label, handler, extraClass = '') {
  */
 function announceLiveModelResult(result) {
     if (result?.models?.length) {
-        toast(trf('omtp_live_models_found', 'Fetched ${0} models from the API', result.models.length), 'success');
+        notify('success', trf('omtp_live_models_found', 'Fetched ${0} models from the API', result.models.length));
     } else if (result?.needsCredentials) {
-        toast(tr('omtp_refresh_needs_key', 'This provider has no credentials yet; add a key first.'), 'warning');
+        notify('warning', tr('omtp_refresh_needs_key', 'This provider has no credentials yet; add a key first.'));
     } else if (result?.error) {
-        toast(trf('omtp_refresh_failed', 'Refresh failed: ${0}', result.error), 'error');
+        notify('error', trf('omtp_refresh_failed', 'Refresh failed: ${0}', result.error));
     } else {
-        toast(tr('omtp_live_models_none', 'The provider returned no models.'), 'info');
+        notify('info', tr('omtp_live_models_none', 'The provider returned no models.'));
     }
 }
 
@@ -122,7 +121,7 @@ export function renderProviderHeader(providerId, count) {
             rebuildEntries();
             renderList();
         } catch (error) {
-            toast(trf('omtp_live_models_failed', 'Could not fetch models: ${0}', error.message || error), 'error');
+            notify('error', trf('omtp_live_models_failed', 'Could not fetch models: ${0}', error.message || error));
         } finally {
             setLiveRefreshState(refreshBtn, false);
             refreshBtn.disabled = false;
@@ -406,7 +405,13 @@ function renderInHubProviderCard(entry, details) {
         syncTabs();
         renderProviderList();
         renderList();
-        setTimeout(() => revealLoginRow(providerId, { smooth: false }), 200);
+        // The roster may still be loading; retry briefly instead of doing
+        // nothing, and say so when the row really is absent.
+        setTimeout(() => revealLoginRow(providerId, {
+            retry: true,
+            smooth: false,
+            onMissing: () => notify('info', tr('omtp_configure_native', 'Configure in SillyTavern')),
+        }), 200);
     });
     card.append(action);
     details.append(card);
@@ -418,20 +423,12 @@ function renderInHubProviderCard(entry, details) {
  * @param {string} level
  */
 function setReasoning(entry, level) {
-    const key = entryKey(entry);
+    // applyReasoning() already stores reasoningByEntry and persists settings.
     try {
         engine.applyReasoning(entry, level);
-        return;
     } catch (error) {
         console.warn('[omtp] could not apply reasoning effort', error);
     }
-    const map = { ...(settings().reasoningByEntry || {}) };
-    if (!level) {
-        delete map[key];
-    } else {
-        map[key] = level;
-    }
-    persist({ reasoningByEntry: map });
 }
 
 /**
@@ -448,7 +445,14 @@ export function toggleFavorite(entry) {
         : [ref, ...favorites].slice(0, MAX_FAVORITES);
     persist({ favorites: next });
     if (state.isOpen) {
+        // renderList() rebuilds every row; keep the list where the user was,
+        // otherwise starring a model deep in the list jumps back to the top.
+        const listElement = document.getElementById('omtp-model-list');
+        const scrollTop = listElement?.scrollTop ?? 0;
         renderList();
+        if (listElement) {
+            listElement.scrollTop = scrollTop;
+        }
         renderDetails();
     }
 }

@@ -80,7 +80,7 @@ function renderLoginProviderList(listElement) {
         }
     }
     const matches = (group) => (!query
-        || `${group.label} ${group.id}`.toLowerCase().includes(query))
+        || `${group.label} ${group.id} ${providerLabel(group.id, group.label)}`.toLowerCase().includes(query))
         && (!mainstreamOnly() || group.id === state.selectedProvider || isMainstreamProvider(group.id));
     const all = [...map.values()].filter(matches);
     state.providerGroups = new Map(all.map((group) => [group.id, group]));
@@ -119,6 +119,8 @@ export function renderProviderList() {
                 entry.modelLabel,
                 entry.provider,
                 entry.providerLabel,
+                // The column renders the translated name; search must find it.
+                providerLabel(entry.providerId || entry.provider, entry.providerLabel || entry.provider),
                 entry.key,
             ].filter(Boolean).join(' ').toLowerCase();
             return haystack.includes(query);

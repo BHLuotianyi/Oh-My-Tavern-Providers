@@ -4,7 +4,7 @@
 import { QUICK_SLOT_COUNT } from '../constants.js';
 import * as catalogApi from '../catalog.js';
 import { tr, trf, updateTopBarTitle } from './dom.js';
-import { el } from './helpers.js';
+import { el, notify } from './helpers.js';
 import { state } from './hub-state.js';
 import {
     cssEscape,
@@ -13,7 +13,6 @@ import {
     refKey,
     refOf,
     settings,
-    toast,
 } from './hub-utils.js';
 import {
     getCurrentRef,
@@ -105,7 +104,7 @@ function assignQuickSlot(index, entry) {
     }
     slots[index] = ref;
     persist({ quickSlots: slots });
-    toast(trf('omtp_quick_assigned', 'Assigned to quick slot ${0}', index + 1), 'success');
+    notify('success', trf('omtp_quick_assigned', 'Assigned to quick slot ${0}', index + 1));
     if (state.isOpen) {
         renderQuickBar();
         renderList();
@@ -127,7 +126,7 @@ function clearQuickSlot(index) {
     }
     slots[index] = null;
     persist({ quickSlots: slots });
-    toast(trf('omtp_quick_cleared', 'Quick slot ${0} cleared', index + 1), 'info');
+    notify('info', trf('omtp_quick_cleared', 'Quick slot ${0} cleared', index + 1));
     if (state.isOpen) {
         renderQuickBar();
         renderList();
@@ -142,12 +141,12 @@ function clearQuickSlot(index) {
 export async function useQuickSlot(index) {
     const ref = (settings().quickSlots || [])[index];
     if (!ref) {
-        toast(trf('omtp_quick_empty', 'Quick slot ${0} is empty', index + 1), 'info');
+        notify('info', trf('omtp_quick_empty', 'Quick slot ${0} is empty', index + 1));
         return;
     }
     const entry = resolveRef(ref);
     if (!entry) {
-        toast(trf('omtp_binding_unavailable', 'Bound model unavailable: ${0}', `${ref.provider}/${ref.model}`), 'warning');
+        notify('warning', trf('omtp_binding_unavailable', 'Bound model unavailable: ${0}', `${ref.provider}/${ref.model}`));
         return;
     }
     const ok = await useEntry(entry);
@@ -199,7 +198,7 @@ function scrollToEntryRow(key) {
 export function assignQuickSlotFromSelection(index) {
     const entry = getSelectedEntry();
     if (!entry) {
-        toast(tr('omtp_select_model_first', 'Select a model first'), 'warning');
+        notify('warning', tr('omtp_select_model_first', 'Select a model first'));
         return;
     }
     assignQuickSlot(index, entry);
@@ -249,6 +248,8 @@ export function renderQuickBar() {
                 return;
             }
             if (!entry) {
+                // A dead "+" button teaches nothing; say how a slot gets filled.
+                notify('info', tr('omtp_quick_empty_hint', 'Empty slot — pick a model, then use "Save to quick bar".'));
                 return;
             }
             useQuickSlot(index);

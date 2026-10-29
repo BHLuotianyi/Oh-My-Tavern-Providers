@@ -4,9 +4,10 @@
 import { chat_metadata } from '../../../../../../script.js';
 import * as engine from '../switch-engine.js';
 import * as bindings from './bindings.js';
-import { tr, trf } from './dom.js';
+import { describeError, tr, trf } from './dom.js';
 import { state } from './hub-state.js';
-import { currentAvatar, entryKey, refOf, sameRef, settings, toast } from './hub-utils.js';
+import { notify } from './helpers.js';
+import { currentAvatar, entryKey, refOf, sameRef, settings } from './hub-utils.js';
 import { renderList } from './hub-list.js';
 import { renderDetails } from './hub-details.js';
 import { renderProviderList, revealLoginRow } from './hub-sidebar.js';
@@ -50,10 +51,10 @@ export async function toggleChatBinding(entry) {
     const current = getChatBinding();
     if (current?.ref && sameRef(current.ref, ref)) {
         await bindings.unbindChat();
-        toast(tr('omtp_unbound', 'Binding removed'), 'info');
+        notify('info', tr('omtp_unbound', 'Binding removed'));
     } else {
         await bindings.bindChat(ref, { reasoningEffort: currentReasoning(entry) });
-        toast(trf('omtp_bound_chat', 'Chat bound to ${0}', entry.modelLabel || entry.model), 'success');
+        notify('success', trf('omtp_bound_chat', 'Chat bound to ${0}', entry.modelLabel || entry.model));
     }
     if (state.isOpen) {
         renderDetails();
@@ -69,10 +70,10 @@ export async function toggleCharacterBinding(entry) {
     const current = getCharacterBinding();
     if (current?.ref && sameRef(current.ref, ref)) {
         await bindings.unbindCharacter();
-        toast(tr('omtp_unbound', 'Binding removed'), 'info');
+        notify('info', tr('omtp_unbound', 'Binding removed'));
     } else {
         await bindings.bindCharacter(ref, { reasoningEffort: currentReasoning(entry) });
-        toast(trf('omtp_bound_character', 'Character bound to ${0}', entry.modelLabel || entry.model), 'success');
+        notify('success', trf('omtp_bound_character', 'Character bound to ${0}', entry.modelLabel || entry.model));
     }
     if (state.isOpen) {
         renderDetails();
@@ -100,7 +101,7 @@ export async function useEntry(entry, { throwOnError = false } = {}) {
         if (throwOnError) {
             throw error;
         }
-        toast(error.message, 'error');
+        notify('error', error.message);
         return false;
     }
     if (entry.available === false) {
@@ -110,14 +111,14 @@ export async function useEntry(entry, { throwOnError = false } = {}) {
         if (throwOnError) {
             throw new Error(message);
         }
-        toast(message, 'warning');
+        notify('warning', message);
         return false;
     }
     try {
         await engine.switchToEntry(refOf(entry), { reason: 'hub' });
         state.selectedEntryKey = entryKey(entry);
         refreshSelectionUI();
-        toast(trf('omtp_model_in_use', 'Now using ${0}', `${entry.modelLabel || entry.model} · ${entry.providerLabel || entry.provider}`), 'success');
+        notify('success', trf('omtp_model_in_use', 'Now using ${0}', `${entry.modelLabel || entry.model} · ${entry.providerLabel || entry.provider}`));
         if (state.isOpen) {
             renderList();
             renderDetails();
@@ -125,13 +126,44 @@ export async function useEntry(entry, { throwOnError = false } = {}) {
         }
         return true;
     } catch (error) {
-        const message = error?.message || String(error);
         if (throwOnError) {
             throw error;
         }
-        toast(trf('omtp_switch_failed', 'Could not switch model: ${0}', message), 'error');
+        notify('error', trf('omtp_switch_failed', 'Could not switch model: ${0}', describeError(error)));
         return false;
     }
+}
+
+/**
+ * Reveal SillyTavern's Connection Profiles panel.
+ *
+ * Profile entries are read-only in the hub: renaming, updating or deleting one
+ * happens in SillyTavern. The old code only toasted "manage it over there" and
+ * closed the hub, which left the user with no way to actually change anything.
+ */
+function revealConnectionManager(profileId = '') {
+    const select = document.getElementById('connection_profiles');
+    if (!select) {
+        notify('warning', tr('omtp_profiles_disabled', 'Enable the Connection Profiles extension in SillyTavern to edit profiles'));
+        return;
+    }
+    const drawer = document.getElementById('rm_api_block');
+    const systemButton = document.getElementById('sys-settings-button');
+    if (drawer?.classList.contains('closedDrawer') && systemButton) {
+        systemButton.querySelector('.drawer-toggle')?.click();
+    }
+    const block = select.closest('.inline-drawer') || select;
+    setTimeout(() => {
+        block.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        block.classList.add('omtp-highlight');
+        setTimeout(() => block.classList.remove('omtp-highlight'), 2000);
+        // Point at the profile the user asked about. Selecting it would apply
+        // the connection, so the hub only moves the focus, never the value.
+        const option = Array.from(select.options).find((item) => item.value === String(profileId));
+        if (option) {
+            option.scrollIntoView({ block: 'nearest' });
+        }
+    }, 150);
 }
 
 /**
@@ -141,7 +173,7 @@ export async function useEntry(entry, { throwOnError = false } = {}) {
 export function openProviderSettings(entry) {
     if (entry.kind === 'profile') {
         closeHub();
-        toast(tr('omtp_profile_settings', 'Manage this profile in the Connection Profiles extension'), 'info');
+        revealConnectionManager(entry.model);
         return;
     }
     if (entry.kind === 'st' && entry.nativeAdapter) {
@@ -160,7 +192,7 @@ export function openProviderSettings(entry) {
                 setTimeout(() => block.classList.remove('omtp-highlight'), 2000);
             }, 150);
         } else {
-            toast(tr('omtp_configure_native', 'Configure in SillyTavern'), 'info');
+            notify('info', tr('omtp_configure_native', 'Configure in SillyTavern'));
         }
         return;
     }
@@ -184,7 +216,7 @@ function focusProviderSettings(provider) {
         retry: true,
         focusInput: true,
         duration: 2000,
-        onMissing: () => toast(tr('omtp_configure_native', 'Configure in SillyTavern'), 'info'),
+        onMissing: () => notify('info', tr('omtp_configure_native', 'Configure in SillyTavern')),
     }), 150);
 }
 
@@ -197,7 +229,7 @@ export async function copySelector(entry) {
     try {
         if (navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(text);
-            toast(tr('omtp_copied', 'Selector copied'), 'success');
+            notify('success', tr('omtp_copied', 'Selector copied'));
             return;
         }
         throw new Error('Clipboard unavailable');
@@ -211,9 +243,9 @@ export async function copySelector(entry) {
             textarea.select();
             document.execCommand('copy');
             textarea.remove();
-            toast(tr('omtp_copied', 'Selector copied'), 'success');
+            notify('success', tr('omtp_copied', 'Selector copied'));
         } catch {
-            toast(tr('omtp_copy_failed', 'Could not copy selector'), 'error');
+            notify('error', tr('omtp_copy_failed', 'Could not copy selector'));
         }
     }
 }

@@ -67,6 +67,9 @@ function renderList() {
     }
     listEl.replaceChildren();
     if (!filtered.length) {
+        // No rows means no position to report; leaving the last "3/9" behind
+        // made an empty result look like a live selection.
+        if (statusEl) statusEl.textContent = '';
         listEl.append(el('div', 'omtp-picker-empty', tr('omtp_picker_no_match', 'No models match.')));
         return;
     }
@@ -119,6 +122,7 @@ function close() {
     if (!overlay) {
         return;
     }
+    document.removeEventListener('keydown', onKeyDown);
     overlay.remove();
     overlay = null;
     listEl = null;
@@ -153,6 +157,18 @@ function commit() {
 }
 
 function onKeyDown(event) {
+    if (!overlay) {
+        return;
+    }
+    // Bound to the document so Escape survives the input losing focus; events
+    // from controls outside the picker are left alone.
+    const target = event.target;
+    if (target instanceof Node
+        && !overlay.contains(target)
+        && target !== document.body
+        && target !== document.documentElement) {
+        return;
+    }
     switch (event.key) {
         case 'ArrowDown':
             event.preventDefault();
@@ -170,8 +186,10 @@ function onKeyDown(event) {
             break;
         case 'PageDown':
             event.preventDefault();
-            cursor = Math.min(filtered.length - 1, cursor + WINDOW_ROWS);
-            renderList();
+            if (filtered.length) {
+                cursor = Math.min(filtered.length - 1, cursor + WINDOW_ROWS);
+                renderList();
+            }
             break;
         case 'PageUp':
             event.preventDefault();
@@ -219,7 +237,9 @@ function onKeyDown(event) {
  */
 export function openQuickPicker({ items: list, currentKey: key, title, hint, onPick: pick, rank: rankFn } = {}) {
     close();
-    items = Array.isArray(list) ? list.filter((entry) => entry && entry.available !== false) : [];
+    // Unavailable entries stay visible (locked row + commit guard): hiding them
+    // made the picker look emptier than the hub and hid why a model was missing.
+    items = Array.isArray(list) ? list.filter(Boolean) : [];
     currentKey = String(key || '');
     onPick = typeof pick === 'function' ? pick : null;
     rank = typeof rankFn === 'function' ? rankFn : null;
@@ -237,8 +257,8 @@ export function openQuickPicker({ items: list, currentKey: key, title, hint, onP
     inputEl = el('input', 'omtp-picker-input');
     inputEl.type = 'text';
     inputEl.placeholder = tr('omtp_picker_search', 'Search provider/model');
+    inputEl.setAttribute('aria-label', tr('omtp_picker_search', 'Search provider/model'));
     inputEl.addEventListener('input', () => refresh(inputEl.value));
-    inputEl.addEventListener('keydown', onKeyDown);
     searchRow.append(inputEl);
     statusEl = el('span', 'omtp-picker-status', '');
     searchRow.append(statusEl);
@@ -261,6 +281,7 @@ export function openQuickPicker({ items: list, currentKey: key, title, hint, onP
         }
     });
     document.body.append(overlay);
+    document.addEventListener('keydown', onKeyDown);
 
     previousFocus = document.activeElement;
     refresh('');

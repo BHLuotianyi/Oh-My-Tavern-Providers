@@ -107,7 +107,9 @@ body.omtp-hide-native-api-selector #rm_api_block {
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    font: inherit;
     font-size: 0.85em;
+    color: inherit;
     cursor: pointer;
     white-space: nowrap;
     user-select: none;
@@ -139,9 +141,6 @@ body.omtp-hide-native-api-selector #rm_api_block {
     100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
 }
 
-.omtp-model-row.omtp-disabled {
-    opacity: 0.55;
-}
 .omtp-live-badge {
     background: rgba(34, 197, 94, 0.2);
     color: #4ade80;
@@ -767,12 +766,11 @@ body.omtp-hide-native-api-selector #rm_api_block {
 }
 
 #omtp-settings .omtp-settings-row {
-    flex-wrap: wrap;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     margin: 6px 0;
-    flex-wrap: wrap;
 }
 
 #omtp-settings .omtp-settings-row > label {
@@ -1078,6 +1076,12 @@ body.omtp-hide-native-api-selector #rm_api_block {
     font-size: 0.85em;
 }
 
+.omtp-login-instruction {
+    font-size: 0.85em;
+    line-height: 1.45;
+    opacity: 0.85;
+}
+
 .omtp-login-url {
     font-family: var(--monoFontFamily, monospace);
     font-size: 0.85em;
@@ -1169,7 +1173,7 @@ body.omtp-hide-native-api-selector #rm_api_block {
 .omtp-pb-head {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
+    align-items: center;
     gap: 8px;
     margin-bottom: 4px;
 }
@@ -1269,10 +1273,6 @@ body.omtp-hide-native-api-selector #rm_api_block {
 .omtp-mainstream-toggle input {
     margin: 0;
     cursor: pointer;
-}
-
-.omtp-pb-head {
-    align-items: center;
 }
 
 .omtp-pb-link {

@@ -256,7 +256,10 @@ function wireWelcomeApiButton() {
         const label = button.querySelector('span');
         if (label) {
             label.textContent = tr('omtp_open_hub', 'OMTP Model Hub');
-            label.removeAttribute('data-i18n');
+            // Emptying the key stops SillyTavern from re-translating the label.
+            // Removing the attribute instead makes its MutationObserver call
+            // translateElement() on a node without `data-i18n` and throw.
+            label.setAttribute('data-i18n', '');
         }
         button.addEventListener('click', (event) => {
             event.preventDefault();
@@ -355,23 +358,8 @@ export async function init() {
  * Put the native/custom selection back before the extension goes away.
  */
 async function restorePreviousSelection() {
-    let gatewayMode = false;
-    try {
-        gatewayMode = Boolean(engine.isGatewayMode());
-    } catch {
-        gatewayMode = false;
-    }
-    if (gatewayMode) {
-        const current = settings();
-        const snapshot = current.lastNativeSelection || current.gateway?.savedCustom || null;
-        if (snapshot) {
-            try {
-                await engine.restoreSelection(snapshot, { fast: true });
-            } catch (error) {
-                console.warn('[omtp] could not restore native selection', error);
-            }
-        }
-    }
+    // `savedCustom` is the state SillyTavern was in before the gateway was
+    // entered, so it is the snapshot that ends on the pre-gateway state.
     if (settings().gateway?.savedCustom) {
         try {
             await engine.restoreSelection(settings().gateway.savedCustom, { fast: true });

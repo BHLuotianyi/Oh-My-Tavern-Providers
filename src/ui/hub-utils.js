@@ -20,32 +20,6 @@ export function capabilityIcon(icon, title) {
 }
 
 /**
- * Show a toast, degrading to the console when toastr is unavailable.
- * @param {string} message
- * @param {'info'|'success'|'warning'|'error'} [type]
- */
-export function toast(message, type = 'info') {
-    const text = String(message ?? '');
-    if (!text) {
-        return;
-    }
-    try {
-        const toastr = globalThis.toastr;
-        if (toastr && typeof toastr[type] === 'function') {
-            toastr[type](text, 'OMTP');
-            return;
-        }
-    } catch {
-        // fall through to console
-    }
-    if (type === 'error') {
-        console.error('[omtp]', text);
-    } else {
-        console.log('[omtp]', text);
-    }
-}
-
-/**
  * Put a live-refresh button into its busy or idle state.
  * @param {HTMLElement|null} button
  * @param {boolean} busy

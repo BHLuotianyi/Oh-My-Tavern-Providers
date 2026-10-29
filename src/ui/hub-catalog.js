@@ -8,6 +8,8 @@ import * as engine from '../switch-engine.js';
 import { loadPersonality, personalityFor } from '../personality.js';
 import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
 import { LAB_PROVIDERS, MAINSTREAM_PROVIDERS } from '../constants.js';
+import { tr } from './dom.js';
+import { notify } from './helpers.js';
 import { state } from './hub-state.js';
 import { entryKey, refKey, settings } from './hub-utils.js';
 import { refreshSelectionUI, renderAll } from './hub-quick.js';
@@ -21,7 +23,8 @@ export async function loadCatalogOnce(force = false) {
     if (state.catalogLoading && !force) {
         return state.catalogLoading;
     }
-    state.catalogLoading = (async () => {
+    let failed = false;
+    const loading = (async () => {
         try {
             if (force) {
                 await catalogApi.loadCatalog({ force: true });
@@ -30,6 +33,7 @@ export async function loadCatalogOnce(force = false) {
             }
             state.catalogLoaded = true;
         } catch (error) {
+            failed = true;
             console.warn('[omtp] catalog load failed', error);
         }
         await loadProviderAvailability();
@@ -38,7 +42,24 @@ export async function loadCatalogOnce(force = false) {
         rebuildEntries();
         return state.entries;
     })();
-    return state.catalogLoading;
+    state.catalogLoading = loading;
+    // A transient failure must not leave the hub empty for the whole session:
+    // clear the in-flight marker when the load settles so the next open retries.
+    const settle = (rejected) => {
+        if (state.catalogLoading !== loading) {
+            return;
+        }
+        state.catalogLoading = null;
+        if (failed || rejected) {
+            notify('error', tr('omtp_catalog_load_failed', 'Could not load the model catalog. Reopen the hub to retry.'));
+        }
+        if (failed && state.isOpen) {
+            // Repaint so the list leaves its "loading" state.
+            renderAll();
+        }
+    };
+    loading.then(() => settle(false), () => settle(true));
+    return loading;
 }
 
 /**

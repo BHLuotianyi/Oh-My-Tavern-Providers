@@ -8,9 +8,9 @@ import { API_BASE, DEFAULT_HOTKEY, QUICK_SLOT_COUNT, SEARCH_DEBOUNCE_MS } from '
 import { supportsProviderNames } from '../provider-names.js';
 import * as loginPanel from './login-panel.js';
 import { tr, trf } from './dom.js';
-import { el } from './helpers.js';
+import { el, notify } from './helpers.js';
 import { state } from './hub-state.js';
-import { cssEscape, entryKey, isEditableTarget, persist, settings, toast } from './hub-utils.js';
+import { cssEscape, entryKey, isEditableTarget, persist, settings } from './hub-utils.js';
 import {
     getSelectedEntry,
     loadCatalogOnce,
@@ -72,18 +72,18 @@ async function onGatewayPillClick() {
         if (res.ok) {
             const data = await res.json();
             if (data.gateway?.running || data.gateway?.listening) {
-                toast(trf('omtp_gateway_started', '🟢 Gateway online (port ${0}), ${1} models', data.gateway.port, data.catalog?.models || 0), 'info');
+                notify('info', trf('omtp_gateway_started', '🟢 Gateway online (port ${0}), ${1} models', data.gateway.port, data.catalog?.models || 0));
                 return;
             }
         }
         const restart = confirm(tr('omtp_gateway_restart_confirm', 'The local gateway is offline. Start/restart it?'));
         if (restart) {
             await fetch(`${API_BASE}/gateway/restart`, { method: 'POST' });
-            toast(tr('omtp_gateway_starting', 'Starting the gateway…'), 'info');
+            notify('info', tr('omtp_gateway_starting', 'Starting the gateway…'));
             setTimeout(updateGatewayPill, 1200);
         }
     } catch (err) {
-        toast(trf('omtp_gateway_action_failed', 'Gateway action failed: ${0}', err.message || err), 'error');
+        notify('error', trf('omtp_gateway_action_failed', 'Gateway action failed: ${0}', err.message || err));
     }
 }
 
@@ -106,8 +106,10 @@ function buildModalHeader() {
     close.title = tr('omtp_close', 'Close');
     close.setAttribute('aria-label', close.title);
 
-    const pill = el('div', 'omtp-gateway-pill');
+    const pill = el('button', 'omtp-gateway-pill');
     pill.id = 'omtp-gateway-pill';
+    pill.type = 'button';
+    pill.setAttribute('aria-label', tr('omtp_gateway_status', 'Gateway status'));
     const dot = el('span', 'omtp-status-dot');
     dot.id = 'omtp-gateway-dot';
     const label = el('span', 'omtp-status-label', tr('omtp_gateway_checking', 'Gateway checking…'));
@@ -144,7 +146,7 @@ function buildFilters() {
             renderDetails();
             loginPanel.refresh();
         });
-        namesLabel.append(namesBox, el('span', null, tr('omtp_filter_provider_names', '显示供应商翻译名')));
+        namesLabel.append(namesBox, el('span', null, tr('omtp_filter_provider_names', 'Translated provider names')));
         namesLabel.title = tr('omtp_filter_provider_names_hint', 'Translated names only where an official Chinese name exists; regions are always translated');
         filters.append(namesLabel);
     }
@@ -160,7 +162,7 @@ function buildFilters() {
         renderList();
         renderFooter();
     });
-    scoredLabel.append(scoredBox, el('span', null, tr('omtp_filter_scored', '仅显示有评分的模型')));
+    scoredLabel.append(scoredBox, el('span', null, tr('omtp_filter_scored', 'Only models with scores')));
     scoredLabel.title = tr('omtp_filter_scored_hint', 'Only models that have AA-PersonalityBench data');
     filters.append(scoredLabel);
 
@@ -176,7 +178,7 @@ function buildFilters() {
         renderList();
         renderFooter();
     });
-    mainstreamLabel.append(mainstreamBox, el('span', null, tr('omtp_filter_mainstream', '显示非主流供应商')));
+    mainstreamLabel.append(mainstreamBox, el('span', null, tr('omtp_filter_mainstream', 'Show non-mainstream providers')));
     mainstreamLabel.title = tr('omtp_filter_mainstream_hint', 'Uncheck to keep only first-party labs, major platforms and local runtimes');
     filters.append(mainstreamLabel);
 
@@ -219,12 +221,12 @@ function buildBody() {
     body.id = 'omtp-hub-body';
     const providerList = el('aside');
     providerList.id = 'omtp-provider-list';
-    providerList.setAttribute('aria-label', 'Providers');
+    providerList.setAttribute('aria-label', tr('omtp_aria_providers', 'Providers'));
     const pane = el('section', 'omtp-model-pane');
     const modelList = el('div');
     modelList.id = 'omtp-model-list';
     modelList.setAttribute('role', 'listbox');
-    modelList.setAttribute('aria-label', 'Models');
+    modelList.setAttribute('aria-label', tr('omtp_aria_models', 'Models'));
     const manager = el('div', 'omtp-provider-manager');
     manager.id = 'omtp-provider-manager';
     manager.hidden = true;
@@ -240,12 +242,19 @@ function buildBody() {
  */
 function bindModalListeners(overlay, { close, search, tabs }) {
     close.addEventListener('click', closeHub);
+    // A text selection dragged out of the dialog ends with a click whose target
+    // is the overlay; only a press that also started on the backdrop closes.
+    let backdropMouseDown = false;
+    overlay.addEventListener('mousedown', (event) => {
+        backdropMouseDown = event.target === overlay;
+    });
     overlay.addEventListener('click', (event) => {
-        if (event.target === overlay) {
+        const onBackdrop = event.target === overlay;
+        if (onBackdrop && backdropMouseDown) {
             closeHub();
         }
+        backdropMouseDown = false;
     });
-    overlay.addEventListener('keydown', handleOverlayKeydown);
     search.addEventListener('input', onSearchInput);
     tabs.addEventListener('click', (event) => {
         const button = event.target instanceof Element ? event.target.closest('.omtp-tab') : null;
@@ -301,6 +310,7 @@ function ensureModal() {
  * Remove the modal from the DOM.
  */
 export function destroyModal() {
+    document.removeEventListener('keydown', handleOverlayKeydown);
     state.modal?.remove();
     state.modal = null;
 }
@@ -348,6 +358,9 @@ export function openHub(options = {}) {
     state.previousFocus = document.activeElement;
     overlay.classList.remove('omtp-hidden');
     state.isOpen = true;
+    // Document-level so Escape/Tab still work after a click on a non-focusable
+    // part of the dialog leaves focus on <body>.
+    document.addEventListener('keydown', handleOverlayKeydown);
     if (!state.catalogLoaded) {
         loadCatalogOnce();
     } else {
@@ -420,6 +433,7 @@ export function closeHub() {
     }
     state.modal.classList.add('omtp-hidden');
     state.isOpen = false;
+    document.removeEventListener('keydown', handleOverlayKeydown);
     if (state.gatewayPollTimer) {
         clearInterval(state.gatewayPollTimer);
         state.gatewayPollTimer = null;
@@ -525,7 +539,11 @@ export function handleGlobalKeydown(event) {
  * @param {KeyboardEvent} event
  */
 function handleOverlayKeydown(event) {
-    if (Popup.util?.isPopupOpen?.()) {
+    if (!state.isOpen || Popup.util?.isPopupOpen?.()) {
+        return;
+    }
+    // The quick picker is its own overlay and handles its own keys.
+    if (event.target instanceof Element && event.target.closest('.omtp-picker-overlay')) {
         return;
     }
     if (event.key === 'Escape') {
@@ -537,8 +555,12 @@ function handleOverlayKeydown(event) {
         trapFocus(event);
         return;
     }
-    const tag = event.target instanceof Element ? event.target.tagName : '';
-    if (tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON') {
+    // Editable targets own their keys: Enter in the search box must not switch
+    // models, and the arrows must move the caret instead of the active row.
+    if (isEditableTarget(event.target)) {
+        return;
+    }
+    if (event.target instanceof Element && event.target.tagName === 'BUTTON') {
         return;
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -558,7 +580,7 @@ function handleOverlayKeydown(event) {
         useEntry(entry);
         return;
     }
-    if (String(event.key).toLowerCase() === 'f' && !event.ctrlKey && !event.metaKey && !event.altKey && !isEditableTarget(event.target)) {
+    if (String(event.key).toLowerCase() === 'f' && !event.ctrlKey && !event.metaKey && !event.altKey) {
         const entry = state.rowEntries.find((item) => entryKey(item) === state.selectedEntryKey) || getSelectedEntry();
         if (entry) {
             event.preventDefault();
@@ -602,7 +624,11 @@ function trapFocus(event) {
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     const active = document.activeElement;
-    if (event.shiftKey && (active === first || !state.modal.contains(active))) {
+    if (!state.modal.contains(active)) {
+        // Focus escaped to <body> after a click on plain text; pull it back in.
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && active === first) {
         event.preventDefault();
         last.focus();
     } else if (!event.shiftKey && active === last) {

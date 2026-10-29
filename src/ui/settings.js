@@ -16,9 +16,9 @@ import {
     GATEWAY_ADAPTERS,
 } from '../constants.js';
 import { getCatalogInfo, loadCatalog } from '../catalog.js';
-import { getSettings, saveSettings, updateSettings } from '../store.js';
+import { getSettings, updateSettings } from '../store.js';
 import { restoreSelection } from '../switch-engine.js';
-import { applyNativeSelectorVisibility, tr } from './dom.js';
+import { applyNativeSelectorVisibility, describeError, tr, trf } from './dom.js';
 import { el, isPlainObject, notify } from './helpers.js';
 import { initBindingUI } from './bindings.js';
 
@@ -113,7 +113,7 @@ async function apiFetch(path, { method = 'GET', body } = {}) {
         response = await fetch(`${API_BASE}${path}`, init);
     } catch (error) {
         markServerUnavailable(error);
-        throw new Error('OMTP Gateway unavailable (enable server plugins)');
+        throw new Error(tr('omtp_gateway_unavailable', 'OMTP Gateway unavailable (enable server plugins)'));
     }
 
     if (!response.ok) {
@@ -168,7 +168,9 @@ function applyLocalSettings() {
 }
 
 function setServerControlsDisabled(disabled) {
-    const reason = disabled ? 'OMTP server plugin unavailable (enable server plugins)' : '';
+    const reason = disabled
+        ? tr('omtp_server_plugin_unavailable', 'OMTP server plugin unavailable (enable server plugins)')
+        : '';
     for (const id of SERVER_CONTROL_IDS) {
         setDisabled(id, disabled, reason);
     }
@@ -183,14 +185,16 @@ function updateGatewayStatus(gateway) {
     let label;
     let dotClass;
     if (serverAvailable === false) {
-        label = 'OMTP Gateway unavailable (enable server plugins)';
+        label = tr('omtp_gateway_unavailable', 'OMTP Gateway unavailable (enable server plugins)');
         dotClass = 'omtp-bad';
     } else if (gateway?.running) {
         const url = gateway.url || `http://127.0.0.1:${gateway.port ?? 4100}/v1`;
-        label = `Running at ${url}`;
+        label = trf('omtp_about_gateway_running', 'Running at ${0}', url);
         dotClass = 'omtp-ok';
     } else {
-        label = gateway?.lastError ? `Stopped: ${gateway.lastError}` : 'Stopped';
+        label = gateway?.lastError
+            ? trf('omtp_gateway_stopped_error', 'Stopped: ${0}', gateway.lastError)
+            : tr('omtp_gateway_stopped', 'Stopped');
         dotClass = 'omtp-warn';
     }
 
@@ -211,11 +215,13 @@ function updateGatewayStatus(gateway) {
     const manualToken = Boolean(getSettings().gatewayToken);
     let tokenText;
     if (serverAvailable === false) {
-        tokenText = 'Token status unknown';
+        tokenText = tr('omtp_gateway_token_unknown', 'Token status unknown');
     } else if (gateway?.requireAuth) {
-        tokenText = manualToken ? 'Server token + manual token configured' : 'Server-managed token required';
+        tokenText = manualToken
+            ? tr('omtp_gateway_token_both', 'Server token + manual token configured')
+            : tr('omtp_gateway_token_server', 'Server-managed token required');
     } else {
-        tokenText = 'Auth disabled';
+        tokenText = tr('omtp_gateway_auth_disabled', 'Auth disabled');
     }
     setText('omtp-gateway-token-status', tokenText);
 }
@@ -236,10 +242,10 @@ function updateCatalogInfo(catalog) {
         const providers = catalog.providers ?? catalog.stats?.providers;
         const models = catalog.models ?? catalog.stats?.models;
         if (providers !== undefined) {
-            parts.push(`${providers} providers`);
+            parts.push(trf('omtp_catalog_providers', '${0} providers', providers));
         }
         if (models !== undefined) {
-            parts.push(`${models} models`);
+            parts.push(trf('omtp_catalog_models', '${0} models', models));
         }
         if (catalog.source) {
             parts.push(String(catalog.source));
@@ -247,16 +253,16 @@ function updateCatalogInfo(catalog) {
     } else {
         const info = getCatalogInfo();
         const source = info?.source && info.source !== 'none' ? info.source : 'bundled';
-        parts.push(`${source} catalog`);
+        parts.push(trf('omtp_catalog_source', '${0} catalog', source));
         if (info?.generatedAt) {
             parts.push(formatDate(info.generatedAt));
         }
         if (info?.stats) {
-            parts.push(`${info.stats.providers ?? 0} providers`);
-            parts.push(`${info.stats.models ?? 0} models`);
+            parts.push(trf('omtp_catalog_providers', '${0} providers', info.stats.providers ?? 0));
+            parts.push(trf('omtp_catalog_models', '${0} models', info.stats.models ?? 0));
         }
         if (serverAvailable === false) {
-            parts.push('server plugin unavailable');
+            parts.push(tr('omtp_catalog_server_unavailable', 'server plugin unavailable'));
         }
     }
     element.textContent = parts.filter(Boolean).join(' · ');
@@ -376,7 +382,7 @@ async function confirmAction(title, text) {
     if (typeof globalThis.confirm === 'function') {
         return Boolean(globalThis.confirm(`${title}\n\n${text}`));
     }
-    notify('warning', `${title}: confirmation unavailable`);
+    notify('warning', trf('omtp_confirmation_unavailable', '${0}: confirmation unavailable', title));
     return false;
 }
 
@@ -399,10 +405,10 @@ function parseModels(text) {
     try {
         parsed = JSON.parse(raw);
     } catch (error) {
-        return { error: `Invalid models JSON: ${error.message}` };
+        return { error: trf('omtp_invalid_models_json', 'Invalid models JSON: ${0}', error.message) };
     }
     if (!Array.isArray(parsed)) {
-        return { error: 'Models must be a JSON array' };
+        return { error: tr('omtp_models_not_array', 'Models must be a JSON array') };
     }
     const models = [];
     for (const item of parsed) {
@@ -411,7 +417,7 @@ function parseModels(text) {
             continue;
         }
         if (!isPlainObject(item) || typeof item.id !== 'string' || !item.id.trim()) {
-            return { error: 'Each model needs a string "id"' };
+            return { error: tr('omtp_model_id_required', 'Each model needs a string "id"') };
         }
         models.push({
             ...item,
@@ -428,7 +434,10 @@ function buildCustomProviderForm() {
     form.append(el(
         'div',
         'omtp-muted',
-        'Custom providers are merged into the catalog and the gateway model list.',
+        tr(
+            'omtp_custom_provider_hint',
+            'Custom providers are merged into the catalog and the gateway model list.',
+        ),
     ));
 
     const idInput = el('input');
@@ -438,7 +447,7 @@ function buildCustomProviderForm() {
 
     const labelInput = el('input');
     labelInput.type = 'text';
-    labelInput.placeholder = 'My Provider';
+    labelInput.placeholder = tr('omtp_custom_provider_label_placeholder', 'My Provider');
     labelInput.id = 'omtp-custom-provider-label';
 
     const adapterSelect = el('select');
@@ -468,12 +477,12 @@ function buildCustomProviderForm() {
     errorLine.setAttribute('role', 'alert');
 
     form.append(
-        formRow('ID', idInput),
-        formRow('Label', labelInput),
-        formRow('Adapter', adapterSelect),
-        formRow('Base URL', baseUrlInput),
-        formRow('Models JSON', modelsArea),
-        formRow('API key (optional)', keyInput),
+        formRow(tr('omtp_form_id', 'ID'), idInput),
+        formRow(tr('omtp_form_label', 'Label'), labelInput),
+        formRow(tr('omtp_form_adapter', 'Adapter'), adapterSelect),
+        formRow(tr('omtp_form_base_url', 'Base URL'), baseUrlInput),
+        formRow(tr('omtp_form_models_json', 'Models JSON'), modelsArea),
+        formRow(tr('omtp_form_api_key_optional', 'API key (optional)'), keyInput),
         errorLine,
     );
 
@@ -484,7 +493,10 @@ function buildCustomProviderForm() {
 async function submitCustomProvider({ idInput, labelInput, adapterSelect, baseUrlInput, modelsArea, keyInput, errorLine }) {
     const id = idInput.value.trim();
     if (!/^[a-z0-9][a-z0-9._-]*$/i.test(id)) {
-        errorLine.textContent = 'Provider id must start with a letter or digit and contain only letters, digits, ".", "_" or "-".';
+        errorLine.textContent = tr(
+            'omtp_provider_id_invalid',
+            'Provider id must start with a letter or digit and contain only letters, digits, ".", "_" or "-".',
+        );
         return false;
     }
     const models = parseModels(modelsArea.value);
@@ -509,14 +521,14 @@ async function submitCustomProvider({ idInput, labelInput, adapterSelect, baseUr
         errorLine.textContent = errorMessage(error);
         return false;
     }
-    notify('success', `Provider ${config.label} added`);
+    notify('success', trf('omtp_provider_added', 'Provider ${0} added', config.label));
     await refreshProviders();
     return true;
 }
 
 export function openCustomProviderEditor() {
     if (serverAvailable === false) {
-        notify('warning', 'OMTP Gateway unavailable (enable server plugins)');
+        notify('warning', tr('omtp_gateway_unavailable', 'OMTP Gateway unavailable (enable server plugins)'));
         return;
     }
 
@@ -534,7 +546,7 @@ export function openCustomProviderEditor() {
 
 function openImportPopup() {
     if (serverAvailable === false) {
-        notify('warning', 'OMTP Gateway unavailable (enable server plugins)');
+        notify('warning', tr('omtp_gateway_unavailable', 'OMTP Gateway unavailable (enable server plugins)'));
         return;
     }
 
@@ -542,7 +554,10 @@ function openImportPopup() {
     form.append(el(
         'div',
         'omtp-muted',
-        'Reads the local oh-my-pi catalog (data only; the omp binary is never executed) and stores it as an overlay. The bundled catalog is never overwritten.',
+        tr(
+            'omtp_import_omp_hint',
+            'Reads the local oh-my-pi catalog (data only; the omp binary is never executed) and stores it as an overlay. The bundled catalog is never overwritten.',
+        ),
     ));
 
     const pathInput = el('input');
@@ -554,12 +569,19 @@ function openImportPopup() {
     const credentialsInput = el('input');
     credentialsInput.type = 'checkbox';
     credentialsInput.id = 'omtp-import-credentials';
-    credentialsLabel.append(credentialsInput, el('span', null, 'Import stored credentials from the local OMP agent.db (API keys and OAuth sessions)'));
+    credentialsLabel.append(credentialsInput, el(
+        'span',
+        null,
+        tr(
+            'omtp_import_credentials',
+            'Import stored credentials from the local OMP agent.db (API keys and OAuth sessions)',
+        ),
+    ));
 
     const errorLine = el('div', 'omtp-muted');
     errorLine.setAttribute('role', 'alert');
 
-    form.append(formRow('OMP path', pathInput), credentialsLabel, errorLine);
+    form.append(formRow(tr('omtp_omp_path', 'OMP path'), pathInput), credentialsLabel, errorLine);
 
     const popup = new Popup(form, POPUP_TYPE.CONFIRM, null, {
         okButton: tr('omtp_import', 'Import'),
@@ -581,13 +603,29 @@ function openImportPopup() {
                     },
                 });
                 if (result?.found === false) {
-                    notify('info', 'No local OMP data found; nothing imported');
+                    notify('info', tr('omtp_import_none', 'No local OMP data found; nothing imported'));
                     return true;
                 }
-                const credMsg = result?.credentials ? ` and ${result.credentials} credentials` : '';
-                notify('success', `Imported ${result?.providers ?? 0} providers / ${result?.models ?? 0} models${credMsg}`);
+                const credentials = Number(result?.credentials ?? 0);
+                notify(
+                    'success',
+                    credentials
+                        ? trf(
+                            'omtp_import_done_credentials',
+                            'Imported ${0} providers / ${1} models and ${2} credentials',
+                            result?.providers ?? 0,
+                            result?.models ?? 0,
+                            credentials,
+                        )
+                        : trf(
+                            'omtp_import_done',
+                            'Imported ${0} providers / ${1} models',
+                            result?.providers ?? 0,
+                            result?.models ?? 0,
+                        ),
+                );
                 if (result?.credentialError) {
-                    notify('warning', `Credential import note: ${result.credentialError}`);
+                    notify('warning', trf('omtp_import_credential_note', 'Credential import note: ${0}', result.credentialError));
                 }
                 // Reload in the background so a slow fetch cannot pin the popup open.
                 reloadClientCatalog().catch((error) => {
@@ -635,12 +673,20 @@ async function refreshCatalog() {
             body: url ? { url } : {},
         });
         if (result?.ok === false) {
-            throw new Error(result.error || 'Catalog refresh failed');
+            throw new Error(result.error || tr('omtp_catalog_refresh_failed', 'Catalog refresh failed'));
         }
-        notify('success', `Catalog refreshed: ${result?.providers ?? '?'} providers, ${result?.models ?? '?'} models`);
+        notify(
+            'success',
+            trf(
+                'omtp_catalog_refreshed',
+                'Catalog refreshed: ${0} providers, ${1} models',
+                result?.providers ?? '?',
+                result?.models ?? '?',
+            ),
+        );
         await reloadClientCatalog();
     } catch (error) {
-        notify('error', `Catalog refresh failed: ${errorMessage(error)}`);
+        notify('error', trf('omtp_catalog_refresh_error', 'Catalog refresh failed: ${0}', errorMessage(error)));
     } finally {
         if (button) {
             button.disabled = serverAvailable === false;
@@ -651,9 +697,9 @@ async function refreshCatalog() {
 async function restartGateway() {
     try {
         await apiFetch('/gateway/restart', { method: 'POST' });
-        notify('success', 'Gateway restart requested');
+        notify('success', tr('omtp_gateway_restart_requested', 'Gateway restart requested'));
     } catch (error) {
-        notify('error', `Gateway restart failed: ${errorMessage(error)}`);
+        notify('error', trf('omtp_gateway_restart_failed', 'Gateway restart failed: ${0}', errorMessage(error)));
     }
     await refreshServerStatus();
 }
@@ -667,9 +713,9 @@ async function saveGatewayConfig() {
                 requireAuth: Boolean(byId('omtp-gateway-requireauth')?.checked),
             },
         });
-        notify('success', 'Gateway settings saved');
+        notify('success', tr('omtp_gateway_saved', 'Gateway settings saved'));
     } catch (error) {
-        notify('error', `Could not save gateway settings: ${errorMessage(error)}`);
+        notify('error', trf('omtp_gateway_save_failed', 'Could not save gateway settings: ${0}', errorMessage(error)));
     }
     await refreshServerStatus();
 }
@@ -678,47 +724,73 @@ async function restoreNativeSelection() {
     const settings = getSettings();
     const snapshot = settings.lastNativeSelection ?? settings.gateway?.savedCustom ?? null;
     if (!snapshot) {
-        notify('info', 'No saved native selection to restore');
+        notify('info', tr('omtp_restore_none', 'No saved native selection to restore'));
         return;
     }
     const confirmed = await confirmAction(
         tr('omtp_restore_native', 'Restore native selection'),
-        'Restore the SillyTavern model selection that was active before OMTP was used?',
+        tr(
+            'omtp_restore_confirm',
+            'Restore the SillyTavern model selection that was active before OMTP was used?',
+        ),
     );
     if (!confirmed) {
         return;
     }
     try {
         await restoreSelection(snapshot, { fast: false });
-        notify('success', 'Native selection restored');
+        notify('success', tr('omtp_restore_done', 'Native selection restored'));
         await refreshSettingsUI();
     } catch (error) {
-        notify('error', `Could not restore native selection: ${errorMessage(error)}`);
+        notify('error', trf('omtp_restore_failed', 'Could not restore native selection: ${0}', describeError(error)));
     }
 }
 
 async function deleteProviderKeys() {
     if (serverAvailable === false) {
-        notify('warning', 'Server plugin unavailable; provider keys were not deleted');
+        notify('warning', tr('omtp_keys_delete_unavailable', 'Server plugin unavailable; provider keys were not deleted'));
         return;
     }
     const targets = providersCache.filter((provider) => provider.hasKey);
     let removed = 0;
+    const failed = [];
     for (const provider of targets) {
         try {
             await apiFetch(`/providers/${encodeURIComponent(provider.id)}/key`, { method: 'DELETE' });
             removed += 1;
         } catch (error) {
             console.warn(`[omtp] could not delete key for ${provider.id}`, error);
+            failed.push(String(provider.id));
         }
     }
-    notify(removed > 0 ? 'success' : 'info', `${removed} provider key(s) deleted`);
+    if (failed.length) {
+        notify(
+            'warning',
+            trf(
+                'omtp_keys_delete_partial',
+                '${0} provider key(s) deleted; failed for: ${1}',
+                removed,
+                failed.join(', '),
+            ),
+        );
+    } else {
+        notify(removed > 0 ? 'success' : 'info', trf('omtp_keys_deleted', '${0} provider key(s) deleted', removed));
+    }
 }
 
 async function clearSettings() {
+    const clearKeys = Boolean(byId('omtp-clear-keys')?.checked);
     const confirmed = await confirmAction(
         tr('omtp_clear_settings', 'Clear OMTP settings'),
-        'This removes favorites, recents, quick slots, bindings, extra bodies and UI preferences. The native SillyTavern selection is left unchanged.',
+        clearKeys
+            ? tr(
+                'omtp_clear_settings_confirm_keys',
+                'This removes favorites, recents, quick slots, bindings, extra bodies and UI preferences, and deletes every stored provider key. The native SillyTavern selection is left unchanged.',
+            )
+            : tr(
+                'omtp_clear_settings_confirm',
+                'This removes favorites, recents, quick slots, bindings, extra bodies and UI preferences. The native SillyTavern selection is left unchanged.',
+            ),
     );
     if (!confirmed) {
         return;
@@ -730,13 +802,21 @@ async function clearSettings() {
             delete live[key];
         }
     }
+    // `updateSettings` merges plain objects one level deep, so these maps would
+    // survive the defaults patch; drop them first so the toast is truthful.
+    for (const key of ['extraBodies', 'reasoningByEntry', 'characterBindings']) {
+        delete live[key];
+    }
     updateSettings(structuredClone(DEFAULT_SETTINGS));
-    saveSettings();
     applyNativeSelectorVisibility(getSettings());
-    notify('success', 'OMTP settings cleared');
+    notify('success', tr('omtp_clear_settings_done', 'OMTP settings cleared'));
 
-    if (byId('omtp-clear-keys')?.checked) {
+    if (clearKeys) {
         await deleteProviderKeys();
+        const checkbox = byId('omtp-clear-keys');
+        if (checkbox) {
+            checkbox.checked = false;
+        }
     }
     await refreshSettingsUI();
 }
@@ -785,7 +865,7 @@ function bindControls(root) {
     hotkey?.addEventListener('change', () => {
         const normalized = normalizeHotkey(hotkey.value);
         if (!normalized) {
-            notify('warning', 'Hotkey must be a key with at least one modifier, for example alt+m');
+            notify('warning', tr('omtp_hotkey_invalid', 'Hotkey must be a key with at least one modifier, for example alt+m'));
             hotkey.value = getSettings().ui?.hotkey ?? 'alt+m';
             return;
         }

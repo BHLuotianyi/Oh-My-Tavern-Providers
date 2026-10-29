@@ -13,6 +13,10 @@ import { el, formatTokens, formatUsd } from './helpers.js';
 
 let host = null;
 let loading = false;
+/** Footer refresh button of the rendered page; mirrored with `loading`. */
+let refreshButton = null;
+/** Bumped on every request and on dispose, so stale responses never render. */
+let requestToken = 0;
 /** Session baseline: token totals are counted from this moment until the chat changes. */
 let sessionStartedAt = ensureUsageSession();
 
@@ -198,41 +202,62 @@ const STATS_COLUMNS = {
     cost: 'Cost',
 };
 
+/** Disable the footer button (with a busy label) while a request is in flight. */
+function syncRefreshButton() {
+    if (!refreshButton) {
+        return;
+    }
+    refreshButton.disabled = loading;
+    refreshButton.textContent = loading
+        ? tr('omtp_usage_refreshing', 'Refreshing…')
+        : tr('omtp_usage_refresh', 'Refresh');
+}
+
 /**
  * Fetch and render the usage page.
  * @param {{refresh?: boolean}} [options]
  */
 async function refreshUsage({ refresh = false } = {}) {
-    if (!host || loading) return;
+    const container = host;
+    if (!container || loading) return;
     loading = true;
-    host.replaceChildren(el('div', 'omtp-muted', tr('omtp_usage_loading', 'Reading quotas…')));
+    const token = ++requestToken;
+    syncRefreshButton();
+    container.replaceChildren(el('div', 'omtp-muted', tr('omtp_usage_loading', 'Reading quotas…')));
     try {
         const data = await api(`/usage${refresh ? '?refresh=true' : ''}`);
+        if (token !== requestToken || host !== container) return;
         const rows = Array.isArray(data.providers) ? data.providers : [];
-        host.replaceChildren();
+        container.replaceChildren();
         if (!rows.length) {
-            host.append(el('div', 'omtp-empty-state', tr('omtp_usage_empty', 'No provider exposes quota data.')));
+            container.append(el('div', 'omtp-empty-state', tr('omtp_usage_empty', 'No provider exposes quota data.')));
             return;
         }
-        await renderStats(host).catch(() => {});
+        await renderStats(container).catch(() => {});
+        if (token !== requestToken || host !== container) return;
         const list = el('div', 'omtp-usage-list');
         for (const row of rows) {
             list.append(renderRow(row));
         }
-        host.append(list);
+        container.append(list);
         const footer = el('div', 'omtp-usage-footer');
         footer.append(el('span', 'omtp-usage-source', tr('omtp_usage_source', 'Quotas come from each provider\'s own usage endpoint')));
-        const refreshButton = el('button', 'menu_button', tr('omtp_usage_refresh', 'Refresh'));
+        refreshButton = el('button', 'menu_button', '');
         refreshButton.type = 'button';
         refreshButton.addEventListener('click', () => {
             refreshUsage({ refresh: true }).catch(() => {});
         });
+        syncRefreshButton();
         footer.append(refreshButton);
-        host.append(footer);
+        container.append(footer);
     } catch (error) {
-        host.replaceChildren(el('div', 'omtp-usage-error', String(error.message || error)));
+        if (token !== requestToken || host !== container) return;
+        container.replaceChildren(el('div', 'omtp-usage-error', String(error.message || error)));
     } finally {
-        loading = false;
+        if (token === requestToken) {
+            loading = false;
+            syncRefreshButton();
+        }
     }
 }
 
@@ -244,5 +269,10 @@ export async function mountUsagePanel(container) {
 }
 
 export function disposeUsagePanel() {
+    // Bump the token so an in-flight request cannot render into the next mount,
+    // and clear the busy flag so a remount starts a fresh request.
+    requestToken += 1;
     host = null;
+    loading = false;
+    refreshButton = null;
 }

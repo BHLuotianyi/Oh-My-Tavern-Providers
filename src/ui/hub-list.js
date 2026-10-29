@@ -29,7 +29,7 @@ import {
     sourceLabel,
     sourceOf,
 } from './hub-utils.js';
-import { filteredEntries, getCurrentRef } from './hub-catalog.js';
+import { filteredEntries, getCurrentRef, providerLabel } from './hub-catalog.js';
 import { renderDetails, renderProviderHeader, toggleFavorite } from './hub-details.js';
 import { refreshHub } from './hub-quick.js';
 
@@ -49,6 +49,15 @@ export function entriesForTab() {
         default:
             return list;
     }
+}
+
+/**
+ * Provider name as the row/sidebar renders it, including the translated form.
+ * @param {object} entry
+ * @returns {string}
+ */
+function displayProviderName(entry) {
+    return providerLabel(entry.providerId || entry.provider, entry.providerLabel || entry.provider);
 }
 
 /**
@@ -93,13 +102,15 @@ function searchEntries(query, base) {
         } catch (error) {
             console.warn('[omtp] search failed', error);
         }
-    } else {
-        for (const entry of base) {
-            const haystack = [entry.model, entry.modelLabel, entry.provider, entry.providerLabel]
-                .map((value) => String(value ?? '').toLowerCase());
-            if (haystack.some((value) => value.includes(lower))) {
-                add(entry);
-            }
+    }
+    // Substring pass over what the rows actually display. The fuzzy index only
+    // knows the raw labels, so a translated provider name (`深度求索`) would find
+    // nothing even though the sidebar shows it.
+    for (const entry of base) {
+        const haystack = [entry.model, entry.modelLabel, entry.provider, entry.providerLabel, displayProviderName(entry)]
+            .map((value) => String(value ?? '').toLowerCase());
+        if (haystack.some((value) => value.includes(lower))) {
+            add(entry);
         }
     }
 
@@ -208,6 +219,8 @@ function renderLoginPanel(listElement, manager, body) {
     listElement.replaceChildren();
     listElement.hidden = true;
     body?.classList.add('omtp-manager-open');
+    // About hides the provider column; Sign-in must bring it back.
+    body?.classList.remove('omtp-about-open');
     if (!manager) {
         return;
     }
@@ -249,15 +262,35 @@ function renderModelList(listElement, manager, body) {
         return;
     }
     if (state.currentTab === 'profiles') {
-        renderTabRows(listElement, filteredEntries().filter((entry) => entry.kind === 'profile'), appendRow);
+        const profiles = filteredEntries().filter((entry) => entry.kind === 'profile');
+        if (!profiles.length) {
+            // "No models match your search" hid the real cause: SillyTavern
+            // has no profiles yet, or its Connection Profiles extension is off.
+            appendEmptyState(listElement, tr(
+                'omtp_profiles_empty',
+                'No connection profiles yet — create one in SillyTavern (API settings → Connection Profiles).',
+            ));
+            return;
+        }
+        renderTabRows(listElement, profiles, appendRow);
         return;
     }
     if (state.currentTab === 'favorites') {
-        renderTabRows(listElement, filteredEntries().filter((entry) => isFavoriteEntry(entry)), appendRow);
+        renderTabRows(
+            listElement,
+            filteredEntries().filter((entry) => isFavoriteEntry(entry)),
+            appendRow,
+            tr('omtp_favorites_empty', 'No favorites yet — star a model to pin it here.'),
+        );
         return;
     }
     if (state.currentTab === 'recent') {
-        renderTabRows(listElement, filteredEntries().filter((entry) => isRecentEntry(entry)), appendRow);
+        renderTabRows(
+            listElement,
+            filteredEntries().filter((entry) => isRecentEntry(entry)),
+            appendRow,
+            tr('omtp_recents_empty', 'No recently used models yet.'),
+        );
         return;
     }
     renderDashboard(listElement, appendRow);
@@ -266,9 +299,13 @@ function renderModelList(listElement, manager, body) {
 /**
  * Render a favorites/recents/profiles tab.
  */
-function renderTabRows(listElement, list, appendRow) {
+function renderTabRows(listElement, list, appendRow, emptyText) {
     if (!list.length) {
-        appendEmptyState(listElement, tr('omtp_no_results', 'No models match your search.'));
+        // An empty tab and a search with no hits are different problems; the
+        // search message made an untouched Favorites tab look filtered.
+        appendEmptyState(listElement, state.searchQuery
+            ? tr('omtp_no_results', 'No models match your search.')
+            : emptyText);
         return;
     }
     list.forEach(appendRow);
@@ -348,6 +385,10 @@ function renderDashboard(listElement, appendRow) {
         }
     }
     if (!state.rowEntries.length) {
+        if (!state.catalogLoaded && state.catalogLoading) {
+            appendEmptyState(listElement, tr('omtp_catalog_loading_models', 'Loading models…'));
+            return;
+        }
         appendEmptyState(listElement, tr('omtp_select_provider_hint', 'Pick a provider on the left or search for a model.'));
     }
 }
@@ -364,6 +405,7 @@ function renderRow(entry, index) {
     row.className = 'omtp-model-row';
     row.dataset.key = key;
     row.dataset.index = String(index);
+    row.id = `omtp-row-${index}`;
     row.tabIndex = -1;
     row.setAttribute('role', 'option');
     const selected = state.selectedEntryKey === key;
@@ -380,12 +422,12 @@ function renderRow(entry, index) {
         row.classList.add('omtp-row-flash');
     }
     if (entry.available === false) {
-        row.classList.add('omtp-unavailable', 'omtp-disabled');
+        row.classList.add('omtp-unavailable');
     }
 
     const main = el('div', 'omtp-row-main');
     const name = el('div', 'omtp-row-name', entry.modelLabel || entry.model);
-    const metaParts = [entry.providerLabel || entry.provider, entry.model];
+    const metaParts = [displayProviderName(entry), entry.model];
     if (entry.contextWindow) {
         metaParts.push(formatNumber(entry.contextWindow));
     }
@@ -471,9 +513,23 @@ function selectEntry(entry) {
  * Update row highlight classes without rebuilding the list (keeps scroll).
  */
 export function highlightSelectedRow() {
+    let activeRow = null;
     document.querySelectorAll('#omtp-model-list .omtp-model-row').forEach((row) => {
         const active = row.dataset.key === state.selectedEntryKey;
         row.classList.toggle('omtp-active', active);
         row.setAttribute('aria-selected', String(active));
+        if (active) {
+            activeRow = row;
+        }
     });
+    // The list is a listbox; without this screen readers never hear which row
+    // the arrow keys moved to.
+    const list = document.getElementById('omtp-model-list');
+    if (list) {
+        if (activeRow?.id) {
+            list.setAttribute('aria-activedescendant', activeRow.id);
+        } else {
+            list.removeAttribute('aria-activedescendant');
+        }
+    }
 }

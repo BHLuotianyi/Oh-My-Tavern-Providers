@@ -11,7 +11,7 @@ import { eventSource } from '../../../../../events.js';
 import { PROTECTED_EXTRA_BODY_KEYS, ST_EVENTS } from '../constants.js';
 import { getEntryKey, getSettings, saveSettings } from '../store.js';
 import { captureSelection } from '../switch-engine.js';
-import { tr } from './dom.js';
+import { tr, trf } from './dom.js';
 import { isPlainObject, notify, el } from './helpers.js';
 
 const CLEANUP_KEY = '__omtpExtraBodyCleanup';
@@ -162,10 +162,10 @@ function parseExtraBody(text) {
     try {
         parsed = JSON.parse(text?.trim() ? text : '{}');
     } catch (error) {
-        return { error: `Invalid JSON: ${error.message}` };
+        return { error: trf('omtp_extra_body_invalid_json', 'Invalid JSON: ${0}', error.message) };
     }
     if (!isPlainObject(parsed)) {
-        return { error: 'Extra body must be a JSON object' };
+        return { error: tr('omtp_extra_body_must_object', 'Extra body must be a JSON object') };
     }
     const removed = [];
     for (const key of PROTECTED_EXTRA_BODY_KEYS) {
@@ -225,6 +225,7 @@ function buildExtraBodyEditor(existing) {
     textarea.rows = 12;
     textarea.style.width = '100%';
     textarea.spellcheck = false;
+    textarea.setAttribute('aria-label', tr('omtp_extra_body_editor', 'Extra request body JSON'));
     textarea.value = isPlainObject(existing) ? JSON.stringify(existing, null, 2) : '';
     textarea.placeholder = '{\n  "top_k": 42\n}';
     wrapper.append(textarea);
@@ -248,7 +249,7 @@ function handleEditorClosing(current, { key, label, textarea, errorLine }) {
     if (!raw) {
         delete live.extraBodies[key];
         saveSettings();
-        notify('success', `Extra body removed for ${label}`);
+        notify('success', trf('omtp_extra_body_removed', 'Extra body removed for ${0}', label));
         return true;
     }
 
@@ -258,8 +259,11 @@ function handleEditorClosing(current, { key, label, textarea, errorLine }) {
         return false;
     }
     if (parsed.removed?.length) {
-        errorLine.textContent = `Removed OMTP-managed keys: ${parsed.removed.join(', ')}`;
-        notify('warning', `Key "${parsed.removed[0]}" is managed by OMTP and cannot be overridden`);
+        errorLine.textContent = trf('omtp_extra_body_removed_keys', 'Removed OMTP-managed keys: ${0}', parsed.removed.join(', '));
+        notify(
+            'warning',
+            trf('omtp_extra_body_key_managed', 'Key "${0}" is managed by OMTP and cannot be overridden', parsed.removed[0]),
+        );
     }
     if (Object.keys(parsed.value ?? {}).length === 0) {
         delete live.extraBodies[key];
@@ -267,7 +271,7 @@ function handleEditorClosing(current, { key, label, textarea, errorLine }) {
         live.extraBodies[key] = parsed.value;
     }
     saveSettings();
-    notify('success', `Extra body saved for ${label}`);
+    notify('success', trf('omtp_extra_body_saved', 'Extra body saved for ${0}', label));
     return true;
 }
 
@@ -281,7 +285,7 @@ export async function openExtraBodyEditor(entry) {
     const lastSelection = getSettings().lastSelection;
     const key = resolveKey(entry) || (lastSelection ? getEntryKey(lastSelection) : null);
     if (!key) {
-        notify('error', 'Extra body editor needs a valid model entry');
+        notify('error', tr('omtp_extra_body_need_entry', 'Extra body editor needs a valid model entry'));
         return;
     }
 
@@ -310,11 +314,11 @@ export async function openExtraBodyEditor(entry) {
             if (live.extraBodies?.[key]) {
                 delete live.extraBodies[key];
                 saveSettings();
-                notify('success', `Extra body removed for ${label}`);
+                notify('success', trf('omtp_extra_body_removed', 'Extra body removed for ${0}', label));
             }
         }
     } catch (error) {
         console.warn('[omtp] extra body editor failed', error);
-        notify('error', `Could not open extra body editor: ${error?.message ?? error}`);
+        notify('error', trf('omtp_extra_body_open_failed', 'Could not open extra body editor: ${0}', error?.message ?? error));
     }
 }
