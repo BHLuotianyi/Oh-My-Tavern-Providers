@@ -148,3 +148,159 @@ test('antigravity adapter builds CCA request envelope and parses response', asyn
     assert.equal(json.choices[0].message.content, 'Antigravity answer');
   });
 });
+
+test('antigravity adapter declares tools and round-trips tool calls', async () => {
+  let capturedEnvelope;
+  await withServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    capturedEnvelope = JSON.parse(body);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end('data: ' + JSON.stringify({
+      response: {
+        candidates: [{
+          content: { parts: [{ functionCall: { name: 'get_weather', args: { city: 'Paris' } } }] },
+          finishReason: 'STOP',
+        }],
+      },
+    }) + '\n\n');
+  }, async (baseUrl) => {
+    const response = await antigravity.chat(
+      {
+        model: 'claude-sonnet-4-5',
+        messages: [
+          { role: 'system', content: 'You are terse.' },
+          { role: 'user', content: 'Weather in Paris?' },
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call_abc',
+              type: 'function',
+              function: { name: 'get_weather', arguments: '{"city":"Paris"}' },
+            }],
+          },
+          { role: 'tool', tool_call_id: 'call_abc', content: '{"temp":20}' },
+        ],
+        tools: [{
+          type: 'function',
+          function: {
+            name: 'get_weather',
+            description: 'Get the weather',
+            parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+          },
+        }],
+        tool_choice: { type: 'function', function: { name: 'get_weather' } },
+      },
+      {
+        provider: 'google-antigravity',
+        model: 'claude-sonnet-4-5',
+        baseUrl,
+        apiKey: 'oauth-token-123',
+        extraConfig: { project: 'test-proj' },
+      },
+    );
+    assert.equal(response.status, 200);
+
+    const request = capturedEnvelope.request;
+    assert.deepEqual(request.tools, [{
+      functionDeclarations: [{
+        name: 'get_weather',
+        description: 'Get the weather',
+        parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+      }],
+    }]);
+    assert.deepEqual(request.toolConfig, {
+      functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['get_weather'] },
+    });
+
+    const modelTurn = request.contents.find((content) => content.role === 'model');
+    assert.deepEqual(modelTurn.parts, [{
+      functionCall: { name: 'get_weather', args: { city: 'Paris' }, id: 'call_abc' },
+    }]);
+    const toolTurn = request.contents.find((content) => content.parts.some((part) => part.functionResponse));
+    assert.deepEqual(toolTurn.parts, [{
+      functionResponse: { name: 'get_weather', response: { output: '{"temp":20}' }, id: 'call_abc' },
+    }]);
+
+    const json = await response.json();
+    assert.equal(json.choices[0].message.tool_calls[0].function.name, 'get_weather');
+    assert.equal(json.choices[0].finish_reason, 'tool_calls');
+  });
+});
+
+test('antigravity adapter omits tools and toolConfig when no tools are sent', async () => {
+  let capturedEnvelope;
+  await withServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    capturedEnvelope = JSON.parse(body);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end('data: ' + JSON.stringify({
+      response: { candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] },
+    }) + '\n\n');
+  }, async (baseUrl) => {
+    const response = await antigravity.chat(
+      { model: 'claude-sonnet-4-5', messages: [{ role: 'user', content: 'hello' }] },
+      {
+        provider: 'google-antigravity',
+        model: 'claude-sonnet-4-5',
+        baseUrl,
+        apiKey: 'oauth-token-123',
+        extraConfig: { project: 'test-proj' },
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.equal(capturedEnvelope.request.tools, undefined);
+    assert.equal(capturedEnvelope.request.toolConfig, undefined);
+  });
+});
+
+test('antigravity adapter signs the first Gemini function call', async () => {
+  let capturedEnvelope;
+  await withServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    capturedEnvelope = JSON.parse(body);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end('data: ' + JSON.stringify({
+      response: { candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] },
+    }) + '\n\n');
+  }, async (baseUrl) => {
+    const response = await antigravity.chat(
+      {
+        model: 'gemini-3.6-flash',
+        messages: [
+          { role: 'user', content: 'Weather in Paris?' },
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [{
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'get_weather', arguments: '{"city":"Paris"}' },
+            }],
+          },
+        ],
+        tools: [{ type: 'function', function: { name: 'get_weather', parameters: { type: 'object', properties: {} } } }],
+      },
+      {
+        provider: 'google-gemini-cli',
+        model: 'gemini-3.6-flash',
+        baseUrl,
+        apiKey: 'oauth-token-123',
+      },
+    );
+    assert.equal(response.status, 200);
+    const request = capturedEnvelope.request;
+    assert.deepEqual(request.tools, [{
+      functionDeclarations: [{ name: 'get_weather', parameters: { type: 'object', properties: {} } }],
+    }]);
+    assert.equal(request.toolConfig, undefined);
+    const modelTurn = request.contents.find((content) => content.role === 'model');
+    assert.deepEqual(modelTurn.parts, [{
+      functionCall: { name: 'get_weather', args: { city: 'Paris' } },
+      thoughtSignature: 'skip_thought_signature_validator',
+    }]);
+  });
+});

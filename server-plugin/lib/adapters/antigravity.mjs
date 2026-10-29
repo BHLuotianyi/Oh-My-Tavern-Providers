@@ -9,8 +9,11 @@
  *   - Discovery: `POST /v1internal:fetchAvailableModels`.
  *   - User-Agent: `antigravity/hub/<version> (aidev_client; os_type=darwin; arch=arm64; cl=963137146)`
  *     or `GeminiCLI/0.46.0/<model> (<platform>; <arch>; terminal)`.
- *   - Claude models on Antigravity send `anthropic-beta: interleaved-thinking-2025-05-14`
- *     and force `toolConfig.functionCallingConfig.mode = "VALIDATED"`.
+ *   - Claude models on Antigravity send `anthropic-beta: interleaved-thinking-2025-05-14`.
+ *     Antigravity tool requests default `toolConfig.functionCallingConfig.mode` to
+ *     "VALIDATED"; a non-auto `tool_choice` replaces it.
+ *   - Tool calls cross the wire as Gemini `functionCall` parts and tool results as
+ *     `functionResponse` parts keyed by the assistant call's `tool_call_id`.
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -22,6 +25,7 @@ import {
   newCompletionId,
   parseJsonObject,
   sseResponse,
+  translateFunctionTools,
   trimSlash,
   upstreamErrorResponse,
 } from './openai.mjs';
@@ -34,6 +38,9 @@ const ANTIGRAVITY_PRIMARY_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com'
 const ANTIGRAVITY_SANDBOX_ENDPOINT = 'https://daily-cloudcode-pa.sandbox.googleapis.com';
 const GEMINI_CLI_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
 export const DEFAULT_ANTIGRAVITY_VERSION = '2.19.1';
+
+/** Bypass value Cloud Code Assist accepts in place of a Gemini thought signature. */
+const SKIP_THOUGHT_SIGNATURE = 'skip_thought_signature_validator';
 
 const DISCOVERY_DENYLIST = new Set(['chat_20706', 'chat_23310', 'gemini-2.5-pro']);
 
@@ -77,9 +84,46 @@ function buildAntigravityHeaders(ctx, isClaude = false) {
   return { ...headers, ...(ctx?.headers || {}) };
 }
 
-function convertMessagesToCCA(messages) {
+/** Gemini 3+ on Cloud Code Assist rejects an unsigned first function call. */
+function requiresFirstCallSignature(model) {
+  const revision = /^gemini-(\d+)/i.exec(model);
+  return Boolean(revision) && Number(revision[1]) >= 3;
+}
+
+/**
+ * Convert chat messages into CCA `contents`, mapping assistant `tool_calls` to
+ * `functionCall` parts and `role: 'tool'` results to `functionResponse` parts.
+ * Responses are named from the assistant call that shares their `tool_call_id`,
+ * because Gemini requires a non-empty `functionResponse.name`.
+ * @param {any[]} messages OpenAI-shaped messages.
+ * @param {string} model Wire model id.
+ * @returns {{systemParts: {text: string}[], contents: {role: string, parts: any[]}[]}}
+ */
+function convertMessagesToCCA(messages, model) {
   const systemParts = [];
   const contents = [];
+  const toolNames = new Map();
+  // Claude routes on CCA pair calls with responses through function-part ids.
+  const includeIds = /claude/i.test(model);
+  const needsSignature = requiresFirstCallSignature(model);
+
+  const append = (role, parts) => {
+    if (parts.length === 0) return;
+    const prev = contents[contents.length - 1];
+    if (prev && prev.role === role) prev.parts.push(...parts);
+    else contents.push({ role, parts });
+  };
+
+  // Cloud Code Assist requires all function responses in one contiguous user turn.
+  const appendToolResponse = (part) => {
+    const prev = contents[contents.length - 1];
+    if (prev && prev.role === 'user' && prev.parts.some((item) => item.functionResponse)) {
+      prev.parts.push(part);
+    } else {
+      contents.push({ role: 'user', parts: [part] });
+    }
+  };
+
   for (const message of Array.isArray(messages) ? messages : []) {
     if (!message || typeof message !== 'object') continue;
     if (message.role === 'system' || message.role === 'developer') {
@@ -87,14 +131,70 @@ function convertMessagesToCCA(messages) {
       if (text) systemParts.push({ text });
       continue;
     }
-    const role = message.role === 'assistant' ? 'model' : 'user';
+    if (message.role === 'tool' || message.role === 'function') {
+      const callId = message.tool_call_id || message.name;
+      appendToolResponse({
+        functionResponse: {
+          name: toolNames.get(callId) || message.name || message.tool_call_id || 'tool',
+          response: { output: contentToText(message.content) },
+          ...(includeIds && callId ? { id: callId } : {}),
+        },
+      });
+      continue;
+    }
+    if (message.role === 'assistant') {
+      const parts = [];
+      const text = contentToText(message.content);
+      if (text) parts.push({ text });
+      for (const call of message.tool_calls || []) {
+        const fn = call.function || call;
+        const name = fn.name || call.name || 'tool';
+        if (call.id) toolNames.set(call.id, name);
+        parts.push({
+          functionCall: {
+            name,
+            args: parseJsonObject(fn.arguments ?? call.arguments),
+            ...(includeIds && call.id ? { id: call.id } : {}),
+          },
+        });
+      }
+      // Replayed calls carry no signature, so the bypass sentinel is required
+      // on the first call of the turn (secondary parallel calls stay bare).
+      const firstCall = parts.findIndex((part) => part.functionCall);
+      if (needsSignature && firstCall !== -1) {
+        parts[firstCall].thoughtSignature = SKIP_THOUGHT_SIGNATURE;
+      }
+      append('model', parts);
+      continue;
+    }
     const text = contentToText(message.content);
-    if (!text) continue;
-    const prev = contents[contents.length - 1];
-    if (prev && prev.role === role) prev.parts.push({ text });
-    else contents.push({ role, parts: [{ text }] });
+    if (text) append('user', [{ text }]);
   }
   return { systemParts, contents };
+}
+
+/** Wrap OpenAI tool definitions as one Gemini `tools` entry. */
+function translateTools(tools) {
+  const declarations = translateFunctionTools(tools, 'parameters');
+  return declarations.length > 0 ? [{ functionDeclarations: declarations }] : [];
+}
+
+/**
+ * Translate an OpenAI `tool_choice` into Gemini's `functionCallingConfig`.
+ * `auto` and unknown values keep the wire default (no config), like OMP's
+ * Cloud Code Assist request builder.
+ * @param {any} choice
+ * @returns {{functionCallingConfig: {mode: string, allowedFunctionNames?: string[]}}|undefined}
+ */
+function translateToolConfig(choice) {
+  if (!choice || choice === 'auto') return undefined;
+  if (choice === 'none') return { functionCallingConfig: { mode: 'NONE' } };
+  if (choice === 'required' || choice === 'any') return { functionCallingConfig: { mode: 'ANY' } };
+  if (typeof choice === 'object') {
+    const name = choice.function?.name || choice.name;
+    if (name) return { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [name] } };
+  }
+  return undefined;
 }
 
 function mapAntigravityWireModel(model, effort = 'low') {
@@ -111,7 +211,7 @@ function buildEnvelope(req, ctx, project) {
   const rawModel = String(ctx?.model || req?.model || 'gemini-3.1-pro');
   const model = mapAntigravityWireModel(rawModel, req?.reasoning_effort);
   const isClaude = model.toLowerCase().includes('claude');
-  const { systemParts, contents } = convertMessagesToCCA(req?.messages);
+  const { systemParts, contents } = convertMessagesToCCA(req?.messages, model);
 
   const generationConfig = {};
   if (req?.temperature != null) generationConfig.temperature = Number(req.temperature);
@@ -132,8 +232,16 @@ function buildEnvelope(req, ctx, project) {
   }
   if (Object.keys(generationConfig).length > 0) inner.generationConfig = generationConfig;
 
-  if (!isGeminiCli && isClaude) {
-    inner.toolConfig = { functionCallingConfig: { mode: 'VALIDATED' } };
+  const tools = translateTools(req?.tools);
+  if (tools.length > 0) {
+    inner.tools = tools;
+    const toolConfig = translateToolConfig(req?.tool_choice);
+    if (toolConfig) {
+      inner.toolConfig = toolConfig;
+    } else if (!isGeminiCli) {
+      // Antigravity's default tool mode, required by its Claude routes.
+      inner.toolConfig = { functionCallingConfig: { mode: 'VALIDATED' } };
+    }
   }
 
   if (isGeminiCli) {
