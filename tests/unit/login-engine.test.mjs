@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import {
     buildAuthorizeUrl,
     cancelLogin,
@@ -164,7 +165,7 @@ test('openai-codex-device hook requests a user code and polls the device endpoin
         hook: 'openai-codex-device',
     }, { keyStore: {}, doFetch, env: { OMTP_OPENAI_CODEX_CLIENT_ID: 'test-codex-client' } });
 
-    assert.equal(started.kind, 'device-code');
+    assert.equal(started.kind, 'custom');
     assert.equal(started.userCode, 'ABCD-1234');
     assert.match(started.url, /^https:\/\/auth\.openai\.com\/codex\/device$/);
     assert.equal(calls[0].url, 'https://auth.openai.com/api/accounts/deviceauth/usercode');
@@ -172,6 +173,28 @@ test('openai-codex-device hook requests a user code and polls the device endpoin
 
     // Leave no polling loop behind.
     assert.equal(cancelLogin(started.id), true);
+});
+
+test('openai-codex-device hook falls back to the catalog client id', async () => {
+    const calls = [];
+    const doFetch = async (url, init) => {
+        calls.push({ url: String(url), body: init?.body });
+        if (String(url).endsWith('/usercode')) {
+            return new Response(JSON.stringify({ device_auth_id: 'dev-1', user_code: 'ABCD-1234', interval: 0 }), { status: 200 });
+        }
+        throw new Error(`unexpected ${url}`);
+    };
+    const started = await startLogin('openai-codex', {
+        kind: 'custom',
+        hook: 'openai-codex-device',
+        clientId: { value: 'catalog-codex-client', env: ['OMTP_OPENAI_CODEX_CLIENT_ID'] },
+    }, { keyStore: {}, doFetch, env: {} });
+    try {
+        assert.equal(calls[0].url, 'https://auth.openai.com/api/accounts/deviceauth/usercode');
+        assert.match(calls[0].body, /catalog-codex-client/);
+    } finally {
+        cancelLogin(started.id);
+    }
 });
 
 test('openai-codex-device hook exchanges authorization code with resolved client_id and stores credential', async () => {
@@ -314,6 +337,301 @@ test('oauth-code exchange sends the locally resolved client id', async () => {
         assert.equal(body.client_id, 'local-client-id');
         assert.equal(body.code, 'auth-code');
         assert.ok(stored.anthropic?.apiKey, 'expected the credential to be stored');
+    } finally {
+        cancelLogin(started.id);
+    }
+});
+
+test('callback reports the real exchange result and stays retryable', async () => {
+    const port = 51_000 + Math.floor(Math.random() * 8_000);
+    let attempts = 0;
+    // First exchange fails the way a proxy-blocked machine fails; the retry works.
+    const doFetch = async () => {
+        attempts += 1;
+        if (attempts === 1) throw new TypeError('fetch failed');
+        return new Response(JSON.stringify({ access_token: 'access', refresh_token: 'refresh', expires_in: 3600 }), { status: 200 });
+    };
+    const stored = {};
+    const policy = {
+        ...anthropicPolicy,
+        callback: { hostname: '127.0.0.1', port, path: '/callback' },
+    };
+    const started = await startLogin('anthropic', policy, {
+        keyStore: { async setProviderConfig(target, patch) { stored[target] = patch; } },
+        doFetch,
+    });
+    try {
+        const state = new URL(started.url).searchParams.get('state');
+        const callbackUrl = `http://127.0.0.1:${port}/callback?code=auth-code&state=${state}`;
+        const response = await fetch(callbackUrl);
+        const html = await response.text();
+
+        // The page must not claim success when the token exchange failed.
+        assert.equal(response.status, 400);
+        assert.match(html, /Login failed/);
+        assert.ok(html.includes(callbackUrl.replace(/&/g, '&amp;')), 'the page shows the URL to paste');
+        assert.match(html, /paste it into the input box/);
+        assert.equal(getSession(started.id).status, 'error');
+
+        // Pasting that URL into SillyTavern retries instead of failing with
+        // "Login is already error".
+        const session = await submitCode(started.id, callbackUrl);
+        assert.equal(session.status, 'done');
+        assert.ok(stored.anthropic?.apiKey, 'expected the retry to store the credential');
+    } finally {
+        cancelLogin(started.id);
+    }
+});
+
+test('sweep aborts a background device poll', async () => {
+    const doFetch = async (url) => {
+        if (String(url).endsWith('/usercode')) {
+            return new Response(JSON.stringify({ device_auth_id: 'dev-1', user_code: 'ABCD-1234', interval: 0 }), { status: 200 });
+        }
+        return new Response('pending', { status: 403 });
+    };
+    const started = await startLogin('openai-codex', {
+        kind: 'custom',
+        hook: 'openai-codex-device',
+    }, { keyStore: {}, doFetch, env: { OMTP_OPENAI_CODEX_CLIENT_ID: 'test-codex-client' } });
+    const session = getSession(started.id);
+    assert.equal(session.controller.signal.aborted, false);
+
+    // Any session lookup sweeps expired sessions.
+    session.startedAt = Date.now() - 11 * 60_000;
+    getSession('missing');
+
+    assert.equal(session.controller.signal.aborted, true);
+    assert.equal(getSession(started.id), null);
+});
+
+test('a declared loopback redirect URI is advertised verbatim and bound', async () => {
+    const port = 52_000 + Math.floor(Math.random() * 8_000);
+    const redirectUri = `http://127.0.0.1:${port}/custom/callback`;
+    const stored = {};
+    const policy = {
+        ...anthropicPolicy,
+        clientId: { value: '', env: ['OMTP_ANTHROPIC_CLIENT_ID'] },
+        callback: {
+            port: 1,
+            path: '/callback',
+            hostname: 'localhost',
+            portFallback: false,
+            redirectUri: { value: redirectUri },
+        },
+    };
+    const started = await startLogin('anthropic', policy, {
+        keyStore: { async setProviderConfig(target, patch) { stored[target] = patch; } },
+        env: { OMTP_ANTHROPIC_CLIENT_ID: 'local-client-id' },
+        doFetch: async () => new Response(JSON.stringify({ access_token: 'access', refresh_token: 'refresh', expires_in: 3600 }), { status: 200 }),
+    });
+    try {
+        assert.equal(started.redirectUri, redirectUri);
+        assert.equal(started.manual, false);
+        assert.equal(new URL(started.url).searchParams.get('redirect_uri'), redirectUri);
+
+        // The listener follows the declared URI's path, not the policy's.
+        const wrongPath = await fetch(`http://127.0.0.1:${port}/callback?code=x`);
+        assert.equal(wrongPath.status, 404);
+
+        const state = new URL(started.url).searchParams.get('state');
+        const response = await fetch(`${redirectUri}?code=auth-code&state=${state}`);
+        assert.equal(response.status, 200);
+        assert.equal(getSession(started.id).status, 'done');
+        assert.ok(stored.anthropic?.apiKey, 'expected the credential to be stored');
+    } finally {
+        cancelLogin(started.id);
+    }
+});
+
+test('a non-http redirect URI starts no listener and asks for a pasted code', async () => {
+    const policy = {
+        ...anthropicPolicy,
+        clientId: { value: 'client-id' },
+        callback: {
+            port: 0,
+            path: '/callback',
+            hostname: 'localhost',
+            manualOnly: true,
+            nativeScheme: true,
+            redirectUri: { value: 'zcode://zai-auth/callback' },
+        },
+    };
+    const started = await startLogin('zai-coding-plan', policy, {
+        keyStore: { async setProviderConfig() {} },
+        doFetch: async () => new Response(JSON.stringify({ access_token: 'access', expires_in: 3600 }), { status: 200 }),
+    });
+    try {
+        assert.equal(started.redirectUri, 'zcode://zai-auth/callback');
+        assert.equal(started.manual, true);
+        assert.equal(getSession(started.id).server, undefined);
+        assert.equal(new URL(started.url).searchParams.get('redirect_uri'), 'zcode://zai-auth/callback');
+        // The catalog's generic instructions stay, followed by our explanation.
+        assert.match(started.instructions, /no OS handler/i);
+        assert.match(started.instructions, /paste it into SillyTavern/i);
+
+        await submitCode(started.id, 'auth-code');
+        assert.equal(getSession(started.id).status, 'done');
+    } finally {
+        cancelLogin(started.id);
+    }
+});
+
+test('manualOnly policies never bind the callback port', async () => {
+    const port = 54_000 + Math.floor(Math.random() * 5_000);
+    const policy = {
+        ...anthropicPolicy,
+        clientId: { value: 'client-id' },
+        callback: { port, path: '/callback', hostname: '127.0.0.1', manualOnly: true },
+    };
+    const started = await startLogin('anthropic', policy, {
+        keyStore: { async setProviderConfig() {} },
+        doFetch: async () => { throw new Error('must not exchange'); },
+    });
+    try {
+        assert.equal(started.manual, true);
+        assert.equal(started.redirectUri, `http://127.0.0.1:${port}/callback`);
+        assert.match(started.instructions, /manual entry/i);
+        assert.equal(getSession(started.id).server, undefined);
+        await assert.rejects(fetch(`http://127.0.0.1:${port}/callback?code=x`));
+    } finally {
+        cancelLogin(started.id);
+    }
+});
+
+test('a busy callback port degrades to manual paste instead of a dead redirect', async () => {
+    const port = 55_000 + Math.floor(Math.random() * 4_500);
+    const blocker = http.createServer((req, res) => res.end('blocked'));
+    await new Promise((resolve) => blocker.listen(port, '127.0.0.1', resolve));
+    const stored = {};
+    const policy = {
+        ...anthropicPolicy,
+        clientId: { value: 'client-id' },
+        callback: { port, path: '/callback', hostname: '127.0.0.1' },
+    };
+    const started = await startLogin('anthropic', policy, {
+        keyStore: { async setProviderConfig(target, patch) { stored[target] = patch; } },
+        doFetch: async () => new Response(JSON.stringify({ access_token: 'access', expires_in: 3600 }), { status: 200 }),
+    });
+    try {
+        assert.equal(started.manual, true);
+        assert.match(started.instructions, /already in use/i);
+        assert.match(started.instructions, /EADDRINUSE/);
+        assert.equal(getSession(started.id).server, undefined);
+
+        // The flow stays usable: the code can still be pasted in.
+        await submitCode(started.id, 'auth-code');
+        assert.equal(getSession(started.id).status, 'done');
+        assert.ok(stored.anthropic?.apiKey, 'expected the pasted exchange to store the credential');
+    } finally {
+        cancelLogin(started.id);
+        await new Promise((resolve) => blocker.close(resolve));
+    }
+});
+
+test('zai-mint-key stores the durable key minted after the exchange', async () => {
+    const stored = {};
+    const calls = [];
+    const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
+    const doFetch = async (url, init) => {
+        const href = String(url);
+        calls.push({ url: href, body: init?.body ? String(init.body) : '' });
+        if (href === 'https://zcode.z.ai/api/v1/oauth/token') {
+            return json({ code: 0, data: { zai: { access_token: 'oauth-access' } }, refresh_token: 'refresh-1' });
+        }
+        if (href === 'https://api.z.ai/api/auth/z/login') {
+            return json({ code: 200, data: { access_token: 'biz-token' } });
+        }
+        if (href === 'https://api.z.ai/api/biz/customer/getCustomerInfo') {
+            return json({
+                code: 200,
+                data: {
+                    organizations: [{
+                        organizationId: 'org-1',
+                        isDefault: true,
+                        projects: [{ projectId: 'proj-1', isDefault: true }],
+                    }],
+                },
+            });
+        }
+        if (href === 'https://api.z.ai/api/biz/v1/organization/org-1/projects/proj-1/api_keys') {
+            return init?.method === 'POST'
+                ? json({ code: 200, data: { apiKey: 'key-1' } })
+                : json({ code: 200, data: { list: [] } });
+        }
+        if (href === 'https://api.z.ai/api/biz/v1/organization/org-1/projects/proj-1/api_keys/copy/key-1') {
+            return json({ code: 200, data: { secretKey: 'secret-1' } });
+        }
+        throw new Error(`unexpected ${href}`);
+    };
+    const policy = {
+        kind: 'oauth-code',
+        scopes: [],
+        pkce: false,
+        state: 'hex',
+        standardAuthorizeParams: true,
+        clientId: { value: 'zai-client' },
+        authorizeUrl: { value: 'https://chat.z.ai/api/oauth/authorize' },
+        callback: {
+            port: 0,
+            path: '/callback',
+            hostname: 'localhost',
+            manualOnly: true,
+            nativeScheme: true,
+            redirectUri: { value: 'zcode://zai-auth/callback' },
+        },
+        token: {
+            url: { value: 'https://zcode.z.ai/api/v1/oauth/token' },
+            body: 'json',
+            standard: false,
+            params: { provider: 'zai', code: '{code}', redirect_uri: '{redirect_uri}', state: '{state}' },
+        },
+        afterExchange: 'zai-mint-key',
+        credential: {
+            access: { path: 'data.zai.access_token' },
+            refresh: { path: 'refresh_token' },
+            expires: { mode: 'never' },
+        },
+        storeAs: 'zai',
+    };
+    const started = await startLogin('zai-coding-plan', policy, {
+        keyStore: { async setProviderConfig(target, patch) { stored[target] = patch; } },
+        doFetch,
+        env: {},
+    });
+    try {
+        await submitCode(started.id, 'auth-code');
+        const session = getSession(started.id);
+        assert.equal(session.status, 'done');
+        assert.equal(session.credential.access, 'key-1.secret-1');
+        assert.equal(JSON.parse(stored.zai.apiKey).access, 'key-1.secret-1');
+
+        const tokenCall = calls.find((call) => call.url.endsWith('/oauth/token'));
+        assert.equal(JSON.parse(tokenCall.body).redirect_uri, 'zcode://zai-auth/callback');
+    } finally {
+        cancelLogin(started.id);
+    }
+});
+
+test('an unknown after-exchange hook leaves the login successful', async () => {
+    const port = 56_000 + Math.floor(Math.random() * 3_000);
+    const stored = {};
+    const policy = {
+        ...anthropicPolicy,
+        clientId: { value: 'client-id' },
+        callback: { port, path: '/callback', hostname: '127.0.0.1' },
+        afterExchange: 'not-implemented-here',
+    };
+    const started = await startLogin('anthropic', policy, {
+        keyStore: { async setProviderConfig(target, patch) { stored[target] = patch; } },
+        doFetch: async () => new Response(JSON.stringify({ access_token: 'access', expires_in: 3600 }), { status: 200 }),
+    });
+    try {
+        await submitCode(started.id, 'auth-code');
+        const session = getSession(started.id);
+        assert.equal(session.status, 'done');
+        assert.equal(session.credential.access, 'access');
+        assert.equal(JSON.parse(stored.anthropic.apiKey).access, 'access');
     } finally {
         cancelLogin(started.id);
     }

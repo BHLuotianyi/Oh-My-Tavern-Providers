@@ -11,7 +11,7 @@
  * The client id is resolved locally (env or `data/omtp/oauth-clients.json`),
  * never shipped in this file.
  */
-import { clientEnvNames } from '../oauth-clients.mjs';
+import { clientEnvNames, policyValue } from '../oauth-clients.mjs';
 
 const CLIENT_ID_ENV = clientEnvNames('openai-codex').clientId[0];
 
@@ -108,11 +108,13 @@ async function exchangeCode(code, verifier, clientId, doFetch) {
 /**
  * Start the device flow.
  *
- * @param {{doFetch?: typeof fetch, signal?: AbortSignal}} deps
+ * @param {{providerId?: string, login?: any, env?: Record<string,string|undefined>, doFetch?: typeof fetch, signal?: AbortSignal}} deps
  * @returns {Promise<{url: string, userCode: string, instructions: string, waitForCompletion: (deps?: {signal?: AbortSignal}) => Promise<any>}>}
  */
-export async function startOpenAICodexDevice({ providerId = 'openai-codex', env = process.env, doFetch = fetch, signal } = {}) {
-    const clientId = String(env?.[CLIENT_ID_ENV] || '');
+export async function startOpenAICodexDevice({ providerId = 'openai-codex', login, env = process.env, doFetch = fetch, signal } = {}) {
+    // The catalog carries this flow's public client id; the env var (fed from
+    // `data/omtp/oauth-clients.json` by the login route) is the override.
+    const clientId = String(env?.[CLIENT_ID_ENV] || policyValue(login?.clientId, env));
     if (!clientId) {
         throw new Error(
             `OAuth client credentials for ${providerId} are not configured; `
