@@ -7,6 +7,7 @@ import {
     getOmtpRoot,
     omtpPath,
     readJsonFile,
+    writeFileAtomic,
     writeJsonAtomic,
 } from './config.mjs';
 import { buildProviderConfig, isKeylessProvider, isSupportedAdapter } from './provider-config.mjs';
@@ -93,6 +94,10 @@ export class KeyStore {
         this.env = options.env || process.env;
         /** @type {Buffer|null} */
         this._masterKey = null;
+        /** @type {Promise<Buffer>|null} */
+        this._masterKeyPromise = null;
+        /** Serializes read-modify-write cycles on `providers.json`. */
+        this._mutations = Promise.resolve();
     }
 
     /**
@@ -100,6 +105,22 @@ export class KeyStore {
      */
     async ensureMasterKey() {
         if (this._masterKey) return this._masterKey;
+        // Concurrent first calls must share one key: the loser of a generate
+        // race would otherwise encrypt under a key that is no longer on disk.
+        this._masterKeyPromise ??= this._loadOrCreateMasterKey();
+        try {
+            return await this._masterKeyPromise;
+        } catch (error) {
+            // Do not memoize a failed load; a transient read error is retryable.
+            this._masterKeyPromise = null;
+            throw error;
+        }
+    }
+
+    /**
+     * @returns {Promise<Buffer>}
+     */
+    async _loadOrCreateMasterKey() {
         const keyPath = omtpPath(this.root, MASTER_KEY_FILE);
         try {
             const raw = (await fs.promises.readFile(keyPath, 'utf8')).trim();
@@ -114,14 +135,8 @@ export class KeyStore {
                 throw new KeyStoreUnreadableError();
             }
         }
-        await ensureOmtpRoot(this.root);
         const key = crypto.randomBytes(32);
-        await fs.promises.writeFile(keyPath, `${key.toString('hex')}\n`, { mode: 0o600 });
-        try {
-            await fs.promises.chmod(keyPath, 0o600);
-        } catch {
-            // Best effort.
-        }
+        await writeFileAtomic(keyPath, `${key.toString('hex')}\n`, 0o600);
         this._masterKey = key;
         return key;
     }
@@ -168,18 +183,22 @@ export class KeyStore {
      * @returns {Promise<Record<string, string>>}
      */
     async readEncryptedProviders() {
+        let raw;
         try {
-            const raw = await readJsonFile(omtpPath(this.root, PROVIDERS_FILE));
-            if (!raw || !isPlainObject(raw.providers)) return {};
-            /** @type {Record<string,string>} */
-            const out = {};
-            for (const [id, blob] of Object.entries(raw.providers)) {
-                if (typeof blob === 'string') out[id] = blob;
-            }
-            return out;
-        } catch {
-            return {};
+            raw = await readJsonFile(omtpPath(this.root, PROVIDERS_FILE));
+        } catch (error) {
+            // A corrupt file is not an empty store: treating it as one would
+            // overwrite ciphertext that may still be recoverable.
+            logError('providers.json is unreadable', error);
+            throw new KeyStoreUnreadableError();
         }
+        if (!raw || !isPlainObject(raw.providers)) return {};
+        /** @type {Record<string,string>} */
+        const out = {};
+        for (const [id, blob] of Object.entries(raw.providers)) {
+            if (typeof blob === 'string') out[id] = blob;
+        }
+        return out;
     }
 
     /**
@@ -188,6 +207,26 @@ export class KeyStore {
     async writeEncryptedProviders(providers) {
         await ensureOmtpRoot(this.root);
         await writeJsonAtomic(omtpPath(this.root, PROVIDERS_FILE), { providers });
+    }
+
+    /**
+     * Run one read-modify-write cycle under the store's mutation lock.
+     * `providers.json` is re-read inside the lock, so concurrent writers cannot
+     * drop each other's credentials or resurrect a cleared key.
+     * @template T
+     * @param {(providers: Record<string, string>) => Promise<{result: T, providers?: Record<string, string>}>} mutate
+     * @returns {Promise<T>}
+     */
+    async _mutate(mutate) {
+        const run = this._mutations.then(async () => {
+            const providers = await this.readEncryptedProviders();
+            const { result, providers: next } = await mutate(providers);
+            if (next) await this.writeEncryptedProviders(next);
+            return result;
+        });
+        // A failed mutation must not poison the queue for later callers.
+        this._mutations = run.then(() => undefined, () => undefined);
+        return run;
     }
 
     /**
@@ -225,54 +264,51 @@ export class KeyStore {
         if (!/^[a-z0-9][a-z0-9._-]*$/i.test(String(providerId || ''))) {
             throw new Error('Invalid provider id');
         }
-        const providers = await this.readEncryptedProviders();
-        /** @type {Record<string, any>} */
-        let existing = {};
-        if (providers[providerId]) {
-            try {
-                existing = await this.decrypt(providers[providerId]);
-            } catch {
-                existing = {};
-            }
-        }
+        return this._mutate(async (providers) => {
+            // Never replace an unreadable config: its ciphertext may still be
+            // recoverable, and silently overwriting it loses that chance.
+            const existing = providers[providerId]
+                ? await this.decrypt(providers[providerId])
+                : {};
 
-        /** @type {Record<string, any>} */
-        const next = { ...existing, id: providerId };
-        for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'apiKey']) {
-            if (!(key in patch)) continue;
-            const value = patch[key];
-            if (key === 'apiKey') {
-                next.apiKey = typeof value === 'string' ? value.trim() : '';
-                continue;
+            /** @type {Record<string, any>} */
+            const next = { ...existing, id: providerId };
+            for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'apiKey', 'ignoreStSecret']) {
+                if (!(key in patch)) continue;
+                const value = patch[key];
+                if (key === 'apiKey') {
+                    next.apiKey = typeof value === 'string' ? value.trim() : '';
+                    continue;
+                }
+                if (key === 'headers' || key === 'extraConfig') {
+                    if (value === null) delete next[key];
+                    else if (isPlainObject(value)) next[key] = value;
+                    continue;
+                }
+                if (key === 'models') {
+                    const models = normalizeModels(value);
+                    if (models) next.models = models;
+                    continue;
+                }
+                if (key === 'custom' || key === 'ignoreStSecret') {
+                    if (value === false || value === null) delete next[key];
+                    else next[key] = Boolean(value);
+                    continue;
+                }
+                if (key === 'adapter') {
+                    if (value === null || value === '') delete next.adapter;
+                    else if (isSupportedAdapter(value)) next.adapter = String(value);
+                    else throw new Error(`Unsupported adapter: ${value}`);
+                    continue;
+                }
+                if (value === null || value === '') delete next[key];
+                else next[key] = String(value);
             }
-            if (key === 'headers' || key === 'extraConfig') {
-                if (value === null) delete next[key];
-                else if (isPlainObject(value)) next[key] = value;
-                continue;
-            }
-            if (key === 'models') {
-                const models = normalizeModels(value);
-                if (models) next.models = models;
-                continue;
-            }
-            if (key === 'custom') {
-                next.custom = Boolean(value);
-                continue;
-            }
-            if (key === 'adapter') {
-                if (value === null || value === '') delete next.adapter;
-                else if (isSupportedAdapter(value)) next.adapter = String(value);
-                else throw new Error(`Unsupported adapter: ${value}`);
-                continue;
-            }
-            if (value === null || value === '') delete next[key];
-            else next[key] = String(value);
-        }
 
-        next.updatedAt = Date.now();
-        providers[providerId] = await this.encrypt(next);
-        await this.writeEncryptedProviders(providers);
-        return this.publicConfig(next);
+            next.updatedAt = Date.now();
+            providers[providerId] = await this.encrypt(next);
+            return { providers, result: this.publicConfig(next) };
+        });
     }
 
     /**
@@ -281,15 +317,22 @@ export class KeyStore {
      * @returns {Promise<Record<string, any>>}
      */
     async clearProviderKey(providerId) {
-        const { config, unreadable } = await this.getConfigSafe(providerId);
-        if (unreadable) throw new KeyStoreUnreadableError();
-        if (!config || Object.keys(config).length === 0) return {};
-        delete config.apiKey;
-        config.updatedAt = Date.now();
-        const providers = await this.readEncryptedProviders();
-        providers[providerId] = await this.encrypt(config);
-        await this.writeEncryptedProviders(providers);
-        return this.publicConfig(config);
+        return this._mutate(async (providers) => {
+            // Unlike `setProviderConfig`, this path keeps the existing
+            // KeyStoreUnreadableError: signing out of unreadable data cannot
+            // be done safely.
+            const base = providers[providerId]
+                ? await this.decrypt(providers[providerId])
+                : {};
+            // A key can come from SillyTavern's own secrets instead of this store;
+            // clearing must opt out of that fallback, or "Sign out" changes nothing.
+            base.ignoreStSecret = true;
+            const next = { ...base };
+            delete next.apiKey;
+            next.updatedAt = Date.now();
+            providers[providerId] = await this.encrypt(next);
+            return { providers, result: this.publicConfig(next) };
+        });
     }
 
     /**
@@ -298,11 +341,11 @@ export class KeyStore {
      * @returns {Promise<boolean>}
      */
     async deleteProviderConfig(providerId) {
-        const providers = await this.readEncryptedProviders();
-        if (!(providerId in providers)) return false;
-        delete providers[providerId];
-        await this.writeEncryptedProviders(providers);
-        return true;
+        return this._mutate(async (providers) => {
+            if (!(providerId in providers)) return { result: false };
+            delete providers[providerId];
+            return { providers, result: true };
+        });
     }
 
     /**
@@ -350,7 +393,7 @@ export class KeyStore {
         /** @type {'omtp'|'st'|'env'|'none'} */
         let keySource = apiKey ? 'omtp' : 'none';
 
-        if (!apiKey && this.resolveStSecret) {
+        if (!apiKey && this.resolveStSecret && stored.ignoreStSecret !== true) {
             try {
                 const value = this.resolveStSecret(providerId);
                 if (typeof value === 'string' && value.trim()) {
