@@ -62,6 +62,17 @@ function toIso(value) {
 }
 
 /**
+ * Reset timestamp for a relative field (seconds until reset) such as
+ * `resets_in_seconds` or a token `ttl`.
+ * @param {unknown} seconds
+ */
+function toIsoFromDelay(seconds) {
+    const delay = toNumber(seconds);
+    if (delay === undefined || delay < 0) return null;
+    return new Date(Date.now() + delay * 1000).toISOString();
+}
+
+/**
  * @param {{label:string, usedPercent?:number, remainingPercent?:number, resetAt?:string|null, note?:string}} window
  */
 function normalizeWindow({ label, usedPercent, remainingPercent, resetAt = null, note = '' }) {
@@ -135,12 +146,14 @@ async function codexUsage(id, resolved, doFetch) {
         normalizeWindow({
             label: 'Primary window',
             usedPercent: toNumber(rateLimit.primary_window?.used_percent),
-            resetAt: toIso(rateLimit.primary_window?.resets_at ?? rateLimit.primary_window?.resets_in_seconds),
+            resetAt: toIso(rateLimit.primary_window?.resets_at)
+                ?? toIsoFromDelay(rateLimit.primary_window?.resets_in_seconds),
         }),
         normalizeWindow({
             label: 'Secondary window',
             usedPercent: toNumber(rateLimit.secondary_window?.used_percent),
-            resetAt: toIso(rateLimit.secondary_window?.resets_at ?? rateLimit.secondary_window?.resets_in_seconds),
+            resetAt: toIso(rateLimit.secondary_window?.resets_at)
+                ?? toIsoFromDelay(rateLimit.secondary_window?.resets_in_seconds),
         }),
     ].filter(Boolean);
     return usageResult({
@@ -317,7 +330,8 @@ async function kimiUsage(id, resolved, doFetch) {
             return normalizeWindow({
                 label,
                 usedPercent,
-                resetAt: toIso(detail?.reset_at ?? detail?.resetAt ?? detail?.reset_time ?? detail?.reset_in ?? detail?.ttl),
+                resetAt: toIso(detail?.reset_at ?? detail?.resetAt ?? detail?.reset_time)
+                    ?? toIsoFromDelay(detail?.reset_in ?? detail?.ttl),
             });
         })
         .filter(Boolean);
@@ -752,7 +766,7 @@ export async function fetchProviderUsage(providerId, resolved, options = {}) {
     if (!resolved?.apiKey) {
         return { id, label, supported: true, ok: false, windows: [], error: 'No credentials' };
     }
-    const key = `${id}:${String(resolved.apiKey).slice(-12)}`;
+    const key = `${id}:${credentialsOf(resolved).token}`;
     const cached = cache.get(key);
     const now = Date.now();
     if (!options.refresh && cached && now - cached.at < CACHE_TTL_MS) {
@@ -779,7 +793,12 @@ export async function fetchProviderUsage(providerId, resolved, options = {}) {
         balances: result.balances || [],
     };
     if (value.ok) {
-        cache.set(key, { at: now, value });
+        // Keep the cache from growing one dead entry per refreshed token.
+        const writtenAt = Date.now();
+        for (const [entryKey, entry] of cache) {
+            if (writtenAt - entry.at >= CACHE_TTL_MS) cache.delete(entryKey);
+        }
+        cache.set(key, { at: writtenAt, value });
     }
     return value;
 }

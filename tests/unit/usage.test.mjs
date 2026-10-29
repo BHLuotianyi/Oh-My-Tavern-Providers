@@ -24,6 +24,11 @@ test('codex usage maps rate-limit windows to used percentages', async () => {
     assert.equal(usage.windows[0].usedPercent, 4.5);
     assert.equal(usage.windows[1].usedPercent, 91);
     assert.equal(usage.windows[1].remainingPercent, 9);
+    // `resets_in_seconds` is a delay, not an epoch timestamp: it must land an
+    // hour from now (not 1970).
+    const primaryReset = Date.parse(usage.windows[0].resetAt);
+    assert.ok(primaryReset >= Date.now() + 3_540_000 && primaryReset <= Date.now() + 3_660_000);
+    assert.equal(usage.windows[1].resetAt, '2026-11-01T00:00:00.000Z');
     assert.equal(calls[0].url, 'https://chatgpt.com/backend-api/wham/usage');
     assert.equal(calls[0].headers['ChatGPT-Account-Id'], 'acc-1');
 });
@@ -82,6 +87,23 @@ test('successful readings are cached until a refresh is requested', async () => 
     assert.equal(calls, 1);
     await fetchProviderUsage('openai-codex', { apiKey: '{"access":"tok"}' }, { doFetch, refresh: true });
     assert.equal(calls, 2);
+});
+
+test('cache entries are keyed by the access token, not the credential tail', async () => {
+    clearUsageCache();
+    const seen = [];
+    const doFetch = async (url, init) => {
+        seen.push(init.headers.Authorization);
+        return json({ rate_limit: { primary_window: { used_percent: 10 } } });
+    };
+    // Two accounts refreshed at the same instant share the `expires` tail; they
+    // must not share a cache entry.
+    const alpha = { apiKey: '{"access":"token-alpha","expires":1793000000000}' };
+    const beta = { apiKey: '{"access":"token-beta","expires":1793000000000}' };
+    await fetchProviderUsage('openai-codex', alpha, { doFetch });
+    await fetchProviderUsage('openai-codex', beta, { doFetch });
+    await fetchProviderUsage('openai-codex', alpha, { doFetch });
+    assert.deepEqual(seen, ['Bearer token-alpha', 'Bearer token-beta']);
 });
 
 test('deepseek reports its prepaid balance instead of a window', async () => {
@@ -191,6 +213,23 @@ test('minimax reads model_remains buckets and honours base_resp', async () => {
     });
     assert.equal(failure.ok, false);
     assert.match(failure.error, /1004/);
+});
+
+test('kimi reads ttl as a delay and absolute reset times as timestamps', async () => {
+    clearUsageCache();
+    const doFetch = async () => json({
+        usages: {
+            rolling: { used: 10, limit: 100, ttl: 900 },
+            monthly: { used: 1, limit: 10, reset_at: '2026-11-01T00:00:00Z' },
+        },
+    });
+    const started = Date.now();
+    const usage = await fetchProviderUsage('kimi-code', { apiKey: 'kimi-token' }, { doFetch });
+    assert.equal(usage.ok, true);
+    const byLabel = Object.fromEntries(usage.windows.map((w) => [w.label, w]));
+    const ttlReset = Date.parse(byLabel.rolling.resetAt);
+    assert.ok(ttlReset >= started + 840_000 && ttlReset <= Date.now() + 960_000);
+    assert.equal(byLabel.monthly.resetAt, '2026-11-01T00:00:00.000Z');
 });
 
 test('xai reads weekly credits and monthly included quota', async () => {

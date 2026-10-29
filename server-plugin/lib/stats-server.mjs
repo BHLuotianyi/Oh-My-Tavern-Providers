@@ -244,6 +244,10 @@ export function stopStatsServer() {
     current = null;
     try {
         server.close();
+        // Keep-alive sockets would hold the port past close(), so the next
+        // start on 3847 would hit EADDRINUSE.
+        server.closeIdleConnections?.();
+        server.closeAllConnections?.();
     } catch (error) {
         logError('could not stop stats dashboard', error);
     }

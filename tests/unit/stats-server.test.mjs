@@ -1,12 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { ensureStatsServer, stopStatsServer, statsServerStatus, dashboardSnapshot, DASHBOARD_HEADER, DASHBOARD_VERSION } from '../../server-plugin/lib/stats-server.mjs';
 import { UsageStats } from '../../server-plugin/lib/stats.mjs';
+import { acquireGatewayPort } from '../../server-plugin/lib/gateway-ports.mjs';
 
 const tempRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'omtp-stats-server-'));
+
+function listen(server) {
+    return new Promise((resolve, reject) => {
+        const onError = (error) => reject(error);
+        server.once('error', onError);
+        server.listen(0, '127.0.0.1', () => {
+            server.off('error', onError);
+            resolve(server.address().port);
+        });
+    });
+}
+
+const closeServer = (server) => new Promise((resolve) => server.close(() => resolve(undefined)));
+
+async function freePort() {
+    const server = http.createServer();
+    const port = await listen(server);
+    await closeServer(server);
+    return port;
+}
+
+function eaddrinuse(port) {
+    const error = new Error(`listen EADDRINUSE: address already in use 127.0.0.1:${port}`);
+    error.code = 'EADDRINUSE';
+    return error;
+}
 
 function seed(stats) {
     stats.record({
@@ -77,4 +105,111 @@ test('dashboard snapshot exposes per-chat rows without mutating totals', () => {
     const chatB = snapshot.byChat.find((row) => row.chatId === 'chat-b');
     assert.equal(chatB.requests, 1);
     assert.equal(stats.snapshot().totals.requests, 2);
+});
+
+test('gateway skips a foreign OMTP listener that rejects this token', async (t) => {
+    const probes = [];
+    const foreign = http.createServer((req, res) => {
+        probes.push({ url: req.url, authorization: req.headers.authorization || '' });
+        if (req.url === '/health') {
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, service: 'omtp-gateway', version: '0.0.0' }));
+            return;
+        }
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'Invalid or missing gateway token' } }));
+    });
+    const foreignPort = await listen(foreign);
+    t.after(() => closeServer(foreign));
+    const nextPort = await freePort();
+    const bound = [];
+    const token = 'this-instance-token';
+    const acquire = (ports) => acquireGatewayPort({
+        ports,
+        token,
+        requireAuth: true,
+        listen: async (port) => {
+            if (port === foreignPort) throw eaddrinuse(port);
+            bound.push(port);
+        },
+    });
+
+    // The foreign process answers /health, so the token probe is decisive.
+    const acquired = await acquire([foreignPort, nextPort]);
+    assert.deepEqual(acquired, { port: nextPort, external: false });
+    assert.deepEqual(bound, [nextPort]);
+    assert.deepEqual(probes, [
+        { url: '/health', authorization: '' },
+        { url: '/v1/models', authorization: `Bearer ${token}` },
+    ]);
+
+    // With no other candidate the start fails instead of adopting it.
+    probes.length = 0;
+    await assert.rejects(acquire([foreignPort]), /different token/);
+    assert.deepEqual(probes, [
+        { url: '/health', authorization: '' },
+        { url: '/v1/models', authorization: `Bearer ${token}` },
+    ]);
+});
+
+test('gateway reuses an existing listener that accepts this token', async (t) => {
+    const probes = [];
+    const token = 'shared-gateway-token';
+    const existing = http.createServer((req, res) => {
+        probes.push({ url: req.url, authorization: req.headers.authorization || '' });
+        if (req.url === '/health') {
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, service: 'omtp-gateway', version: '0.0.0' }));
+            return;
+        }
+        if (req.headers.authorization === `Bearer ${token}`) {
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ object: 'list', data: [] }));
+            return;
+        }
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'Invalid or missing gateway token' } }));
+    });
+    const port = await listen(existing);
+    t.after(() => closeServer(existing));
+
+    const acquired = await acquireGatewayPort({
+        ports: [port],
+        token,
+        requireAuth: true,
+        listen: async () => {
+            throw eaddrinuse(port);
+        },
+    });
+    assert.deepEqual(acquired, { port, external: true });
+    assert.deepEqual(probes, [
+        { url: '/health', authorization: '' },
+        { url: '/v1/models', authorization: `Bearer ${token}` },
+    ]);
+});
+
+test('gateway reuses a no-auth OMTP listener on health alone', async (t) => {
+    const probes = [];
+    const existing = http.createServer((req, res) => {
+        probes.push(req.url);
+        if (req.url === '/health') {
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, service: 'omtp-gateway', version: '0.0.0' }));
+            return;
+        }
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'Invalid or missing gateway token' } }));
+    });
+    const port = await listen(existing);
+    t.after(() => closeServer(existing));
+
+    const acquired = await acquireGatewayPort({
+        ports: [port],
+        requireAuth: false,
+        listen: async () => {
+            throw eaddrinuse(port);
+        },
+    });
+    assert.deepEqual(acquired, { port, external: true });
+    assert.deepEqual(probes, ['/health']);
 });

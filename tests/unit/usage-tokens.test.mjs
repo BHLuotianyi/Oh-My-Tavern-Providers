@@ -56,3 +56,33 @@ test('gemini streaming usage frame carries cache hits', async () => {
         input: 464, cachedInput: 1536, cacheWrite: 0, output: 10, reasoning: 0,
     });
 });
+
+test('responses streaming usage frame carries cache and reasoning tokens', async () => {
+    const { createResponsesStreamHandler } = await import('../../server-plugin/lib/adapters/responses.mjs');
+    const frames = [];
+    const emit = (frame) => frames.push(String(frame));
+    const handler = createResponsesStreamHandler('gpt-5');
+    handler.onStart(emit);
+    handler.onEvent({
+        type: 'response.completed',
+        response: {
+            status: 'completed',
+            usage: {
+                input_tokens: 2000,
+                output_tokens: 100,
+                total_tokens: 2100,
+                input_tokens_details: { cached_tokens: 1536 },
+                output_tokens_details: { reasoning_tokens: 64 },
+            },
+        },
+    }, emit);
+    handler.onEnd(emit);
+    const usageFrame = frames.filter((f) => f.includes('"usage"')).pop();
+    const usage = JSON.parse(usageFrame.replace(/^data:\s*/, '')).usage;
+    assert.equal(usage.prompt_tokens, 2000);
+    assert.equal(usage.prompt_tokens_details.cached_tokens, 1536);
+    assert.equal(usage.completion_tokens_details.reasoning_tokens, 64);
+    assert.deepEqual(tokensFromOpenAIUsage(usage), {
+        input: 464, cachedInput: 1536, cacheWrite: 0, output: 100, reasoning: 64,
+    });
+});

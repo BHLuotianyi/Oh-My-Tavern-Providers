@@ -19,6 +19,8 @@ const KEEP_DAYS = 60;
 const MAX_EVENTS = 2000;
 /** Chat-scoped counters survive restarts, but only the most recent chats are kept. */
 const MAX_CHATS = 50;
+/** Model rows kept in memory; a client can invent model names, so cap the map. */
+const MAX_MODELS = 100;
 
 /** Token buckets accumulated per model/day/chat (all others are cost counters). */
 const TOKEN_KEYS = ['input', 'cachedInput', 'cacheWrite', 'output', 'reasoning'];
@@ -134,6 +136,18 @@ export class UsageStats {
     }
 
     /**
+     * Persist counters immediately instead of waiting for the debounce. Call
+     * this before the process exits so the last window is not lost.
+     */
+    flush() {
+        if (this.flushTimer) {
+            clearTimeout(this.flushTimer);
+            this.flushTimer = null;
+        }
+        this._flush();
+    }
+
+    /**
      * Record one completion.
      *
      * @param {{provider:string, model:string, price?:any, usage:any, chatId?:string}} event
@@ -149,7 +163,9 @@ export class UsageStats {
         }
         const costUsd = estimateCost({ input, cachedInput, cacheWrite, output }, price);
         const stamp = this.now();
-        const day = new Date(stamp).toISOString().slice(0, 10);
+        // The dashboard renders local times, so bucket by the server's local
+        // date; `en-CA` yields YYYY-MM-DD and sorts chronologically.
+        const day = new Date(stamp).toLocaleDateString('en-CA');
 
         const add = (target) => {
             target.input += input;
@@ -180,6 +196,8 @@ export class UsageStats {
             this.byModel.set(key, entry);
         }
         add(entry.totals);
+        trimToSize(this.byModel, MAX_MODELS, (a, b) => (a[1].totals.costUsd - b[1].totals.costUsd)
+            || a[0].localeCompare(b[0]));
         let dayTotals = this.byDay.get(day);
         if (!dayTotals) {
             dayTotals = emptyTotals();
@@ -260,8 +278,9 @@ export class UsageStats {
         return {
             chat: chatId,
             since: oldest === null ? null : new Date(oldest).toISOString(),
-            // Events outside the ring (older than MAX_EVENTS completions) are missing.
-            partial: this.events.length > 0 && this.events[0]?.chatId !== chatId && totals.requests === 0,
+            // Only a full ring has evicted events; while it is full, the chat
+            // is covered as long as one retained event still carries its id.
+            partial: this.events.length === MAX_EVENTS && !this.events.some((event) => event.chatId === chatId),
             totals,
             byModel: [...perModel.values()].sort((a, b) => b.costUsd - a.costUsd),
             startedAt: this.startedAt,
@@ -296,12 +315,11 @@ export class UsageStats {
         const cutoff = since ? Date.parse(since) : NaN;
         if (Number.isFinite(cutoff)) {
             const { totals, perModel } = this.#accumulate((event) => event.at >= cutoff);
-            // True when the requested window reaches back further than the
-            // in-memory event log, in which case numbers are a lower bound.
-            const covered = this.events.length > 0 && this.events[0].at <= cutoff;
+            // A window is a lower bound only when the ring is full and its
+            // oldest retained event is newer than the requested start.
             return {
                 since,
-                partial: !covered,
+                partial: this.events.length === MAX_EVENTS && this.events[0].at > cutoff,
                 totals,
                 byModel: [...perModel.values()].sort((a, b) => b.costUsd - a.costUsd),
                 startedAt: this.startedAt,

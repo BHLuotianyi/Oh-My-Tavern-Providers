@@ -242,11 +242,15 @@ export function createResponsesStreamHandler(model) {
         const usageInfo = response.usage || {};
         const prompt = Number(usageInfo.input_tokens) || 0;
         const completion = Number(usageInfo.output_tokens) || 0;
-        usage = {
-          prompt_tokens: prompt,
-          completion_tokens: completion,
-          total_tokens: Number(usageInfo.total_tokens) || prompt + completion,
-        };
+        // Same mapping as the non-streaming path: Responses nests the cache and
+        // reasoning counts under `*_tokens_details`.
+        usage = openAIUsage({
+          prompt,
+          completion,
+          cached: Number(usageInfo.input_tokens_details?.cached_tokens) || 0,
+          reasoning: Number(usageInfo.output_tokens_details?.reasoning_tokens) || 0,
+          total: Number(usageInfo.total_tokens) || prompt + completion,
+        });
         finishReason = sawTool ? 'tool_calls' : 'stop';
         return;
       }
