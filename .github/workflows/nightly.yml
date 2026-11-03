@@ -1,6 +1,6 @@
 name: Nightly build
 
-# 05:30 Asia/Shanghai (UTC+8) == 21:30 UTC the previous calendar day.
+# 05:30 Asia/Kuala_Lumpur (UTC+8) == 21:30 UTC the previous calendar day.
 # Builds a nightly snapshot only when the previous UTC+8 day had at least one
 # push to `main` whose checks passed. Nightlies are published to the rolling
 # `nightly` branch, a `nightly-YYYYMMDD` tag and a workflow artifact — never as
@@ -42,10 +42,10 @@ jobs:
           if [ -n "${TARGET_DAY}" ]; then
             day="$TARGET_DAY"
           else
-            day="$(TZ=Asia/Shanghai date -d 'yesterday' +%F)"
+            day="$(TZ=Asia/Kuala_Lumpur date -d 'yesterday' +%F)"
           fi
           start="${day}T00:00:00+08:00"
-          end="$(TZ=Asia/Shanghai date -d "$day +1 day" +%F)T00:00:00+08:00"
+          end="$(TZ=Asia/Kuala_Lumpur date -d "$day +1 day" +%F)T00:00:00+08:00"
           {
             echo "day=$day"
             echo "compact=${day//-/}"
