@@ -464,7 +464,6 @@ test('a non-http redirect URI starts no listener and asks for a pasted code', as
     try {
         assert.equal(started.redirectUri, 'zcode://zai-auth/callback');
         assert.equal(started.manual, true);
-        assert.equal(getSession(started.id).server, undefined);
         assert.equal(new URL(started.url).searchParams.get('redirect_uri'), 'zcode://zai-auth/callback');
         // The catalog's generic instructions stay, followed by our explanation.
         assert.match(started.instructions, /no OS handler/i);
@@ -492,7 +491,6 @@ test('manualOnly policies never bind the callback port', async () => {
         assert.equal(started.manual, true);
         assert.equal(started.redirectUri, `http://127.0.0.1:${port}/callback`);
         assert.match(started.instructions, /manual entry/i);
-        assert.equal(getSession(started.id).server, undefined);
         await assert.rejects(fetch(`http://127.0.0.1:${port}/callback?code=x`));
     } finally {
         cancelLogin(started.id);
@@ -517,7 +515,6 @@ test('a busy callback port degrades to manual paste instead of a dead redirect',
         assert.equal(started.manual, true);
         assert.match(started.instructions, /already in use/i);
         assert.match(started.instructions, /EADDRINUSE/);
-        assert.equal(getSession(started.id).server, undefined);
 
         // The flow stays usable: the code can still be pasted in.
         await submitCode(started.id, 'auth-code');

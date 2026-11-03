@@ -137,3 +137,5 @@ Node's built-in `fetch` ignores proxy environment variables, so the server plugi
 | `OMTP_DISABLE_PROXY=1` | Disables the wrapper entirely |
 
 Loopback and private ranges (`127.0.0.0/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`) always connect directly. A failed tunnel falls back to a direct connection; a failure after request bytes reached the tunnel is not replayed, so a completion is never billed twice.
+
+The sign-in callback is served by a separate loopback listener, not by this proxy wrapper. A `localhost` redirect URI binds both `127.0.0.1` and `::1`, so a client that only tries one address family still reaches it. A browser proxy that does not bypass loopback (`--proxy-bypass-list="<-loopback>"`, Proxifier, some AV web shields), a container without the callback port published, or a browser on another machine cannot deliver the code; the panel then explains that and asks for the address-bar URL to be pasted.

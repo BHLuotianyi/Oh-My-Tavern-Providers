@@ -23,8 +23,13 @@ const KIND_RANK = new Map([
     ['api-key', 3],
 ]);
 
-/** @type {Map<string, {timer: number|null}>} */
+/** @typedef {{timer: number|null, stall?: number}} PollEntry */
+
+/** @type {Map<string, PollEntry>} */
 const activeSessions = new Map();
+
+/** How long a bound callback may stay silent before the panel explains why. */
+const CALLBACK_STALL_MS = 20_000;
 
 /**
  * Last failed row action per provider. Kept outside the DOM so a hub refresh
@@ -351,7 +356,7 @@ async function startLogin(provider, row, actions) {
             }
         }
         renderLoginFlow(id, started, panel, popup, actions);
-        pollSession(id, started.id, panel, popup, actions);
+        pollSession(id, started, panel, popup, actions);
     } catch (error) {
         // The server refused to build the flow (e.g. no OAuth client id): the
         // placeholder tab is still blank, so close it and let the row retry.
@@ -442,10 +447,25 @@ function stopPolling(providerId) {
     if (entry?.timer) {
         clearInterval(entry.timer);
     }
+    if (entry?.stall) {
+        clearTimeout(entry.stall);
+    }
     activeSessions.delete(providerId);
 }
 
-function pollSession(providerId, sessionId, panel, popup = null, actions = null) {
+/**
+ * Poll a pending session. When a loopback listener was bound (`manual: false`),
+ * also explain a callback that never arrives: a browser proxy that does not
+ * bypass `localhost`, a container or a remote browser leaves the flow pending
+ * with no visible reason, and the paste box is the only way out.
+ * @param {string} providerId
+ * @param {{id: string, manual?: boolean}} started flow returned by the server
+ * @param {HTMLElement} panel
+ * @param {Window|null} [popup]
+ * @param {HTMLElement|null} [actions] row action container holding the buttons
+ */
+function pollSession(providerId, started, panel, popup = null, actions = null) {
+    const sessionId = started.id;
     stopPolling(providerId);
     const timer = setInterval(async () => {
         try {
@@ -463,7 +483,26 @@ function pollSession(providerId, sessionId, panel, popup = null, actions = null)
             stopPolling(providerId);
         }
     }, 2000);
-    activeSessions.set(providerId, { timer });
+    /** @type {PollEntry} */
+    const entry = { timer };
+    // The server sets `manual` when the code arrives by paste; only a bound
+    // listener can stall silently.
+    if (started.manual === false) {
+        entry.stall = setTimeout(() => {
+            if (!panel.isConnected || panel.querySelector('.omtp-login-stalled')) {
+                return;
+            }
+            panel.append(el(
+                'div',
+                'omtp-login-hint omtp-login-stalled',
+                tr(
+                    'omtp_login_callback_stalled',
+                    'No callback has arrived. If a browser proxy, firewall or container is blocking http://localhost, copy the address bar of the sign-in tab and paste it into the box below.',
+                ),
+            ));
+        }, CALLBACK_STALL_MS);
+    }
+    activeSessions.set(providerId, entry);
 }
 
 function finishLogin(providerId, panel, status, popup = null) {

@@ -258,11 +258,22 @@ export function parseAuthorizationInput(raw) {
         throw new Error('Paste the authorization code or the full redirect URL');
     }
     if (/^https?:\/\//i.test(text)) {
-        const url = new URL(text);
-        const code = url.searchParams.get('code') || '';
-        const state = url.searchParams.get('state') || undefined;
-        if (!code) throw new Error('That URL has no `code` parameter');
-        return { code, state };
+        // A proxy that forwards an absolute-form request makes the callback
+        // page advertise `http://host:porthttp://host:port/…`; raising here
+        // would tell the user to paste a valid URL they never had. Fall
+        // through to the query parsing below instead.
+        let url;
+        try {
+            url = new URL(text);
+        } catch {
+            // Not a URL after all: the `code=` scan below still applies.
+        }
+        if (url) {
+            const code = url.searchParams.get('code') || '';
+            const state = url.searchParams.get('state') || undefined;
+            if (!code) throw new Error('That URL has no `code` parameter');
+            return { code, state };
+        }
     }
     const match = /(?:^|[?&])code=([^&]+)/.exec(text);
     if (match) {
@@ -526,6 +537,35 @@ function remember(session) {
 /** Hosts that resolve to this machine's loopback interface. */
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
+/** Drop the brackets `new URL()` keeps around an IPv6 literal. */
+function bareHostname(host) {
+    return String(host || '').replace(/^\[/, '').replace(/\]$/, '');
+}
+
+/** Format a bare host for use inside a URL (IPv6 literals need brackets). */
+function urlHost(host) {
+    const bare = bareHostname(host);
+    return bare.includes(':') ? `[${bare}]` : bare;
+}
+
+/**
+ * Addresses to bind for a loopback callback.
+ *
+ * `server.listen(port, 'localhost')` binds only the first address
+ * `dns.lookup` returns, so on a host whose `/etc/hosts` lists `::1` first the
+ * IPv4 loopback is refused. A client that tries the other family — a browser
+ * without IPv6, a proxy that dials `127.0.0.1`, a webview — then never
+ * delivers the code. Bind every loopback address and keep the first that
+ * works.
+ *
+ * @param {string} hostname
+ * @returns {string[]}
+ */
+function bindAddresses(hostname) {
+    const host = bareHostname(hostname || 'localhost');
+    return host === 'localhost' ? ['127.0.0.1', '::1'] : [host];
+}
+
 /**
  * Resolve the callback transport for one `oauth-code` policy.
  *
@@ -543,18 +583,21 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
  *
  * @param {any} callback compiled `login.callback`
  * @param {Record<string,string|undefined>} env
- * @returns {{redirectUri:string, hostname:string, port:number, path:string, reason:''|'manual'|'native'|'scheme'|'remote'|'invalid'}}
+ * @returns {{redirectUri:string, baseUrl:string, hostname:string, hosts:string[], port:number, path:string, reason:''|'manual'|'native'|'scheme'|'remote'|'invalid'}}
  */
 export function resolveCallbackOptions(callback = {}, env = process.env) {
-    const hostname = callback.hostname || 'localhost';
+    const hostname = bareHostname(callback.hostname || 'localhost');
     const path = callback.path || '/callback';
     const port = Number(callback.port) || 54545;
-    const local = { redirectUri: `http://${hostname}:${port}${path}`, hostname, port, path, reason: '' };
+    const baseUrl = `http://${urlHost(hostname)}:${port}`;
+    const local = { redirectUri: `${baseUrl}${path}`, baseUrl, hostname, hosts: bindAddresses(hostname), port, path, reason: '' };
     const declared = String(policyValue(callback.redirectUri, env) || '').trim();
     if (!declared) {
         if (callback.nativeScheme) return { ...local, reason: 'native' };
         return callback.manualOnly ? { ...local, reason: 'manual' } : local;
     }
+    /** A declared URI this process cannot serve: advertise it, collect the code by paste. */
+    const pasteOnly = (reason) => ({ redirectUri: declared, baseUrl: local.baseUrl, hostname, hosts: [], port, path, reason });
     let parsed;
     try {
         parsed = new URL(declared);
@@ -564,15 +607,19 @@ export function resolveCallbackOptions(callback = {}, env = process.env) {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         // `nativeScheme` says the policy expected an OS-registered handler;
         // spell out that this plugin has none.
-        return { redirectUri: declared, hostname, port, path, reason: callback.nativeScheme ? 'native' : 'scheme' };
+        return pasteOnly(callback.nativeScheme ? 'native' : 'scheme');
     }
     if (!LOOPBACK_HOSTS.has(parsed.hostname) || parsed.protocol === 'https:') {
-        return { redirectUri: declared, hostname, port, path, reason: 'remote' };
+        return pasteOnly('remote');
     }
     return {
         redirectUri: declared,
-        hostname: parsed.hostname,
-        port: parsed.port ? Number.parseInt(parsed.port, 10) : (parsed.protocol === 'https:' ? 443 : 80),
+        // The declared origin keeps the provider's host form (including IPv6
+        // brackets), so the paste URL and the page URL stay byte-identical.
+        baseUrl: parsed.origin,
+        hostname: bareHostname(parsed.hostname),
+        hosts: bindAddresses(parsed.hostname),
+        port: parsed.port ? Number.parseInt(parsed.port, 10) : 80,
         path: parsed.pathname || path,
         reason: callback.manualOnly ? 'manual' : '',
     };
@@ -646,9 +693,9 @@ async function startOauthCode(providerId, login, { keyStore, env, doFetch, local
     // to this process, so the code arrives through the paste box instead.
     let reason = options.reason;
     if (!reason) {
-        const { server, error } = await listenForCode(session);
-        if (server) {
-            session.server = server;
+        const { servers, error } = await listenForCode(session);
+        if (servers.length) {
+            session.servers = servers;
         } else {
             // A held port must not leave the UI advertising a redirect URI
             // nobody is listening on; the flow stays usable by falling back to
@@ -773,14 +820,98 @@ export async function startLogin(providerId, login, { keyStore, env = process.en
 }
 
 /**
- * Bind a loopback listener that completes the session when the browser hits the
- * callback URL. A bind failure is reported to the caller, which degrades the
- * flow to manual paste instead of advertising a dead redirect URI.
+ * Serve one callback request: exchange the code, then report the real outcome
+ * on the page. A code-less hit is not the end of the flow — proxy/AV probes and
+ * link previewers request the callback path, and closing the listener there
+ * would strand the session before the browser arrives. Only a real outcome
+ * releases the port.
  * @param {any} session
- * @returns {Promise<{server: http.Server|null, error: string}>}
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ */
+async function handleCallback(session, req, res) {
+    const { path, baseUrl } = session.callback;
+    // `req.url` is an absolute-form target when a proxy forwards the request
+    // (`GET http://localhost:54545/callback?…`). Resolving it against the
+    // callback origin keeps path matching working and keeps the pasted URL a
+    // single, valid URL instead of `http://host:porthttp://…`.
+    const url = new URL(req.url || '/', baseUrl);
+    if (url.pathname !== path) {
+        res.writeHead(404).end('Not found');
+        return;
+    }
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    const error = url.searchParams.get('error');
+    const locale = pickLocale(session.locale, req.headers['accept-language']);
+    // The page must reflect the real outcome: it used to claim success before
+    // the token exchange ran, so a proxy failure looked like a completed
+    // sign-in that never reached SillyTavern.
+    const callbackUrl = url.href;
+    const page = (outcome, status) => {
+        if (outcome !== 'missing') {
+            res.once('finish', () => session.cancel?.());
+        }
+        res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' })
+            .end(callbackPage(outcome, locale, callbackUrl));
+    };
+    if (error) {
+        session.status = 'error';
+        session.error = url.searchParams.get('error_description') || error;
+        page('failed', 400);
+        return;
+    }
+    if (!code) {
+        page('missing', 400);
+        return;
+    }
+    /** @type {NodeJS.Timeout|undefined} */
+    let guard;
+    await Promise.race([
+        finishWithCode(session, { code, state }).catch((err) => logError('callback exchange failed', err)),
+        // A tunneled POST may spend up to 30 s in CONNECT alone (see
+        // `openTunnel`), so the page has to outwait that before it reports a
+        // failure the session does not share.
+        new Promise((resolve) => { guard = setTimeout(resolve, 60_000); guard.unref?.(); }),
+    ]);
+    clearTimeout(guard);
+    if (session.status === 'done') {
+        page('done', 200);
+    } else {
+        page('failed', 400);
+    }
+}
+
+/**
+ * Callback listener for one bound address. A rejected handler logs and drops
+ * the socket; the browser is already gone.
+ * @param {any} session
+ * @returns {import('node:http').Server}
+ */
+function createCallbackServer(session) {
+    return http.createServer((req, res) => {
+        handleCallback(session, req, res).catch((error) => {
+            logError('callback handler failed', error);
+            try {
+                res.destroy();
+            } catch {
+                // the client is already gone
+            }
+        });
+    });
+}
+
+/**
+ * Bind loopback listeners that complete the session when the browser hits the
+ * callback URL. Every loopback address for the host is bound (see
+ * `bindAddresses()`); the flow needs only one to succeed. A total bind failure
+ * is reported to the caller, which degrades the flow to manual paste instead of
+ * advertising a dead redirect URI.
+ * @param {any} session
+ * @returns {Promise<{servers: http.Server[], error: string}>}
  */
 async function listenForCode(session) {
-    const { hostname, port, path } = session.callback;
+    const { hosts, port } = session.callback;
     session.port = port;
     // One listener per port: a stale session from an abandoned flow would
     // otherwise keep the port and serve the new flow's callback with the old
@@ -791,70 +922,76 @@ async function listenForCode(session) {
             sessions.delete(id);
         }
     }
-    const server = http.createServer(async (req, res) => {
-        const url = new URL(req.url || '/', `http://${hostname}:${port}`);
-        if (url.pathname !== path) {
-            res.writeHead(404).end('Not found');
-            return;
+    const servers = [];
+    let lastError = '';
+    let conflict = '';
+    for (const host of hosts) {
+        const server = createCallbackServer(session);
+        const error = await bind(server, port, host);
+        if (!error) {
+            servers.push(server);
+            continue;
         }
-        const code = url.searchParams.get('code');
-        const state = url.searchParams.get('state');
-        const error = url.searchParams.get('error');
-        const locale = pickLocale(session.locale, req.headers['accept-language']);
-        // The page must reflect the real outcome: it used to claim success
-        // before the token exchange ran, so a proxy failure looked like a
-        // completed sign-in that never reached SillyTavern.
-        const callbackUrl = `http://${hostname}:${port}${req.url || ''}`;
-        const page = (outcome, status) => {
-            res.once('finish', () => session.cancel?.());
-            res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' })
-                .end(callbackPage(outcome, locale, callbackUrl));
-        };
-        if (error) {
-            session.status = 'error';
-            session.error = url.searchParams.get('error_description') || error;
-            page('failed', 400);
-            return;
-        }
-        if (!code) {
-            page('missing', 400);
-            return;
-        }
-        /** @type {NodeJS.Timeout|undefined} */
-        let guard;
-        await Promise.race([
-            finishWithCode(session, { code, state }).catch((err) => logError('callback exchange failed', err)),
-            new Promise((resolve) => { guard = setTimeout(resolve, 25_000); guard.unref?.(); }),
-        ]);
-        clearTimeout(guard);
-        if (session.status === 'done') {
-            page('done', 200);
-        } else {
-            page('failed', 400);
-        }
-    });
-    return new Promise((resolve) => {
-        server.once('error', (error) => {
-            resolve({ server: null, error: error?.code || error?.message || String(error) });
-        });
+        // A missing family (IPv6 disabled, address not configured) is fine as
+        // long as another address answered. A port already held by another
+        // process is not: the advertised `localhost` may resolve to that
+        // process, so the flow degrades to paste instead of serving the wrong
+        // service.
+        if (/EADDRINUSE/.test(error)) conflict = conflict || error;
+        else lastError = error;
+        closeServers([server]);
+    }
+    if (!servers.length || conflict) {
+        closeServers(servers);
+        return { servers: [], error: conflict || lastError };
+    }
+    session.cancel = () => closeServers(servers);
+    return { servers, error: '' };
+}
+
+/**
+ * Close every bound listener and drop its keep-alive sockets so the port is
+ * free for the next flow.
+ * @param {http.Server[]} servers
+ */
+function closeServers(servers) {
+    for (const server of servers) {
         try {
-            server.listen(port, hostname, () => {
-                session.cancel = () => {
-                    try {
-                        server.close();
-                        // Keep-alive sockets keep the port bound; drop them so the
-                        // next flow can bind immediately.
-                        server.closeAllConnections?.();
-                    } catch {
-                        // ignore
-                    }
-                };
-                resolve({ server, error: '' });
-            });
+            server.close();
+            // Keep-alive sockets keep the port bound; drop them so the next
+            // flow can bind immediately.
+            server.closeAllConnections?.();
+        } catch {
+            // ignore
+        }
+    }
+}
+
+/**
+ * Listen on one address and report the failure instead of throwing.
+ * @param {http.Server} server
+ * @param {number} port
+ * @param {string} host
+ * @returns {Promise<string>} empty on success, an error code/message otherwise
+ */
+function bind(server, port, host) {
+    return new Promise((resolve) => {
+        /** Resolve once and detach both listeners. */
+        const settle = (value) => {
+            server.removeListener('error', onError);
+            server.removeListener('listening', onListening);
+            resolve(value);
+        };
+        const onError = (error) => settle(error?.code || error?.message || String(error));
+        const onListening = () => settle('');
+        server.once('error', onError);
+        server.once('listening', onListening);
+        try {
+            server.listen(port, host);
         } catch (error) {
             // `listen` rejects some inputs synchronously (out-of-range port,
             // unresolvable host); treat those like an unavailable port.
-            resolve({ server: null, error: error?.code || error?.message || String(error) });
+            settle(error?.code || error?.message || String(error));
         }
     });
 }
