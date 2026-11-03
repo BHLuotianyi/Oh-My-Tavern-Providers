@@ -16,7 +16,7 @@
     "version:nightly": "node tools/version.mjs nightly",
     "version:manual": "node tools/version.mjs manual",
     "version:check-tag": "node tools/version.mjs check-tag",
-    "test": "node --test tests/unit",
+    "test": "node --test",
     "mock": "node tests/fixtures/mock-openai.mjs",
     "personality": "node tools/fetch-personality.mjs",
     "personality:verify": "node tools/fetch-personality.mjs --verify"
