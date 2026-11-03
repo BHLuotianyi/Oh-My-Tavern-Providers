@@ -61,7 +61,7 @@ function shortVersion(raw) {
 
 /**
  * Render a version for display: never double the `v` prefix, since the
- * manifest ships `v1.2.3_beta_…` while the server package ships plain semver.
+ * manifest ships `1.2.3+git.abcdef0` while the server package may ship a plain `1.2.3`.
  * @param {unknown} value
  * @returns {string}
  */

@@ -1,0 +1,49 @@
+name: Release
+
+# Manual release: push a tag such as `v1.1.0`. The workflow re-runs the checks,
+# verifies that the tag matches the version files, then publishes a GitHub
+# Release with a source archive. Nothing is published if a check fails.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Unit tests
+        run: npm test
+      - name: Catalog validation
+        run: npm run validate
+
+      - name: Verify the tag matches the version files
+        run: node tools/version.mjs check-tag "$GITHUB_REF_NAME"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          git archive --format=zip --prefix=omtp-model-hub/ -o "dist/omtp-$GITHUB_REF_NAME.zip" HEAD
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/omtp-$GITHUB_REF_NAME.zip#OMTP $GITHUB_REF_NAME (client extension + server plugin)" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag

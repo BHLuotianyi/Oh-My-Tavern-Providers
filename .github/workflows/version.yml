@@ -1,0 +1,118 @@
+name: Version dump
+
+# Every push to `main` that passes the checks gets its build identity written
+# back into the release files:
+#   version      <line>+git.<short sha>   (the commit this identity describes)
+#   versionCode  previous + 1             (independent monotonic integer)
+# `[skip version]` marks maintainer-authored release commits so they are never
+# re-dumped.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: version-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Unit tests
+        run: npm test
+      - name: Catalog validation
+        run: npm run validate
+
+  dump:
+    needs: checks
+    if: ${{ !contains(github.event.head_commit.message || '', '[skip version]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Write version identity
+        id: bump
+        run: |
+          set -euo pipefail
+          git config user.name 'omtp-version-bot'
+          git config user.email 'omtp-version-bot@users.noreply.github.com'
+
+          # The nightly branch shares the counter with `main`; use the highest
+          # code visible on either side so versionCode never goes backwards.
+          floor=0
+          if git fetch --depth=1 origin nightly 2>/dev/null; then
+            floor=$(git show FETCH_HEAD:package.json | node -e "
+              let text = '';
+              process.stdin.on('data', (chunk) => { text += chunk; });
+              process.stdin.on('end', () => process.stdout.write(String(JSON.parse(text).versionCode || 0)));
+            ")
+          fi
+          echo "floor-code=$floor"
+
+          pushed=false
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            node tools/version.mjs bump --floor-code "$floor" --json-out .version-dump.json
+            display=$(node -p "require('./.version-dump.json').display")
+            if git diff --quiet; then
+              echo "::notice::version files already carry $display"
+              echo "display=$display" >> "$GITHUB_OUTPUT"
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              pushed=true
+              break
+            fi
+            git add manifest.json package.json server-plugin/package.json src/constants.js
+            git commit -m "chore(version): $display [skip version]"
+            if git push origin HEAD:main; then
+              echo "::notice::dumped $display"
+              echo "display=$display" >> "$GITHUB_OUTPUT"
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              pushed=true
+              break
+            fi
+            echo "::warning::main moved while dumping, retrying (attempt $attempt)"
+            sleep 5
+          done
+          if [ "$pushed" != true ]; then
+            echo "::error::could not push the version dump after 3 attempts"
+            exit 1
+          fi
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Version dump"
+            echo
+            if [ -s .version-dump.json ]; then
+              echo '```json'
+              cat .version-dump.json
+              echo '```'
+              echo
+              echo "- display: \`${{ steps.bump.outputs.display }}\`"
+            else
+              echo "No version dump was produced."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload version dump
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-dump-${{ github.run_number }}
+          path: .version-dump.json
+          retention-days: 90

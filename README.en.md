@@ -10,7 +10,9 @@
   <a href="https://github.com/BHLuotianyi/Oh-My-Tavern-Providers/blob/main/LICENSE">
     <img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" />
   </a>
-  <img alt="Release version" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FBHLuotianyi%2FOh-My-Tavern-Providers%2Fmain%2Fmanifest.json&query=%24.version&label=Release&style=flat&color=8b5cf6" />
+  <img alt="Git build" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FBHLuotianyi%2FOh-My-Tavern-Providers%2Fmain%2Fmanifest.json&query=%24.version&label=Git&style=flat&color=8b5cf6" />
+  <img alt="Nightly build" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FBHLuotianyi%2FOh-My-Tavern-Providers%2Fnightly%2Fmanifest.json&query=%24.version&label=Nightly&style=flat&color=0ea5e9" />
+  <img alt="Release" src="https://img.shields.io/github/v/release/BHLuotianyi/Oh-My-Tavern-Providers?label=Release&style=flat&color=10b981" />
   <img alt="SillyTavern 1.12.7+" src="https://img.shields.io/badge/SillyTavern-1.12.7%2B-10b981" />
   <img alt="Node.js 18.0.0+" src="https://img.shields.io/badge/Node.js-18.0.0%2B-68a063?logo=node.js&logoColor=white" />
   <img alt="Catalog: 99 Providers · 5,770 Models" src="https://img.shields.io/badge/Catalog-99_Providers_%C2%B7_5,770_Models-8b5cf6" />
@@ -172,6 +174,12 @@ git pull
   Then restart the SillyTavern server.
 - ZIP users: download the ZIP again, replace the `omtp-model-hub` folder, and re-copy `server-plugin` as above.
 - Updating never wipes your keys: credentials live in `data/omtp/` (`providers.json` + `master.key`), separate from the extension folder. **Do not delete or overwrite `data/omtp/`**, or saved API keys and OAuth sessions must be entered again.
+- **Trying the nightly channel**: every day at **05:30 (UTC+8)**, if the previous day had a passing push to `main`, the build is pushed to the `nightly` branch and a `nightly-YYYYMMDD` tag (never a Release). To install or switch:
+  ```bash
+  cd SillyTavern/public/scripts/extensions/third-party/
+  git clone -b nightly https://github.com/BHLuotianyi/Oh-My-Tavern-Providers omtp-model-hub
+  ```
+  Already on nightly? A plain `git pull` keeps you current; nightly versions look like `2.0.0+nightly.20261103`.
 - To check the running version: open the hub → **About** tab; the first chips show the extension version and the connected server plugin version.
 
 </details>

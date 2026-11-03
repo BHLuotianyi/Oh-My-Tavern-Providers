@@ -10,7 +10,9 @@
   <a href="https://github.com/BHLuotianyi/Oh-My-Tavern-Providers/blob/main/LICENSE">
     <img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" />
   </a>
-  <img alt="Release version" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FBHLuotianyi%2FOh-My-Tavern-Providers%2Fmain%2Fmanifest.json&query=%24.version&label=Release&style=flat&color=8b5cf6" />
+  <img alt="Git build" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FBHLuotianyi%2FOh-My-Tavern-Providers%2Fmain%2Fmanifest.json&query=%24.version&label=Git&style=flat&color=8b5cf6" />
+  <img alt="Nightly build" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FBHLuotianyi%2FOh-My-Tavern-Providers%2Fnightly%2Fmanifest.json&query=%24.version&label=Nightly&style=flat&color=0ea5e9" />
+  <img alt="Release" src="https://img.shields.io/github/v/release/BHLuotianyi/Oh-My-Tavern-Providers?label=Release&style=flat&color=10b981" />
   <img alt="SillyTavern 1.12.7+" src="https://img.shields.io/badge/SillyTavern-1.12.7%2B-10b981" />
   <img alt="Node.js 18.0.0+" src="https://img.shields.io/badge/Node.js-18.0.0%2B-68a063?logo=node.js&logoColor=white" />
   <img alt="Catalog: 99 Providers · 5,770 Models" src="https://img.shields.io/badge/Catalog-99_Providers_%C2%B7_5,770_Models-8b5cf6" />
@@ -173,6 +175,12 @@ git pull
   然后重启 SillyTavern 服务端。
 - 用 ZIP 安装的朋友：重新下载 ZIP、解压后覆盖 `omtp-model-hub` 文件夹，再按上面的方法重新复制一次 `server-plugin`。
 - 升级不会清空你的密钥：凭据保存在 `data/omtp/`（`providers.json` + `master.key`），与扩展目录分离。**请不要删除或覆盖 `data/omtp/`**，否则已保存的 API Key 与 OAuth 登录需要重新录入。
+- **想尝鲜 Nightly 版**：每天 **05:30（UTC+8）**，只要前一日 `main` 有通过检查的推送，就会把当天的构建推到 `nightly` 分支和 `nightly-YYYYMMDD` tag（不打 Release）。安装或切换：
+  ```bash
+  cd SillyTavern/public/scripts/extensions/third-party/
+  git clone -b nightly https://github.com/BHLuotianyi/Oh-My-Tavern-Providers omtp-model-hub
+  ```
+  已经在用 nightly 的话照常 `git pull` 即可跟进；nightly 版本号形如 `2.0.0+nightly.20261103`。
 - 想确认当前版本：打开 OMTP 面板 → **关于 (About)** 标签页，第一行会显示扩展版本与已连接的服务端插件版本。
 
 </details>

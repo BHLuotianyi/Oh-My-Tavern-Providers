@@ -1,0 +1,148 @@
+name: Nightly build
+
+# 05:30 Asia/Shanghai (UTC+8) == 21:30 UTC the previous calendar day.
+# Builds a nightly snapshot only when the previous UTC+8 day had at least one
+# push to `main` whose checks passed. Nightlies are published to the rolling
+# `nightly` branch, a `nightly-YYYYMMDD` tag and a workflow artifact — never as
+# a GitHub Release.
+on:
+  schedule:
+    - cron: '30 21 * * *'
+  workflow_dispatch:
+    inputs:
+      day:
+        description: 'Target day in UTC+8 (YYYY-MM-DD); defaults to yesterday'
+        required: false
+        type: string
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  TARGET_DAY: ${{ inputs.day }}
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve the build window
+        id: window
+        run: |
+          set -euo pipefail
+          if [ -n "${TARGET_DAY}" ]; then
+            day="$TARGET_DAY"
+          else
+            day="$(TZ=Asia/Shanghai date -d 'yesterday' +%F)"
+          fi
+          start="${day}T00:00:00+08:00"
+          end="$(TZ=Asia/Shanghai date -d "$day +1 day" +%F)T00:00:00+08:00"
+          {
+            echo "day=$day"
+            echo "compact=${day//-/}"
+            echo "start=$start"
+            echo "end=$end"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Find the last passing push of that day
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run list --repo "$GITHUB_REPOSITORY" --branch main --event push \
+            --status success --limit 100 \
+            --json headSha,createdAt,conclusion,event,status > runs.json
+          sha="$(node tools/nightly-gate.mjs runs.json '${{ steps.window.outputs.start }}' '${{ steps.window.outputs.end }}')"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ -z "$sha" ]; then
+            echo "::notice::no passing push to main on ${{ steps.window.outputs.day }}; nightly skipped"
+          else
+            echo "::notice::nightly base commit $sha"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.sha != ''
+        with:
+          ref: ${{ steps.gate.outputs.sha }}
+
+      - name: Unit tests
+        if: steps.gate.outputs.sha != ''
+        run: npm test
+
+      - name: Catalog validation
+        if: steps.gate.outputs.sha != ''
+        run: npm run validate
+
+      - name: Write nightly identity
+        id: bump
+        if: steps.gate.outputs.sha != ''
+        run: |
+          set -euo pipefail
+          floor=0
+          if git fetch --depth=1 origin nightly 2>/dev/null; then
+            floor=$(git show FETCH_HEAD:package.json | node -e "
+              let text = '';
+              process.stdin.on('data', (chunk) => { text += chunk; });
+              process.stdin.on('end', () => process.stdout.write(String(JSON.parse(text).versionCode || 0)));
+            ")
+          fi
+          node tools/version.mjs nightly \
+            --date '${{ steps.window.outputs.compact }}' \
+            --floor-code "$floor" \
+            --json-out .version-dump.json
+
+      - name: Publish the nightly channel
+        if: steps.gate.outputs.sha != ''
+        env:
+          TAG: nightly-${{ steps.window.outputs.compact }}
+        run: |
+          set -euo pipefail
+          git config user.name 'omtp-version-bot'
+          git config user.email 'omtp-version-bot@users.noreply.github.com'
+          display=$(node -p "require('./.version-dump.json').display")
+          git checkout -B nightly
+          git add manifest.json package.json server-plugin/package.json src/constants.js
+          git commit -m "chore(version): $display [skip version]"
+          git push --force origin nightly
+          git tag -f "$TAG"
+          git push --force origin "refs/tags/$TAG"
+          mkdir -p dist
+          git archive --format=zip --prefix=omtp-model-hub/ -o "dist/omtp-$TAG.zip" HEAD
+
+      - name: Upload nightly build
+        if: steps.gate.outputs.sha != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: omtp-${{ steps.window.outputs.compact }}
+          path: |
+            dist/*.zip
+            .version-dump.json
+          retention-days: 90
+
+      - name: Job summary
+        run: |
+          {
+            echo "### Nightly build"
+            echo
+            if [ -s .version-dump.json ]; then
+              echo '```json'
+              cat .version-dump.json
+              echo '```'
+              echo
+              echo "- branch: \`nightly\`"
+              echo "- tag: \`nightly-${{ steps.window.outputs.compact }}\`"
+              echo "- artifact: \`omtp-${{ steps.window.outputs.compact }}\`"
+            else
+              echo "Skipped: no passing push to \`main\` on ${{ steps.window.outputs.day }} (UTC+8)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
