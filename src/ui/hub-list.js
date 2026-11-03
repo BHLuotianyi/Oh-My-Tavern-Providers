@@ -10,6 +10,7 @@ import {
     roleplayTooltip,
 } from '../personality.js';
 import * as aboutPanel from './about-panel.js';
+import { appendProfilesToolbar, isProfileActive } from './hub-profiles.js';
 import * as loginPanel from './login-panel.js';
 import * as usagePanel from './usage-panel.js';
 import { tr, trf } from './dom.js';
@@ -264,12 +265,11 @@ function renderModelList(listElement, manager, body) {
     }
     if (state.currentTab === 'profiles') {
         const profiles = filteredEntries().filter((entry) => entry.kind === 'profile');
+        appendProfilesToolbar(listElement);
         if (!profiles.length) {
-            // "No models match your search" hid the real cause: SillyTavern
-            // has no profiles yet, or its Connection Profiles extension is off.
             appendEmptyState(listElement, tr(
                 'omtp_profiles_empty',
-                'No connection profiles yet — create one in SillyTavern (API settings → Connection Profiles).',
+                'No connection profiles yet — record the current connection or create an empty profile above.',
             ));
             return;
         }
@@ -369,10 +369,11 @@ function renderDashboard(listElement, appendRow) {
     }
     if (state.selectedProvider === PROFILE_PROVIDER_ID) {
         const profiles = filteredEntries().filter((entry) => entry.kind === 'profile');
+        appendProfilesToolbar(listElement);
         if (!profiles.length) {
             appendEmptyState(listElement, tr(
                 'omtp_profiles_empty',
-                'No connection profiles yet — create one in SillyTavern (API settings → Connection Profiles).',
+                'No connection profiles yet — record the current connection or create an empty profile above.',
             ));
             return;
         }
@@ -456,6 +457,12 @@ function renderRow(entry, index) {
     if (entry.available === false) {
         const keyBadge = el('span', 'omtp-missing-key-badge', tr('omtp_missing_key', 'no key'));
         meta.append(' · ', keyBadge);
+    }
+    if (entry.kind === 'profile' && isProfileActive(entry.model)) {
+        const activeBadge = el('span', 'omtp-profile-active-badge', tr('omtp_profile_active', 'In use'));
+        activeBadge.title = tr('omtp_profile_active_hint', 'SillyTavern is currently using this connection profile');
+        meta.append(' · ', activeBadge);
+        row.classList.add('omtp-profile-current');
     }
     const personality = personalityFor(entry);
     if (personality) {

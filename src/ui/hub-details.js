@@ -34,6 +34,7 @@ import {
 import { getSelectedEntry, providerLabel, rebuildEntries } from './hub-catalog.js';
 import { renderList } from './hub-list.js';
 import { revealLoginRow, renderProviderList } from './hub-sidebar.js';
+import { renderProfileDetails } from './hub-profiles.js';
 import { armQuickSlot, syncTabs } from './hub-quick.js';
 import {
     copySelector,
@@ -351,6 +352,13 @@ export function renderDetails() {
     const entry = getSelectedEntry();
     if (!entry) {
         details.append(el('div', 'omtp-empty-state', tr('omtp_details_empty', 'Select a model to see its details.')));
+        return;
+    }
+
+    // Profiles are saved connections, not models: they get their own pane with
+    // apply / edit / duplicate / delete instead of model capabilities.
+    if (entry.kind === 'profile') {
+        renderProfileDetails(entry, details);
         return;
     }
 

@@ -197,7 +197,7 @@ git pull
 | **Native** | Provider is natively supported by SillyTavern and the native control accepts the model ID | No | ✅ Preserved |
 | **Translated** | Catalog provider mapped to a native SillyTavern adapter (e.g. `minimax-cn`) | No | ✅ Preserved |
 | **OMTP** | Routed through the local `127.0.0.1:4100/v1` gateway via SillyTavern's Custom OpenAI source | **Yes** | Restores prior snapshot on disable |
-| **Profile** | A saved connection from SillyTavern's Connection Manager; listed in the provider column as a connection, not a model (editing stays in SillyTavern) | No | ✅ Preserved |
+| **Profile** | A saved connection from SillyTavern's Connection Manager; listed in the provider column as a connection, not a model, and created/edited/applied/deleted from the hub | No | ✅ Preserved |
 
 ### ⌨️ Slash Commands & Terminal-Style Quick Picker
 
@@ -214,6 +214,7 @@ git pull
 
 - **Per-Model Reasoning Memory**: Reasoning levels set via the details pane or `/effort` are remembered per model (`Claude Opus 5.5`, `DeepSeek V4.1 Flash 1017`, `Gemini 4 Argon`, etc.) and written to `openai_reasoning_effort` when active.
 - **Extra Body JSON**: Attach a custom JSON object to any model entry to merge custom sampling or vendor parameters at generation time; routing keys (`model`, `messages`, `prompt`, `stream`) are protected.
+- **Connection Profile Management**: record the live connection as a new profile, duplicate, rename, edit each field (API, server URL, model, preset, secret, templates…), apply or stop using one — and choose per field whether it is stored in the profile. Every change syncs back to SillyTavern's own dropdown.
 - **Mainstream & Scored Filters**: Toggle **Show non-mainstream providers** (whitelists 52 mainstream providers), **Only models with scores**, and **Translated provider names** (in non-English UIs).
 - **Local OMP Import**: Import a local `oh-my-pi` catalog overlay and optionally import stored API keys and OAuth sessions (`google-antigravity`, `google-gemini-cli`, `anthropic`) from `~/.omp/agent/agent.db`.
 

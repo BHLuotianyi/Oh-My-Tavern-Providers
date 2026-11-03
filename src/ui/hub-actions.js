@@ -137,9 +137,9 @@ export async function useEntry(entry, { throwOnError = false } = {}) {
 /**
  * Reveal SillyTavern's Connection Profiles panel.
  *
- * Profile entries are read-only in the hub: renaming, updating or deleting one
- * happens in SillyTavern. The old code only toasted "manage it over there" and
- * closed the hub, which left the user with no way to actually change anything.
+ * The hub edits profiles itself (see hub-profiles.js); this shortcut stays for
+ * the settings SillyTavern owns beyond the profile fields (API presets, prompt
+ * managers) and for users who prefer the native panel.
  */
 function revealConnectionManager(profileId = '') {
     const select = document.getElementById('connection_profiles');
