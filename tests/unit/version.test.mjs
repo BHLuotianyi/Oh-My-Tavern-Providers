@@ -17,9 +17,13 @@ test('release identity is consistent across manifest, packages and constants', (
     assert.equal(manifest.version, EXTENSION_VERSION);
     assert.equal(manifest.versionCode, EXTENSION_VERSION_CODE);
 
-    // npm requires semver; the display string is one (`<line>+<build metadata>`).
+    // npm requires semver; `main` ships the bare release line.
     assert.equal(clientPackage.version, EXTENSION_VERSION);
     assert.equal(serverPackage.version, EXTENSION_VERSION);
     assert.equal(clientPackage.versionCode, EXTENSION_VERSION_CODE);
     assert.equal(serverPackage.versionCode, EXTENSION_VERSION_CODE);
+
+    // The per-push `+git.<sha>` identity is gone: `main` carries the release
+    // line, and only the nightly channel appends build metadata.
+    assert.doesNotMatch(EXTENSION_VERSION, /\+git\./);
 });

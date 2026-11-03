@@ -175,50 +175,50 @@ Before opening a pull request, verify that these invariants hold:
 
 ## Versioning & Releases
 
-Versions are **standard semver**: `MAJOR.MINOR.FIX` is the human-owned release line, and an optional `-alpha.N` / `-beta.N` prerelease tag is **set by hand only** (alpha is rarely used). Automation only appends build metadata, which semver ignores for precedence:
+Versions are **standard semver**: `MAJOR.MINOR.FIX` is the human-owned release line, and an optional `-alpha.N` / `-beta.N` prerelease tag is **set by hand only** (alpha is rarely used). `main` always carries the bare release line; build metadata is appended only to published builds, and semver ignores it for precedence:
 
-| Channel | Readable version | Trigger |
-|---|---|---|
-| Git | `<line>+git.<short sha>`, e.g. `2.0.0+git.a1b2c3d` | Every push to `main` whose `npm test` and `npm run validate` pass |
-| Nightly | `<line>+nightly.<YYYYMMDD>`, e.g. `2.0.0-beta.1+nightly.20261103` | Daily at **05:30 (UTC+8)**, when the previous day had at least one passing push to `main` |
-| Release | `<line>`, e.g. `2.0.0` | A manually pushed tag |
+| Channel | Readable version | Where it lives | Trigger |
+|---|---|---|---|
+| Main | `<line>`, e.g. `2.0.0` | `main` | Your own commits; nothing writes there automatically |
+| Nightly | `<line>+nightly.<YYYYMMDD>`, e.g. `2.0.0-beta.1+nightly.20261103` | `nightly` branch, `nightly-YYYYMMDD` tag and artifact | Daily at **05:30 (UTC+8)**, when the previous day had at least one passing push to `main` |
+| Release | `<line>`, e.g. `2.0.0` | Git tag and GitHub Release | A manually pushed tag |
 
 - `<line>` is the current version without `+build` (including any manually set `-alpha.N` / `-beta.N`); `YYYYMMDD` is always **UTC+8**.
-- `versionCode` is a monotonic integer **independent of the readable version**: it increments on every version write, and `main` and nightly share the counter (each side reads the highest code it can see and adds one).
-- `tests/unit/version.test.mjs` enforces that `manifest.json`, `package.json`, `server-plugin/package.json` and `src/constants.js` all agree with the manifest version.
-- Commits written by automation carry `[skip version]`, so they are never dumped again.
+- Automation never commits to `main`. The version files there change only when you set a new release line, so the commit history stays human-authored — no bot commit after a push.
+- `versionCode` is a monotonic integer **independent of the readable version**: it increments whenever a version is written (nightly or manual release), and `main` and nightly share the counter (the nightly job reads the highest code it can see and adds one).
+- `tests/unit/version.test.mjs` enforces that `manifest.json`, `package.json`, `server-plugin/package.json` and `src/constants.js` all agree.
 
 Workflows:
 
 | File | Purpose |
 |---|---|
-| `.github/workflows/version.yml` | Runs the full checks on every push to `main` (including `[skip version]` commits), then writes the version back and commits it (also stored as the `version-dump.json` artifact). Pushed with `GITHUB_TOKEN`, so it cannot retrigger itself |
+| `.github/workflows/checks.yml` | Runs `npm test` and `npm run validate` on every push to `main`; it never writes files |
 | `.github/workflows/nightly.yml` | At 05:30 (UTC+8) builds a nightly from the last passing push of the previous day: updates the `nightly` branch, a `nightly-YYYYMMDD` tag and a workflow artifact — **never a Release** |
 | `.github/workflows/release.yml` | On a `v*` tag: re-runs the checks, verifies the tag matches the version files, then creates the GitHub Release with a source zip |
 
-Version tool: `tools/version.mjs` (`npm run version:bump`, `npm run version:nightly -- --date 20261102`, `npm run version:manual -- 2.0.0-beta.1`, `npm run version:check-tag -- v2.0.0`).
+Version tool: `tools/version.mjs` (`npm run version:nightly -- --date 20261102`, `npm run version:manual -- 2.0.0-beta.1`, `npm run version:check-tag -- v2.0.0`).
 
 ### Publishing a release by hand
 
-1. Confirm the code to ship is on `main` and the latest **Version dump** workflow run is green (`Actions → Version dump`).
+1. Confirm the code to ship is on `main` and the latest **Checks** run is green (`Actions → Checks`).
 2. Update `main` locally and set the version to ship (a stable release by default; add `-beta.N` for a prerelease):
    ```bash
    git pull --ff-only
    npm run version:manual -- 2.0.0
    ```
-   This writes `2.0.0` (build metadata stripped) into all four version files and increments `versionCode`.
-3. Commit and push (`[skip version]` keeps the automated dump from rewriting it):
+   This writes `2.0.0` into all four version files and increments `versionCode`.
+3. Commit and push:
    ```bash
    git add manifest.json package.json server-plugin/package.json src/constants.js
-   git commit -m "chore(release): 2.0.0 [skip version]"
+   git commit -m "chore(release): 2.0.0"
    git push origin main
    ```
-4. Once the **Version dump** checks pass, tag and push (the tag must match `<line>` or the prerelease-free base):
+4. Once the **Checks** run is green, tag and push (the tag must match `<line>` or the prerelease-free base):
    ```bash
    git tag v2.0.0
    git push origin v2.0.0
    ```
 5. The **Release** workflow re-runs `npm test` and `npm run validate`, verifies the tag against the version files, then creates the GitHub Release with `omtp-v2.0.0.zip`. A failed check means no Release.
-6. Later commits keep producing `2.0.0+git.<sha>` on the same release line.
+6. Later commits keep `2.0.0` on the same release line; the nightly branch keeps reporting `2.0.0+nightly.<date>`.
 
 > To ship the current `main` snapshot without changing the version, just tag that commit as `v<line>` or `v<MAJOR.MINOR.FIX>`.

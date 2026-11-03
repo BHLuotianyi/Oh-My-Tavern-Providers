@@ -99,7 +99,7 @@ jobs:
           node tools/version.mjs nightly \
             --date '${{ steps.window.outputs.compact }}' \
             --floor-code "$floor" \
-            --json-out .version-dump.json
+            --json-out .version.json
 
       - name: Publish the nightly channel
         if: steps.gate.outputs.sha != ''
@@ -109,10 +109,10 @@ jobs:
           set -euo pipefail
           git config user.name 'omtp-version-bot'
           git config user.email 'omtp-version-bot@users.noreply.github.com'
-          display=$(node -p "require('./.version-dump.json').display")
+          display=$(node -p "require('./.version.json').display")
           git checkout -B nightly
           git add manifest.json package.json server-plugin/package.json src/constants.js
-          git commit -m "chore(version): $display [skip version]"
+          git commit -m "chore(version): $display"
           git push --force origin nightly
           git tag -f "$TAG"
           git push --force origin "refs/tags/$TAG"
@@ -126,7 +126,7 @@ jobs:
           name: omtp-${{ steps.window.outputs.compact }}
           path: |
             dist/*.zip
-            .version-dump.json
+            .version.json
           retention-days: 90
 
       - name: Job summary
@@ -134,9 +134,9 @@ jobs:
           {
             echo "### Nightly build"
             echo
-            if [ -s .version-dump.json ]; then
+            if [ -s .version.json ]; then
               echo '```json'
-              cat .version-dump.json
+              cat .version.json
               echo '```'
               echo
               echo "- branch: \`nightly\`"

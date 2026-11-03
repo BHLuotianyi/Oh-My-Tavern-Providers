@@ -188,50 +188,50 @@ Oh-My-Tavern-Providers/
 
 ## 版本号与发布 / Versioning & Releases
 
-版本号采用**标准 semver**：`MAJOR.MINOR.FIX` 是人工维护的发布线，可选的 `-alpha.N` / `-beta.N` 预发布标签**只由人工设置**（alpha 基本用不到）。自动化只追加 build metadata（semver 在优先级比较时忽略它）：
+版本号采用**标准 semver**：`MAJOR.MINOR.FIX` 是人工维护的发布线，可选的 `-alpha.N` / `-beta.N` 预发布标签**只由人工设置**（alpha 基本用不到）。`main` 上永远只有裸发布线；build metadata 只加在发布出去的构建上，semver 在优先级比较时忽略它：
 
-| 通道 | 可读版本 | 触发条件 |
-|---|---|---|
-| Git | `<line>+git.<短 sha>`，如 `2.0.0+git.a1b2c3d` | 每次推送到 `main`，且 `npm test` 与 `npm run validate` 全绿 |
-| Nightly | `<line>+nightly.<YYYYMMDD>`，如 `2.0.0-beta.1+nightly.20261103` | 每天 **05:30（UTC+8）**，且前一日 `main` 至少有一次通过检查的推送 |
-| Release | `<line>`，如 `2.0.0` | 人工打 tag |
+| 通道 | 可读版本 | 存放位置 | 触发条件 |
+|---|---|---|---|
+| Main | `<line>`，如 `2.0.0` | `main` | 你自己的提交；没有任何自动化写入 |
+| Nightly | `<line>+nightly.<YYYYMMDD>`，如 `2.0.0-beta.1+nightly.20261103` | `nightly` 分支、`nightly-YYYYMMDD` tag 与 artifact | 每天 **05:30（UTC+8）**，且前一日 `main` 至少有一次通过检查的推送 |
+| Release | `<line>`，如 `2.0.0` | Git tag 与 GitHub Release | 人工打 tag |
 
 - `<line>` = 当前版本去掉 `+build` 后的部分（含人工设置的 `-alpha.N` / `-beta.N`）；`YYYYMMDD` 固定使用 **UTC+8**。
-- `versionCode` 是**独立于可读版本号的单调整数**：每写一次版本号就 +1；Git 与 Nightly 共用同一个计数器（各自读取可见的最大值再 +1）。
-- `tests/unit/version.test.mjs` 强制 `manifest.json`、`package.json`、`server-plugin/package.json`、`src/constants.js` 四份副本与 `manifest` 版本严格一致。
-- 自动化写的提交信息带 `[skip version]` 标记，不会被再次 dump。
+- 自动化**从不**往 `main` 提交。`main` 上的版本文件只在你设置新的发布线时改变，因此提交历史始终保持人工撰写，push 之后不会再冒出 bot 提交。
+- `versionCode` 是**独立于可读版本号的单调整数**：每写一次版本号（nightly 或手动发布）就 +1；`main` 与 Nightly 共用同一个计数器（nightly 读取可见的最大值再 +1）。
+- `tests/unit/version.test.mjs` 强制 `manifest.json`、`package.json`、`server-plugin/package.json`、`src/constants.js` 四份副本严格一致。
 
 工作流：
 
 | 文件 | 作用 |
 |---|---|
-| `.github/workflows/version.yml` | push 到 `main` 后先跑完整检查（含 `[skip version]` 提交），通过则写回版本号并提交（同时把 `version-dump.json` 存为 artifact）；提交用 `GITHUB_TOKEN` 推送，不会递归触发 |
+| `.github/workflows/checks.yml` | 每次 push 到 `main` 运行 `npm test` 与 `npm run validate`；不写任何文件 |
 | `.github/workflows/nightly.yml` | 每天 05:30（UTC+8）按前一日最后一个 «检查通过的 push» 构建 nightly：更新 `nightly` 分支、`nightly-YYYYMMDD` tag 与 workflow artifact，**不创建 Release** |
 | `.github/workflows/release.yml` | 推送 `v*` tag 后重跑检查、校验 tag 与版本文件匹配，再创建 GitHub Release 与源码 zip |
 
-版本工具：`tools/version.mjs`（`npm run version:bump`、`npm run version:nightly -- --date 20261102`、`npm run version:manual -- 2.0.0-beta.1`、`npm run version:check-tag -- v2.0.0`）。
+版本工具：`tools/version.mjs`（`npm run version:nightly -- --date 20261102`、`npm run version:manual -- 2.0.0-beta.1`、`npm run version:check-tag -- v2.0.0`）。
 
 ### 手动发布一个 Release
 
-1. 确认待发布代码已在 `main`，且最近一次 **Version dump** 工作流为绿色（`Actions → Version dump`）。
+1. 确认待发布代码已在 `main`，且最近一次 **Checks** 工作流为绿色（`Actions → Checks`）。
 2. 同步 `main` 后设置要发布的版本（默认是正式版；需要预发布就带 `-beta.N`）：
    ```bash
    git pull --ff-only
    npm run version:manual -- 2.0.0
    ```
-   该命令把四份版本文件写成 `2.0.0`（build metadata 被去掉），并把 `versionCode` +1。
-3. 提交并推送（`[skip version]` 让自动 dump 跳过这次提交）：
+   该命令把四份版本文件写成 `2.0.0`，并把 `versionCode` +1。
+3. 提交并推送：
    ```bash
    git add manifest.json package.json server-plugin/package.json src/constants.js
-   git commit -m "chore(release): 2.0.0 [skip version]"
+   git commit -m "chore(release): 2.0.0"
    git push origin main
    ```
-4. 等 **Version dump** 的检查任务通过后打 tag 并推送（tag 需要与 `<line>` 或去掉预发布标签的基版本一致）：
+4. 等 **Checks** 通过后打 tag 并推送（tag 需要与 `<line>` 或去掉预发布标签的基版本一致）：
    ```bash
    git tag v2.0.0
    git push origin v2.0.0
    ```
 5. `Release` 工作流会重跑 `npm test` 与 `npm run validate`，校验 tag 与版本文件匹配，然后创建 GitHub Release 并附上 `omtp-v2.0.0.zip`。任何一步失败都不会产生 Release。
-6. 之后的新提交继续在 `2.0.0` 发布线上产生 `2.0.0+git.<sha>` 形式的版本。
+6. 之后的新提交继续留在 `2.0.0` 发布线上；nightly 分支则继续报告 `2.0.0+nightly.<date>`。
 
 > 只想把当前 `main` 的快照发成 Release、不改版本号时，直接对该提交打 `v<line>` 或 `v<MAJOR.MINOR.FIX>` tag 即可。

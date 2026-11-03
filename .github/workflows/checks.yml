@@ -1,0 +1,29 @@
+name: Checks
+
+# Runs the full suite on every push to `main`. Build identities are written by
+# the nightly and release channels only, so this workflow never touches the
+# version files and never commits: `main` history stays human-authored.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: checks-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Unit tests
+        run: npm test
+      - name: Catalog validation
+        run: npm run validate

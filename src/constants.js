@@ -11,12 +11,13 @@ export const SETTINGS_NAMESPACE = 'omtp';
 
 /**
  * Release identity. `EXTENSION_VERSION` is the display string (also written to
- * `manifest.json#version`); `EXTENSION_VERSION_CODE` is the monotonic integer
- * bumped on every version dump. Both are written by `tools/version.mjs` in CI;
- * `tests/unit/version.test.mjs` keeps all copies in sync.
+ * `manifest.json#version`) and always carries the release line on `main`;
+ * `EXTENSION_VERSION_CODE` is the monotonic integer bumped when a version is
+ * written. Both are written by `tools/version.mjs` for the nightly and release
+ * channels only; `tests/unit/version.test.mjs` keeps all copies in sync.
  */
-export const EXTENSION_VERSION = '2.0.0+git.7fc4b65';
-export const EXTENSION_VERSION_CODE = 8;
+export const EXTENSION_VERSION = '2.0.0';
+export const EXTENSION_VERSION_CODE = 10;
 
 /** Base path of the optional server plugin routes. */
 export const API_BASE = '/api/plugins/omtp';

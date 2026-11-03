@@ -4,22 +4,25 @@
  *
  * Versions are standard semver: `MAJOR.MINOR.FIX` is the release line, and an
  * optional `-alpha.N` / `-beta.N` prerelease is only ever set by hand (alpha is
- * rarely used). Automation only appends build metadata, which semver ignores
- * for precedence:
+ * rareley used). Automation only appends build metadata, which semver ignores
+ * for precedence, and only when it publishes a build:
  *
- *   <line>+git.<shortsha>        main push dump (the commit it describes)
- *   <line>+nightly.<YYYYMMDD>    nightly build, UTC+8 date of the built day
+ *   <line>                       `main`, always — the shipped release line
+ *   <line>+nightly.<YYYYMMDD>    nightly branch, UTC+8 date of the built day
+ *
+ * `main` never receives an automated commit: build identities belong to the
+ * nightly branch and to releases, so the repository history stays human-only.
  *
  * `versionCode` is an integer kept independent of the readable version and
  * incremented on every write. `main` and the nightly channel share one
- * counter: each side passes `--floor-code` with the highest code it can see.
+ * counter: the nightly job passes `--floor-code` with the highest code it can
+ * see.
  *
  * The same string is written to `manifest.json`, `package.json`,
  * `server-plugin/package.json` and `src/constants.js`; only the version fields
  * are touched, so formatting, ordering and trailing newlines stay intact.
  *
  * Usage:
- *   node tools/version.mjs bump [--floor-code N] [--json-out FILE]
  *   node tools/version.mjs nightly --date YYYYMMDD [--floor-code N] [--json-out FILE]
  *   node tools/version.mjs manual 2.0.0 | 2.0.0-beta.1 [--json-out FILE]
  *   node tools/version.mjs check-tag v2.0.0
@@ -28,14 +31,10 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** Fixed build timezone: UTC+8, with no daylight saving. */
 export const BUILD_TZ_OFFSET_MINUTES = 8 * 60;
-
-/** Mark every machine-written commit so it is neither re-dumped nor re-counted. */
-export const SKIP_MARKER = '[skip version]';
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -80,16 +79,12 @@ export function previousBuildDate(ms = Date.now()) {
 }
 
 /** Build identity for a channel. */
-export function buildVersion({ line, channel, date = previousBuildDate(), sha = '' }) {
+export function buildVersion({ line, channel, date = previousBuildDate() }) {
     if (!SEMVER.test(line) || line.includes('+')) throw new RangeError(`invalid release line: ${line}`);
     if (channel === 'manual') return line;
     if (channel === 'nightly') {
         if (!/^\d{8}$/.test(date)) throw new RangeError(`invalid build date: ${date}`);
         return `${line}+nightly.${date}`;
-    }
-    if (channel === 'git') {
-        if (!/^[0-9a-f]{7,40}$/.test(sha)) throw new RangeError(`invalid commit sha: ${sha}`);
-        return `${line}+git.${sha.slice(0, 7)}`;
     }
     throw new RangeError(`unknown channel: ${channel}`);
 }
@@ -147,30 +142,20 @@ export function applyVersion(root, { display, versionCode }) {
     return { display, versionCode: code, files: written };
 }
 
-/** Short HEAD sha: the commit a git dump describes. */
-export function shortSha({ root = DEFAULT_ROOT, length = 7 } = {}) {
-    return execFileSync('git', ['-C', root, 'rev-parse', `--short=${length}`, 'HEAD'], {
-        encoding: 'utf8',
-    }).trim();
-}
-
 /**
  * Compute and write the new identity. `floorCode` keeps `versionCode`
  * monotonic across channels; `version` writes an explicit (manual) version.
  */
 export function bumpVersion({
-    root = DEFAULT_ROOT, channel = 'git', date = previousBuildDate(), sha = '',
-    floorCode = 0, version,
+    root = DEFAULT_ROOT, channel, date = previousBuildDate(), floorCode = 0, version,
 } = {}) {
     const current = readCurrent(root);
     const nextDisplay = version
         ? lineFromDisplay(version)
-        : buildVersion({ line: current.line, channel, date, sha });
+        : buildVersion({ line: current.line, channel, date });
     const versionCode = Math.max(current.versionCode, Number(floorCode) || 0) + 1;
     const result = applyVersion(root, { display: nextDisplay, versionCode });
-    const build = {};
-    if (channel === 'nightly') build.date = date;
-    else if (channel === 'git') build.sha = sha;
+    const build = channel === 'nightly' ? { date } : {};
     return { ...result, channel, ...build };
 }
 
@@ -210,10 +195,6 @@ function main(argv) {
     const floorCode = Number(flags['floor-code'] || 0);
 
     switch (command) {
-        case 'bump': {
-            const result = bumpVersion({ root, channel: 'git', sha: shortSha({ root }), floorCode });
-            return emit(result, flags['json-out']);
-        }
         case 'nightly': {
             const result = bumpVersion({ root, channel: 'nightly', date: flags.date, floorCode });
             return emit(result, flags['json-out']);

@@ -60,8 +60,8 @@ function shortVersion(raw) {
 }
 
 /**
- * Render a version for display: never double the `v` prefix, since the
- * manifest ships `1.2.3+git.abcdef0` while the server package may ship a plain `1.2.3`.
+ * Render a version for display: never double the `v` prefix, since `main`
+ * ships a plain `1.2.3` while the nightly branch ships `1.2.3+nightly.20261103`.
  * @param {unknown} value
  * @returns {string}
  */

@@ -10,7 +10,7 @@
   <a href="https://github.com/BHLuotianyi/Oh-My-Tavern-Providers/blob/main/LICENSE">
     <img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" />
   </a>
-  <img alt="Git build" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FBHLuotianyi%2FOh-My-Tavern-Providers%2Fmain%2Fmanifest.json&query=%24.version&label=Git&style=flat&color=8b5cf6" />
+  <img alt="Main build" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FBHLuotianyi%2FOh-My-Tavern-Providers%2Fmain%2Fmanifest.json&query=%24.version&label=Main&style=flat&color=8b5cf6" />
   <img alt="Nightly build" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FBHLuotianyi%2FOh-My-Tavern-Providers%2Fnightly%2Fmanifest.json&query=%24.version&label=Nightly&style=flat&color=0ea5e9" />
   <img alt="Release" src="https://img.shields.io/github/v/release/BHLuotianyi/Oh-My-Tavern-Providers?label=Release&style=flat&color=10b981" />
   <img alt="SillyTavern 1.12.7+" src="https://img.shields.io/badge/SillyTavern-1.12.7%2B-10b981" />
