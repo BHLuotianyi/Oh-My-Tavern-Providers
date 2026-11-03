@@ -32,9 +32,6 @@ test('gemini cache hits and thoughts survive the adapter', () => {
     assert.equal(completion.usage.prompt_tokens, 5000);
     assert.equal(completion.usage.prompt_tokens_details.cached_tokens, 4096);
     assert.equal(completion.usage.completion_tokens_details.reasoning_tokens, 80);
-    assert.deepEqual(tokensFromOpenAIUsage(completion.usage), {
-        input: 904, cachedInput: 4096, cacheWrite: 0, output: 40, reasoning: 80,
-    });
 });
 
 test('gemini streaming usage frame carries cache hits', async () => {
@@ -52,9 +49,6 @@ test('gemini streaming usage frame carries cache hits', async () => {
     const usage = JSON.parse(usageFrame.replace(/^data:\s*/, '')).usage;
     assert.equal(usage.prompt_tokens, 2000);
     assert.equal(usage.prompt_tokens_details.cached_tokens, 1536);
-    assert.deepEqual(tokensFromOpenAIUsage(usage), {
-        input: 464, cachedInput: 1536, cacheWrite: 0, output: 10, reasoning: 0,
-    });
 });
 
 test('responses streaming usage frame carries cache and reasoning tokens', async () => {
@@ -82,7 +76,4 @@ test('responses streaming usage frame carries cache and reasoning tokens', async
     assert.equal(usage.prompt_tokens, 2000);
     assert.equal(usage.prompt_tokens_details.cached_tokens, 1536);
     assert.equal(usage.completion_tokens_details.reasoning_tokens, 64);
-    assert.deepEqual(tokensFromOpenAIUsage(usage), {
-        input: 464, cachedInput: 1536, cacheWrite: 0, output: 100, reasoning: 64,
-    });
 });

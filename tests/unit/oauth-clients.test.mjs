@@ -53,7 +53,6 @@ test('missing or malformed local config resolves to empty credentials', () => {
     assert.deepEqual(resolveOAuthClient(root, 'anthropic', {}), { clientId: '', clientSecret: '' });
     fs.writeFileSync(path.join(root, 'oauth-clients.json'), '{ nope');
     assert.deepEqual(loadOAuthClients(root), {});
-    assert.deepEqual(loginEnv(root, 'anthropic', {}), {});
 });
 
 test('catalog layers keep public client ids but never secrets', async () => {

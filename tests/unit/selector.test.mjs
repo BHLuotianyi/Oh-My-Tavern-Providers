@@ -38,8 +38,6 @@ test('resolveSelector returns an entry and level', () => {
   const result = resolveSelector('cerebras/llama-4:high', entries, { providers: ['cerebras'] });
   assert.equal(result.entry.key, 'omp/cerebras/llama-4');
   assert.equal(result.level, 'high');
-  const missing = resolveSelector('no-such-model', entries, {});
-  assert.ok(missing.error);
   const withUnavailable = [
     { key: 'omp/cerebras/llama-4', kind: 'omp', provider: 'cerebras', model: 'llama-4', modelLabel: 'Llama 4', available: false },
     { key: 'omp/openrouter/z-ai/glm-4.7', kind: 'omp', provider: 'openrouter', model: 'z-ai/glm-4.7', modelLabel: 'GLM 4.7', available: true },

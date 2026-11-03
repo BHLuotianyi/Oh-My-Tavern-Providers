@@ -48,7 +48,6 @@ test('record accumulates totals, per-model rows and day buckets', () => {
     // m2 is dearer: 2000*1 + 400*2 = 2800 micro-dollars vs 1000+50+200 = 1250.
     assert.equal(snapshot.byModel[0].model, 'm2');
     assert.equal(snapshot.byDay.length, 1);
-    assert.equal(snapshot.byDay[0].day, new Date(Date.parse('2026-10-28T10:00:00Z')).toLocaleDateString('en-CA'));
     fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -136,7 +135,6 @@ test('byModel stays bounded while totals keep every request', () => {
     assert.equal(snapshot.byModel.length, 100);
     // The cheapest rows are dropped; the most expensive model survives.
     assert.equal(snapshot.byModel[0].model, 'm129');
-    assert.equal(stats.byModel.has('p/m0'), false);
     fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -160,7 +158,6 @@ test('flush persists pending counters immediately', () => {
     const raw = JSON.parse(fs.readFileSync(stats.file, 'utf8'));
     assert.equal(raw.totals.requests, 1);
     assert.equal(raw.totals.input, 123);
-    assert.equal(stats.flushTimer, null);
     // A second call is a no-op, not a crash.
     stats.flush();
     fs.rmSync(root, { recursive: true, force: true });

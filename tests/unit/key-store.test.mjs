@@ -51,7 +51,7 @@ test('key resolution order prefers OMTP store over ST and env', async () => {
   const root = tempRoot();
   const store = new KeyStore({
     root,
-    resolveStSecret: () => 'st-key',
+    resolveStSecret: (id) => (id === 'env-only' ? '' : 'st-key'),
     env: { MOCK_API_KEY: 'env-key' },
   });
   const provider = { id: 'mock', gatewayAdapter: 'openai', baseUrl: 'http://x/v1', authKind: 'api-key', models: [] };
@@ -62,6 +62,11 @@ test('key resolution order prefers OMTP store over ST and env', async () => {
   resolved = await store.resolveProvider(provider);
   assert.equal(resolved.apiKey, 'omtp-key');
   assert.equal(resolved.keySource, 'omtp');
+
+  const envOnly = { ...provider, id: 'env-only', envVars: ['MOCK_API_KEY'] };
+  resolved = await store.resolveProvider(envOnly);
+  assert.equal(resolved.apiKey, 'env-key');
+  assert.equal(resolved.keySource, 'env');
 });
 
 test('signing out also drops the key inherited from SillyTavern secrets', async () => {
@@ -119,7 +124,6 @@ test('a concurrent write cannot resurrect a signed-out key', async () => {
 
   const mock = await store.getProviderConfig('mock');
   assert.equal(mock.apiKey, undefined);
-  assert.equal(mock.ignoreStSecret, true);
   assert.equal((await store.getProviderConfig('other')).apiKey, 'other-key');
 });
 

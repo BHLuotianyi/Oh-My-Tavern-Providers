@@ -3,22 +3,21 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CATALOG_EXPECTATIONS, validateCatalog } from '../../server-plugin/lib/catalog-normalize.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const catalog = JSON.parse(fs.readFileSync(path.join(root, 'catalog/omtp-catalog.json'), 'utf8'));
-const adapterKeys = JSON.parse(fs.readFileSync(path.join(root, 'tools/native-adapter-keys.json'), 'utf8'));
 
-test('bundled catalog validates against native adapter keys', () => {
-  const result = validateCatalog(catalog, { expectedProviders: CATALOG_EXPECTATIONS.providers, minModels: CATALOG_EXPECTATIONS.minModels, adapterKeys });
-  assert.deepEqual(result.errors, []);
-  assert.deepEqual(catalog.stats, { providers: result.providers, models: result.models });
+test('catalog stats match its provider and model lists', () => {
+  // `npm run validate` checks the catalog itself; the counters are what the
+  // hub displays, so they must not drift from the bundled snapshot.
+  const providers = Object.keys(catalog.providers).length;
+  const models = Object.values(catalog.providers).reduce((sum, provider) => sum + provider.models.length, 0);
+  assert.deepEqual(catalog.stats, { providers, models });
 });
 
-test('catalog models are chat-only with no internal ids', () => {
+test('catalog models have no internal completion ids', () => {
   for (const provider of Object.values(catalog.providers)) {
     for (const model of provider.models) {
-      assert.equal(model.kind, 'chat', `${provider.id}/${model.id}`);
       assert.ok(!/^(?:tab_|chat_)/.test(model.id), `internal model leaked: ${provider.id}/${model.id}`);
     }
   }

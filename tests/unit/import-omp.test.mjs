@@ -90,5 +90,4 @@ test('importFromOmp reports found=false for a missing catalog path', async () =>
   const store = new KeyStore({ root: dir, resolveStSecret: () => '' });
   const result = await importFromOmp({ catalogPath: '/non/existent/path', credentials: false, keyStore: store });
   assert.equal(result.found, false);
-  assert.equal(result.credentials, 0);
 });

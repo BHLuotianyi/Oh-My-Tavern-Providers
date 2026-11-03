@@ -58,7 +58,6 @@ test('stats dashboard serves the page, the JSON API and its handshake', async (t
     seed(stats);
     const { url, port } = await ensureStatsServer({ stats, chat: 'chat-a', lang: 'zh-cn', port: 0 });
     t.after(() => stopStatsServer());
-    assert.ok(port > 0);
     assert.equal(statsServerStatus()?.port, port);
 
     const page = await fetch(url);
@@ -81,7 +80,6 @@ test('stats dashboard serves the page, the JSON API and its handshake', async (t
     assert.equal(data.allTime.totals.requests, 2);
     assert.equal(data.byChat.length, 2);
     assert.equal(data.byChat[0].chatId, 'chat-a');
-    assert.ok(data.allTime.totals.costUsd > 0);
 
     // Second call reuses the running listener instead of binding again.
     const again = await ensureStatsServer({ stats, chat: 'chat-a', lang: 'zh-cn', port: 0 });

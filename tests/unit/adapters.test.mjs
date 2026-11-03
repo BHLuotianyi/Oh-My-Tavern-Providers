@@ -40,7 +40,11 @@ test('openai adapter forwards JSON and returns an OpenAI response', async () => 
 });
 
 test('openai adapter passes through streaming SSE', async () => {
+  let seenBody;
   await withServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    seenBody = JSON.parse(body);
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     res.write('data: {"choices":[{"delta":{"content":"pong"}}]}\n\n');
     res.end('data: [DONE]\n\n');
@@ -49,10 +53,10 @@ test('openai adapter passes through streaming SSE', async () => {
       { model: 'echo', messages: [{ role: 'user', content: 'ping' }], stream: true },
       { provider: 'mock', model: 'echo', baseUrl, apiKey: 'test', headers: {}, extraConfig: {} },
     );
+    assert.equal(seenBody.stream, true);
     assert.equal(response.status, 200);
-    const text = await response.text();
-    assert.match(text, /pong/);
-    assert.match(text, /\[DONE\]/);
+    assert.equal(response.headers.get('content-type'), 'text/event-stream; charset=utf-8');
+    assert.equal(await response.text(), 'data: {"choices":[{"delta":{"content":"pong"}}]}\n\ndata: [DONE]\n\n');
   });
 });
 

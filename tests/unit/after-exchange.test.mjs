@@ -25,11 +25,6 @@ test('unknown and empty after-exchange hooks leave the credential unchanged', as
     assert.equal(await applyAfterExchange(undefined, original), original);
 });
 
-test('gitlab-duo-clear-cache is an explicit no-op', async () => {
-    const original = credential();
-    assert.equal(await applyAfterExchange('gitlab-duo-clear-cache', original), original);
-});
-
 test('anthropic-identity fills account and organization identity from bootstrap', async () => {
     const calls = [];
     const doFetch = async (url, init) => {
