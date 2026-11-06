@@ -5,6 +5,7 @@ import { Popup } from '../../../../../popup.js';
 import { setOnlineStatus } from '../../../../../../script.js';
 import * as engine from '../switch-engine.js';
 import { API_BASE, DEFAULT_HOTKEY, QUICK_SLOT_COUNT, SEARCH_DEBOUNCE_MS } from '../constants.js';
+import { UPDATE_POLL_MS } from '../update-check.js';
 import { supportsProviderNames } from '../provider-names.js';
 import * as loginPanel from './login-panel.js';
 import { tr, trf } from './dom.js';
@@ -24,6 +25,7 @@ import { renderDetails, toggleFavorite } from './hub-details.js';
 import { assignQuickSlotFromSelection, renderAll, renderFooter, syncTabs, useQuickSlot } from './hub-quick.js';
 import { renderProviderList } from './hub-sidebar.js';
 import { useEntry } from './hub-actions.js';
+import { onUpdatePillClick, refreshUpdatePill } from './update-pill.js';
 
 /**
  * Poll the gateway status endpoint and paint the header pill.
@@ -117,7 +119,20 @@ function buildModalHeader() {
     pill.append(dot, label);
     pill.addEventListener('click', onGatewayPillClick);
 
-    header.append(title, pill, search, close);
+    // Same shape as the gateway pill: dot + label, click to act.
+    const updatePill = el('button', 'omtp-update-pill');
+    updatePill.id = 'omtp-update-pill';
+    updatePill.type = 'button';
+    updatePill.title = tr('omtp_update_status', 'Update status');
+    updatePill.setAttribute('aria-label', updatePill.title);
+    const updateDot = el('span', 'omtp-status-dot');
+    updateDot.id = 'omtp-update-dot';
+    const updateLabel = el('span', 'omtp-status-label', tr('omtp_update_checking', 'Checking for updates…'));
+    updateLabel.id = 'omtp-update-label';
+    updatePill.append(updateDot, updateLabel);
+    updatePill.addEventListener('click', onUpdatePillClick);
+
+    header.append(title, pill, updatePill, search, close);
     return { header, search, close };
 }
 
@@ -375,6 +390,10 @@ export function openHub(options = {}) {
     if (!state.gatewayPollTimer) {
         state.gatewayPollTimer = setInterval(updateGatewayPill, 10000);
     }
+    refreshUpdatePill();
+    if (!state.updatePollTimer) {
+        state.updatePollTimer = setInterval(refreshUpdatePill, UPDATE_POLL_MS);
+    }
     const search = document.getElementById('omtp-search');
     if (search) {
         search.value = state.searchQuery;
@@ -437,6 +456,10 @@ export function closeHub() {
     if (state.gatewayPollTimer) {
         clearInterval(state.gatewayPollTimer);
         state.gatewayPollTimer = null;
+    }
+    if (state.updatePollTimer) {
+        clearInterval(state.updatePollTimer);
+        state.updatePollTimer = null;
     }
     if (state.previousFocus instanceof HTMLElement && state.previousFocus.isConnected) {
         try {

@@ -157,6 +157,7 @@ function normalizeSettings(settings) {
     settings.extraBodies = isPlainObject(settings.extraBodies) ? settings.extraBodies : {};
     settings.reasoningByEntry = isPlainObject(settings.reasoningByEntry) ? settings.reasoningByEntry : {};
     settings.characterBindings = isPlainObject(settings.characterBindings) ? settings.characterBindings : {};
+    settings.updateCheck = isPlainObject(settings.updateCheck) ? settings.updateCheck : null;
 
     if (!isPlainObject(settings.ui)) {
         settings.ui = clone(DEFAULT_SETTINGS.ui);

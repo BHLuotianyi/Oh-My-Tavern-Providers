@@ -44,4 +44,12 @@ export const state = {
     highlightTimer: null,
     /** @type {ReturnType<typeof setInterval>|null} */
     gatewayPollTimer: null,
+    /** @type {ReturnType<typeof setInterval>|null} */
+    updatePollTimer: null,
+    /** @type {Promise<object>|null} In-flight GitHub check shared by callers. */
+    updateInFlight: null,
+    /** @type {object|null} Last update verdict (see src/update-check.js). */
+    updateInfo: null,
+    /** @type {string|null} Remote build already announced this session. */
+    updateNotifiedFor: null,
 };

@@ -84,6 +84,7 @@ Oh-My-Tavern-Providers/
 │   ├── personality-match.js      # 模型 ID 到人格基准键的归一化匹配（纯函数）
 │   ├── provider-names.js         # 服务商官方中文名与地区后缀翻译
 │   ├── provider-links.js         # 服务商密钥控制台/用量页跳转地址
+│   ├── update-check.js           # GitHub 元信息/提交历史更新检测（纯函数，可离线单测）
 │   ├── errors.js                 # 切换/选择器错误码（UI 层负责翻译）
 │   ├── reasoning.js              # 模型推理档位能力判定
 │   ├── usage-session.js          # 当前对话 Token 统计时间窗基线管理
@@ -102,7 +103,8 @@ Oh-My-Tavern-Providers/
 │       ├── hub-details.js        # 右侧详情区、八维人格雷达挂载、推理档位与操作栏
 │       ├── hub-quick.js          # 顶部 1–9 快速槽位栏、顶栏高亮与脚部统计
 │       ├── hub-actions.js        # 使用模型、对话/角色绑定切换、跳转服务商设置、复制选择器
-│       ├── hub-modal.js          # 模态框 DOM 构建、网关状态胶囊、键盘导航与焦点陷阱
+│       ├── hub-modal.js          # 模态框 DOM 构建、网关/更新指示灯、键盘导航与焦点陷阱
+│       ├── update-pill.js        # 顶栏更新指示灯（对比 GitHub release / 提交并提示）
 │       ├── login-panel.js        # 登录中心（OAuth PKCE / 设备码 / 自定义钩子 / API Key 掩码录入）
 │       ├── usage-panel.js        # 服务商实时额度进度条与会话/累计 Token 统计表
 │       ├── usage-chip.js         # 聊天顶栏实时 Token 与预估费用徽章
@@ -146,7 +148,7 @@ Oh-My-Tavern-Providers/
 提交 PR 前，请确认没有破坏以下核心契约：
 
 1. **纯函数模块隔离**：
-   - `src/selector.js` 与 `src/personality-match.js` 必须保持**零 SillyTavern 宿主导入**，以便在纯 Node.js 环境中直接运行单元测试。
+   - `src/selector.js`、`src/personality-match.js` 与 `src/update-check.js` 必须保持**零 SillyTavern 宿主导入**，以便在纯 Node.js 环境中直接运行单元测试。
 2. **主从目录双副本同步**：
    - `catalog/omtp-catalog.json` 与 `server-plugin/catalog/omtp-catalog.json` 必须保持**字节完全一致**。修改目录生成逻辑或映射表后，必须运行 `npm run validate` 确认通过。
 3. **双语翻译键 1:1 同步**：

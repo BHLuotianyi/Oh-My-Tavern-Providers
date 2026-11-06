@@ -84,6 +84,7 @@ Oh-My-Tavern-Providers/
 │   ├── personality-match.js      # Pure model ID -> personality key matcher
 │   ├── provider-names.js         # Localized Chinese provider names and region qualifiers
 │   ├── provider-links.js         # Provider API-key console URLs
+│   ├── update-check.js           # GitHub metadata/commit-history update detection (pure, unit-tested)
 │   ├── errors.js                 # Switch/selector error codes (translated in the UI layer)
 │   ├── reasoning.js              # Reasoning effort capability helpers
 │   ├── usage-session.js          # Per-chat token accounting session baseline
@@ -102,7 +103,8 @@ Oh-My-Tavern-Providers/
 │       ├── hub-details.js        # Right details pane, personality radar, reasoning & action buttons
 │       ├── hub-quick.js          # Top 1–9 quick slot bar, row flash, footer counters
 │       ├── hub-actions.js        # Use model, chat/character binding toggles, provider settings jump
-│       ├── hub-modal.js          # Modal DOM builder, gateway status pill, keyboard navigation & focus trap
+│       ├── hub-modal.js          # Modal DOM builder, gateway/update pills, keyboard navigation & focus trap
+│       ├── update-pill.js        # Header update indicator (GitHub releases/commits)
 │       ├── login-panel.js        # Sign-in tab (OAuth PKCE / device code / custom hooks / API key entry)
 │       ├── usage-panel.js        # Quota bars and per-chat / all-time token statistics table
 │       ├── usage-chip.js         # Top-bar token & estimated cost badge
@@ -146,7 +148,7 @@ Oh-My-Tavern-Providers/
 Before opening a pull request, verify that these invariants hold:
 
 1. **Host-Free Pure Modules**:
-   - `src/selector.js` and `src/personality-match.js` must remain completely free of SillyTavern host imports so they can be imported directly in Node.js unit tests.
+   - `src/selector.js`, `src/personality-match.js` and `src/update-check.js` must remain completely free of SillyTavern host imports so they can be imported directly in Node.js unit tests.
 2. **Byte-Identical Catalog Copies**:
    - `catalog/omtp-catalog.json` and `server-plugin/catalog/omtp-catalog.json` must remain byte-for-byte identical. Always run `npm run validate` after touching catalog tooling.
 3. **Lockstep Locale Files**:

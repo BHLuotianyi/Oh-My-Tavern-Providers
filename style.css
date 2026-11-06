@@ -70,6 +70,7 @@ body.omtp-hide-native-api-selector #rm_api_block {
 
 #omtp-hub-header {
     display: flex;
+    flex-wrap: nowrap;
     align-items: center;
     gap: 12px;
     padding: 12px 16px 8px;
@@ -99,7 +100,9 @@ body.omtp-hide-native-api-selector #rm_api_block {
     padding: 4px 10px;
 }
 
-.omtp-gateway-pill {
+.omtp-gateway-pill,
+.omtp-update-pill {
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -115,9 +118,23 @@ body.omtp-hide-native-api-selector #rm_api_block {
     user-select: none;
     transition: all 0.2s ease;
 }
-.omtp-gateway-pill:hover {
+.omtp-gateway-pill:hover,
+.omtp-update-pill:hover {
     border-color: var(--SmartThemeQuoteColor, #7aa2f7);
     background: rgba(255, 255, 255, 0.1);
+}
+.omtp-update-pill .omtp-status-label {
+    max-width: 22ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Dots only once the header gets tight: tooltips still explain each state. */
+@media (max-width: 760px) {
+    .omtp-gateway-pill .omtp-status-label,
+    .omtp-update-pill .omtp-status-label {
+        display: none;
+    }
 }
 .omtp-status-dot {
     width: 9px;
@@ -134,6 +151,38 @@ body.omtp-hide-native-api-selector #rm_api_block {
 .omtp-status-dot.omtp-dot-offline {
     background: #ef4444;
     box-shadow: 0 0 6px #ef4444;
+}
+.omtp-status-dot.omtp-dot-update {
+    background: #f59e0b;
+    box-shadow: 0 0 8px #f59e0b;
+    animation: omtp-pulse-amber 2s infinite;
+}
+.omtp-status-dot.omtp-dot-current {
+    background: #22c55e;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+}
+.omtp-status-dot.omtp-dot-pending {
+    background: #38bdf8;
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.7);
+    animation: omtp-pulse-sky 2s infinite;
+}
+.omtp-status-dot.omtp-dot-ahead {
+    background: #60a5fa;
+    box-shadow: 0 0 6px rgba(96, 165, 250, 0.6);
+}
+.omtp-status-dot.omtp-dot-muted {
+    background: #6b7280;
+    box-shadow: none;
+}
+@keyframes omtp-pulse-sky {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); }
+    70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+}
+@keyframes omtp-pulse-amber {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
+    70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
 }
 @keyframes omtp-pulse-green {
     0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }

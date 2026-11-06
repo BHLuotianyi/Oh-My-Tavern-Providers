@@ -223,6 +223,7 @@ git pull
 - **Per-Model Reasoning Memory**: Reasoning levels set via the details pane or `/effort` are remembered per model (`Claude Opus 5.5`, `DeepSeek V4.1 Flash 1017`, `Gemini 4 Argon`, etc.) and written to `openai_reasoning_effort` when active.
 - **Extra Body JSON**: Attach a custom JSON object to any model entry to merge custom sampling or vendor parameters at generation time; routing keys (`model`, `messages`, `prompt`, `stream`) are protected.
 - **Connection Profile Management**: record the live connection as a new profile, duplicate, rename, edit each field (API, server URL, model, preset, secret, templates…), apply or stop using one — and choose per field whether it is stored in the profile. Every change syncs back to SillyTavern's own dropdown.
+- **Update Indicator**: the header pill next to the gateway status compares GitHub releases, `manifest.json`'s `versionCode`, and the commit history of `main`: amber when a newer release/build exists, blue when `main` has unreleased commits; a click opens the release page or compare view (verdict cached for 10 minutes to respect GitHub's anonymous rate limit).
 - **Mainstream & Scored Filters**: Toggle **Show non-mainstream providers** (whitelists 52 mainstream providers), **Only models with scores**, and **Translated provider names** (in non-English UIs).
 - **Local OMP Import**: Import a local `oh-my-pi` catalog overlay and optionally import stored API keys and OAuth sessions (`google-antigravity`, `google-gemini-cli`, `anthropic`) from `~/.omp/agent/agent.db`.
 

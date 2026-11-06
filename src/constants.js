@@ -222,6 +222,8 @@ export const DEFAULT_SETTINGS = deepFreeze({
         scoredOnly: false,
     },
     gateway: { savedCustom: null },
+    /** Last GitHub update verdict; written by `src/ui/update-pill.js`. */
+    updateCheck: null,
 });
 
 /**
