@@ -574,13 +574,17 @@ async function umansUsage(id, resolved, doFetch) {
 }
 
 /** OpenCode Go subscription windows. */
-async function opencodeUsage(id, resolved, doFetch) {
+async function opencodeUsage(id, resolved, doFetch, options = {}) {
     const { token } = credentialsOf(resolved);
-    const response = await getJson(doFetch, 'https://opencode.ai/zen/go/v1/usage', {
+    const headers = {
         Accept: 'application/json',
         Authorization: `Bearer ${token}`,
-        'User-Agent': 'omtp-model-hub',
-    });
+        'User-Agent': options.userAgent || 'omtp-model-hub',
+    };
+    // Background poll outside any conversation: OpenCode wants a stable
+    // session label, so use the installation id.
+    if (options.installId) headers['x-opencode-session'] = options.installId;
+    const response = await getJson(doFetch, 'https://opencode.ai/zen/go/v1/usage', headers);
     // A key without an active Go subscription answers 401/403.
     if (!response.ok) return httpFailure(response);
     const payload = await response.json();
@@ -776,7 +780,7 @@ export async function fetchProviderUsage(providerId, resolved, options = {}) {
     const doFetch = options.doFetch || fetch;
     let result;
     try {
-        result = await adapter(id, resolved, doFetch);
+        result = await adapter(id, resolved, doFetch, options);
     } catch (error) {
         result = { ok: false, error: String(error?.message || error) };
     }

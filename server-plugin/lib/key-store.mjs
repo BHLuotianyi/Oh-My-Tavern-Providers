@@ -273,11 +273,17 @@ export class KeyStore {
 
             /** @type {Record<string, any>} */
             const next = { ...existing, id: providerId };
-            for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'apiKey', 'ignoreStSecret']) {
+            for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'apiKey', 'ignoreStSecret', 'userAgentSpoof']) {
                 if (!(key in patch)) continue;
                 const value = patch[key];
                 if (key === 'apiKey') {
                     next.apiKey = typeof value === 'string' ? value.trim() : '';
+                    continue;
+                }
+                if (key === 'userAgentSpoof') {
+                    // Absent means "catalog default" (on); false must survive.
+                    if (value === null) delete next[key];
+                    else next[key] = Boolean(value);
                     continue;
                 }
                 if (key === 'headers' || key === 'extraConfig') {
@@ -440,6 +446,7 @@ export class KeyStore {
             models: Array.isArray(config.models) ? config.models : [],
             hasKey: Boolean(config.apiKey),
             last4: typeof config.apiKey === 'string' ? config.apiKey.slice(-4) : '',
+            userAgentSpoof: config.userAgentSpoof !== false,
             updatedAt: config.updatedAt || 0,
         };
     }

@@ -286,6 +286,26 @@
       "stAdapter": null,
       "gatewayAdapter": "openai",
       "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4"
+    },
+    "opencode-go": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "requestHeaders": {
+        "sessionHeader": "x-opencode-session",
+        "sessionPrefix": "ses_",
+        "sessionForce": true,
+        "spoofUserAgent": "opencode/latest/2.0.6/cli"
+      }
+    },
+    "opencode-zen": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "requestHeaders": {
+        "sessionHeader": "x-opencode-session",
+        "sessionPrefix": "ses_",
+        "sessionForce": true,
+        "spoofUserAgent": "opencode/latest/2.0.6/cli"
+      }
     }
   }
 }

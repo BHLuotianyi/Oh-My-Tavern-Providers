@@ -236,6 +236,9 @@ function renderRow(provider) {
     }
 
     row.append(actions);
+    if (provider.supportsUserAgentSpoof) {
+        row.append(renderUaSpoofToggle(provider, row));
+    }
     if (actionErrors.has(id)) {
         row.append(el('div', 'omtp-login-hint omtp-login-error omtp-login-action-error', actionErrors.get(id)));
     }
@@ -244,6 +247,40 @@ function renderRow(provider) {
 
 /** Placeholder value shown for a stored key; never sent back to the server. */
 const KEY_MASK = '••••••••••••';
+
+/**
+ * Per-provider User-Agent disguise switch. Defaults to on; turning it off
+ * forwards SillyTavern's own User-Agent instead.
+ * @param {object} provider
+ * @param {HTMLElement} row
+ * @returns {HTMLElement}
+ */
+function renderUaSpoofToggle(provider, row) {
+    const id = String(provider.id);
+    const wrap = el('label', 'checkbox_label omtp-login-spoof');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = provider.userAgentSpoof !== false;
+    input.addEventListener('change', async () => {
+        input.disabled = true;
+        try {
+            await api(`/providers/${encodeURIComponent(id)}/config`, {
+                method: 'POST',
+                body: JSON.stringify({ userAgentSpoof: input.checked }),
+            });
+            onChanged?.();
+            await refresh();
+        } catch (error) {
+            input.checked = !input.checked;
+            showActionError(row, id, trf('omtp_login_ua_spoof_failed', 'Could not save the User-Agent setting: ${0}', error.message || error));
+            onChanged?.();
+        } finally {
+            input.disabled = false;
+        }
+    });
+    wrap.append(input, el('span', null, tr('omtp_login_ua_spoof', 'Disguise User-Agent as the opencode client')));
+    return wrap;
+}
 
 function renderKeyEntry(provider, row) {
     const id = String(provider.id);

@@ -347,6 +347,8 @@
     "omtp_keys_deleted": "已删除 ${0} 个服务商密钥",
     "omtp_login_logout_failed": "退出登录失败：${0}",
     "omtp_login_save_failed": "无法保存密钥：${0}",
+    "omtp_login_ua_spoof": "将 User-Agent 伪装为 opencode 客户端",
+    "omtp_login_ua_spoof_failed": "无法保存 User-Agent 设置：${0}",
     "omtp_model_id_required": "每个模型都需要字符串类型的 \"id\"",
     "omtp_models_not_array": "模型必须是 JSON 数组",
     "omtp_omp_path": "OMP 路径",

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": "oh-my-pi",
   "sourceLicense": "MIT",
-  "generatedAt": "2026-10-29T05:08:10.261Z",
+  "generatedAt": "2026-11-06T04:27:02.561Z",
   "providers": {
     "abliteration": {
       "id": "abliteration",
@@ -90523,6 +90523,12 @@
       "defaultModel": "kimi-k2.7-code",
       "stAdapter": null,
       "gatewayAdapter": "openai",
+      "requestHeaders": {
+        "sessionHeader": "x-opencode-session",
+        "sessionPrefix": "ses_",
+        "sessionForce": true,
+        "spoofUserAgent": "opencode/latest/2.0.6/cli"
+      },
       "models": [
         {
           "id": "beam-free",
@@ -91758,6 +91764,12 @@
       "defaultModel": "claude-opus-5",
       "stAdapter": null,
       "gatewayAdapter": "openai",
+      "requestHeaders": {
+        "sessionHeader": "x-opencode-session",
+        "sessionPrefix": "ses_",
+        "sessionForce": true,
+        "spoofUserAgent": "opencode/latest/2.0.6/cli"
+      },
       "models": [
         {
           "id": "beam-free",

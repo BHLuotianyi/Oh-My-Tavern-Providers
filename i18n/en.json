@@ -347,6 +347,8 @@
     "omtp_keys_deleted": "${0} provider key(s) deleted",
     "omtp_login_logout_failed": "Could not sign out: ${0}",
     "omtp_login_save_failed": "Could not save the key: ${0}",
+    "omtp_login_ua_spoof": "Disguise User-Agent as the opencode client",
+    "omtp_login_ua_spoof_failed": "Could not save the User-Agent setting: ${0}",
     "omtp_model_id_required": "Each model needs a string \"id\"",
     "omtp_models_not_array": "Models must be a JSON array",
     "omtp_omp_path": "OMP path",

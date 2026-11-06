@@ -5,6 +5,7 @@ import { getUserDirectories } from '../../src/users.js';
 import { DEFAULT_USER } from '../../src/constants.js';
 import {
     ensureGatewayToken,
+    ensureInstallId,
     ensureOmtpRoot,
     getOmtpRoot,
     loadConfig,
@@ -300,6 +301,8 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
             || (provider?.authLogin?.kind === 'custom' && !customHookSupported(provider.authLogin.hook)),
         ),
         keyInvalidReason: authFailure?.message ?? null,
+        userAgentSpoof: resolved.userAgentSpoof !== false,
+        supportsUserAgentSpoof: Boolean(provider?.requestHeaders?.spoofUserAgent),
         unsupportedReason: synthetic.unsupportedReason || authFailure?.message || null,
     };
 }
@@ -544,8 +547,11 @@ function registerProviderRoutes(router) {
         const body = req.body && typeof req.body === 'object' ? req.body : {};
         /** @type {Record<string, any>} */
         const patch = {};
-        for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models']) {
+        for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'userAgentSpoof']) {
             if (key in body) patch[key] = body[key];
+        }
+        if (patch.userAgentSpoof !== undefined && patch.userAgentSpoof !== null && typeof patch.userAgentSpoof !== 'boolean') {
+            throw new HttpError(400, 'userAgentSpoof must be a boolean', 'invalid_user_agent_spoof');
         }
         if (patch.adapter !== undefined && patch.adapter !== null && patch.adapter !== '' && !isSupportedAdapter(patch.adapter)) {
             throw new HttpError(400, `Unsupported adapter; expected one of ${SUPPORTED_ADAPTERS.join(', ')}`, 'invalid_adapter');
@@ -681,7 +687,14 @@ function registerStatsRoutes(router) {
                 if (!resolved?.apiKey) {
                     continue;
                 }
-                rows.push(await fetchProviderUsage(provider.id, resolved, { refresh, label: resolved.label }));
+                const policy = provider.requestHeaders;
+                const spoof = resolved.userAgentSpoof !== false && Boolean(policy?.spoofUserAgent);
+                rows.push(await fetchProviderUsage(provider.id, resolved, {
+                    refresh,
+                    label: resolved.label,
+                    installId: await ensureInstallId(current.root),
+                    userAgent: spoof ? policy.spoofUserAgent : '',
+                }));
             }
         };
         await Promise.all(Array.from({ length: 4 }, worker));

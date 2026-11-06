@@ -78,6 +78,20 @@
 
 > **不可转发的服务商说明**：仅支持专有客户端协议或未公开无头登录链路的服务商（`apple`、`cursor`、`devin`、`github-copilot`、`gitlab-duo`、`gitlab-duo-agent`、`stencil`、`xai-oauth`）以及纯搜索/非对话源（`exa`、`kagi`、`parallel`、`perplexity`、`tavily`、`typesafe`、`web`）在面板中会保留展示并标明不可选原因。
 
+### 请求身份头（catalog `requestHeaders`）
+
+部分上游要求标注会话与客户端身份。策略在 catalog 中按服务商声明，由网关执行：
+
+| 字段 | 作用 |
+|---|---|
+| `sessionHeader` / `sessionPrefix` | 会话头名与前缀；值由 `HMAC-SHA256(install-id, provider + chatId)` 派生为 24 位 base62。同一聊天、同一服务商恒定，网关重启后不变，且不暴露聊天文件名 |
+| `sessionForce` | 为真时会话头覆盖配置中的同名字段——会话身份是路由与 prompt cache 的键，必须唯一 |
+| `spoofUserAgent` | 登录面板「伪装 User-Agent」开关使用的伪装值，默认开启；关闭后网关原样转发 SillyTavern 自己的 `User-Agent` |
+
+- 没有对话上下文的请求（额度轮询、模型发现）使用 `data/omtp/install-id`（首次生成、0600、UUID v4）作为会话值。
+- 聊天请求的会话来自 SillyTavern 发送的 `X-OMTP-Chat`（percent-encoded，网关解码后参与派生）。
+- 当前声明该策略的服务商：`opencode-go`、`opencode-zen`（`x-opencode-session`）。
+
 ---
 
 ## 4. 实时额度支持列表 (`USAGE_PROVIDERS`)

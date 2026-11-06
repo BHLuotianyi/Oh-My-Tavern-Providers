@@ -166,3 +166,26 @@ test('a corrupt providers.json is never overwritten', async () => {
   await assert.rejects(store.setProviderConfig('mock', { apiKey: 'second' }), KeyStoreUnreadableError);
   assert.equal(fs.readFileSync(file, 'utf8'), '{ not json');
 });
+
+test('userAgentSpoof round-trips and clears back to the catalog default', async () => {
+  const store = new KeyStore({ root: tempRoot(), resolveStSecret: () => '' });
+  await store.setProviderConfig('opencode-go', { userAgentSpoof: false });
+  assert.equal((await store.getProviderConfig('opencode-go')).userAgentSpoof, false);
+  const resolved = await store.resolveProvider({
+    id: 'opencode-go',
+    gatewayAdapter: 'openai',
+    baseUrl: 'https://opencode.ai/inference/go/v1',
+    models: [],
+  });
+  assert.equal(resolved.userAgentSpoof, false);
+
+  await store.setProviderConfig('opencode-go', { userAgentSpoof: null });
+  assert.equal('userAgentSpoof' in (await store.getProviderConfig('opencode-go')), false);
+  const cleared = await store.resolveProvider({
+    id: 'opencode-go',
+    gatewayAdapter: 'openai',
+    baseUrl: 'https://opencode.ai/inference/go/v1',
+    models: [],
+  });
+  assert.equal(cleared.userAgentSpoof, true);
+});

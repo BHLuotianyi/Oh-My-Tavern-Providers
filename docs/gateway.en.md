@@ -78,6 +78,20 @@ Mounted on SillyTavern's Express app under `/api/plugins/omtp` (**24 routes** to
 
 > **Unsupported providers**: Providers requiring proprietary client/agent protocols (`apple`, `cursor`, `devin`, `github-copilot`, `gitlab-duo`, `gitlab-duo-agent`, `stencil`, `xai-oauth`) or non-chat search APIs (`exa`, `kagi`, `parallel`, `perplexity`, `tavily`, `typesafe`, `web`) remain visible in the hub with an explicit unavailable reason.
 
+### Request identity headers (catalog `requestHeaders`)
+
+Some upstreams ask clients to label the conversation and the client. The policy is declared per provider in the catalog and enforced by the gateway:
+
+| Field | Effect |
+|---|---|
+| `sessionHeader` / `sessionPrefix` | Header name and prefix; the value is `HMAC-SHA256(install-id, provider + chatId)` rendered as 24 base62 chars. Stable per chat and provider across restarts, and the chat file name never appears on the wire |
+| `sessionForce` | When true the session header replaces any configured value — the conversation id keys routing and prompt caching, so it must be unique |
+| `spoofUserAgent` | Value used by the login panel's "Disguise User-Agent" switch, on by default; when off the gateway forwards SillyTavern's own `User-Agent` unchanged |
+
+- Requests without a conversation (quota polling, model discovery) use `data/omtp/install-id` (generated once, 0600, UUID v4) as the session value.
+- Chat requests derive it from SillyTavern's `X-OMTP-Chat` header (percent-encoded; the gateway decodes it first).
+- Providers declaring this policy today: `opencode-go`, `opencode-zen` (`x-opencode-session`).
+
 ---
 
 ## 4. Quota Endpoints (`USAGE_PROVIDERS`)

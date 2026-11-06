@@ -12,6 +12,7 @@ export const CONFIG_FILE = 'config.json';
 export const PROVIDERS_FILE = 'providers.json';
 export const MASTER_KEY_FILE = 'master.key';
 export const TOKEN_FILE = 'gateway-token';
+export const INSTALL_ID_FILE = 'install-id';
 export const CACHED_CATALOG_FILE = 'catalog.json';
 export const IMPORTED_CATALOG_FILE = 'imported-catalog.json';
 
@@ -156,6 +157,46 @@ export async function ensureGatewayToken(root = getOmtpRoot()) {
     const token = crypto.randomBytes(32).toString('hex');
     await writeFileAtomic(tokenPath, `${token}\n`, 0o600);
     return token;
+}
+
+/** @type {Map<string,string>} In-process install id per OMTP root. */
+const installIdCache = new Map();
+
+/**
+ * Stable per-installation id: random UUID v4 persisted at the OMTP root.
+ * Used to label requests that have no conversation (usage polls, model
+ * discovery) and as the HMAC key for derived per-chat session ids.
+ * @param {string} root
+ * @returns {Promise<string>}
+ */
+export async function ensureInstallId(root = getOmtpRoot()) {
+    const cached = installIdCache.get(root);
+    if (cached) return cached;
+    await ensureOmtpRoot(root);
+    const idPath = omtpPath(root, INSTALL_ID_FILE);
+    const valid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+    let id = '';
+    try {
+        const existing = (await fs.promises.readFile(idPath, 'utf8')).trim();
+        if (valid(existing)) id = existing;
+        else await fs.promises.rm(idPath, { force: true });
+    } catch (error) {
+        if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') throw error;
+    }
+    if (!id) {
+        const candidate = crypto.randomUUID();
+        try {
+            await fs.promises.writeFile(idPath, `${candidate}\n`, { flag: 'wx', mode: 0o600 });
+            id = candidate;
+        } catch (error) {
+            if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EEXIST') throw error;
+            // Another process won the create; adopt its id when it is usable.
+            const existing = (await fs.promises.readFile(idPath, 'utf8').catch(() => '')).trim();
+            id = valid(existing) ? existing : candidate;
+        }
+    }
+    installIdCache.set(root, id);
+    return id;
 }
 
 /**

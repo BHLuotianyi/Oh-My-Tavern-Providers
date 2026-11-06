@@ -198,6 +198,9 @@ export function buildProviderConfig(catalogProvider, options = {}) {
         keySource,
         available: Boolean(adapter) && Boolean(keyless || hasAdapterCredentials(adapter, apiKey, extraConfig)),
         keyless,
+        // Default on; only providers whose catalog policy declares a spoof UA
+        // expose the switch, but the flag round-trips for every provider.
+        userAgentSpoof: stored.userAgentSpoof !== false,
         custom: Boolean(stored.custom || catalogProvider?.custom),
         models: Array.isArray(stored.models) && stored.models.length > 0 ? stored.models : catalogProvider?.models || [],
     };

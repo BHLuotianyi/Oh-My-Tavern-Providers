@@ -1,5 +1,6 @@
 import { KEYLESS_PROVIDERS } from './provider-config.mjs';
 import { providerEnvPrefix } from './oauth-clients.mjs';
+import { normalizeRequestHeaders } from './request-headers.mjs';
 
 const BASE_URL_FALLBACKS = {
     azure: 'https://YOUR_RESOURCE.openai.azure.com',
@@ -221,6 +222,9 @@ function normalizeProvider(providerId, rule, rawModels, context) {
         defaultModel: rule.defaultModel || models[0]?.id || '',
         stAdapter,
         gatewayAdapter,
+        ...(mapping?.requestHeaders !== undefined
+            ? { requestHeaders: normalizeRequestHeaders(providerId, mapping.requestHeaders) }
+            : {}),
         ...(unsupportedReason ? { unsupportedReason } : {}),
         models,
     };
@@ -287,6 +291,13 @@ export function validateCatalog(catalog, { expectedProviders = CATALOG_EXPECTATI
         }
         if (provider.stAdapter && keys && !keys.has(provider.stAdapter)) {
             errors.push(`${provider.id}: unknown stAdapter ${provider.stAdapter}`);
+        }
+        if (provider.requestHeaders !== undefined) {
+            try {
+                normalizeRequestHeaders(provider.id, provider.requestHeaders);
+            } catch (error) {
+                errors.push(error instanceof Error ? error.message : String(error));
+            }
         }
         if (!provider.stAdapter && !provider.gatewayAdapter && !provider.unsupportedReason) {
             errors.push(`${provider.id}: no adapter and no unsupportedReason`);

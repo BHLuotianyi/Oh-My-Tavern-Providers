@@ -143,6 +143,29 @@ test('opencode-go maps rolling/weekly/monthly percentages', async () => {
     assert.equal(usage.windows[1].resetAt, '2026-10-31T00:00:00.000Z');
 });
 
+test('opencode-go labels background polls and honours the UA switch', async () => {
+    clearUsageCache();
+    const calls = [];
+    const doFetch = async (url, init) => {
+        calls.push({ url: String(url), headers: init.headers });
+        return json({ usage: { rolling: { percent: 1, status: 'ok' } } });
+    };
+    await fetchProviderUsage('opencode-go', { apiKey: 'op-key' }, {
+        doFetch,
+        refresh: true,
+        installId: 'install-1',
+        userAgent: 'opencode/latest/2.0.6/cli',
+    });
+    assert.equal(calls[0].headers['x-opencode-session'], 'install-1');
+    assert.equal(calls[0].headers['User-Agent'], 'opencode/latest/2.0.6/cli');
+
+    clearUsageCache();
+    calls.length = 0;
+    await fetchProviderUsage('opencode-go', { apiKey: 'op-key' }, { doFetch, refresh: true, installId: 'install-1' });
+    assert.equal(calls[0].headers['x-opencode-session'], 'install-1');
+    assert.match(calls[0].headers['User-Agent'], /^omtp-model-hub/);
+});
+
 test('github-copilot derives used percent from quota snapshots', async () => {
     clearUsageCache();
     const doFetch = async (url, init) => {

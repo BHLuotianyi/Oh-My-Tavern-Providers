@@ -4,11 +4,13 @@ import { Readable, Transform } from 'node:stream';
 import express from 'express';
 import {
     ensureGatewayToken,
+    ensureInstallId,
     getOmtpRoot,
     loadConfig,
     saveConfig,
     tokensEqual,
 } from './config.mjs';
+import { applyRequestHeaders, requestHeaderPolicy } from './request-headers.mjs';
 import { buildProviderContext } from './provider-config.mjs';
 import { resolveAccessToken } from './oauth.mjs';
 import { openAIErrorEnvelope } from './sse.mjs';
@@ -387,8 +389,14 @@ export class GatewayServer {
             this._inflight.delete(controller);
         });
 
+        const chatId = decodeChatId(req.get('x-omtp-chat'));
+        const stUserAgent = String(req.get('user-agent') || '');
+
         try {
-            const ctx = await buildGatewayContext(resolved, this.keyStore, ref.model, controller.signal, catalogProvider, modelInfo);
+            const ctx = await buildGatewayContext(
+                resolved, this.keyStore, ref.model, controller.signal, catalogProvider, modelInfo,
+                { chatId, stUserAgent },
+            );
             const upstream = await adapter.chat({ ...req.body, model: ref.model }, ctx);
             if (!(upstream instanceof Response)) {
                 throw Object.assign(new Error('Adapter returned an invalid response'), { status: 502, type: 'gateway_error' });
@@ -410,7 +418,7 @@ export class GatewayServer {
                         usage: tokens,
                         // SillyTavern sends the open chat id in this header,
                         // percent-encoded so non-Latin-1 names survive HTTP.
-                        chatId: decodeChatId(req.get('x-omtp-chat')),
+                        chatId,
                     });
                 },
                 { isStream: String(upstream.headers.get('content-type') || '').includes('text/event-stream') },
@@ -534,9 +542,24 @@ export async function resolveProviderCredentials(keyStore, provider) {
 /**
  * Build the adapter ctx, resolving structured OAuth credentials (refreshing
  * when expired) the way OMP's AuthStorage does before a request.
+ * @param {any} resolved
+ * @param {any} keyStore
+ * @param {string} model
+ * @param {AbortSignal|null} signal
+ * @param {any} [catalogProvider]
+ * @param {any} [modelInfo]
+ * @param {{chatId?:string, stUserAgent?:string}} [requestContext]
  * @returns {Promise<any>}
  */
-export async function buildGatewayContext(resolved, keyStore, model, signal, catalogProvider = null, modelInfo = null) {
+export async function buildGatewayContext(
+    resolved,
+    keyStore,
+    model,
+    signal,
+    catalogProvider = null,
+    modelInfo = null,
+    requestContext = {},
+) {
     const { apiKey, credential } = await resolveAccessToken(resolved, keyStore, globalThis.fetch, '', catalogProvider?.authLogin || null);
     const ctx = buildProviderContext({ ...resolved, apiKey }, model, signal, catalogProvider, modelInfo);
     ctx.credential = credential;
@@ -550,5 +573,30 @@ export async function buildGatewayContext(resolved, keyStore, model, signal, cat
     }
     if (credential && resolved.id === 'anthropic') ctx.extraConfig.claudeCode = true;
     if (credential?.projectId && !ctx.extraConfig.project) ctx.extraConfig.project = credential.projectId;
+    await applyProviderRequestHeaders(ctx, resolved, catalogProvider, requestContext, keyStore);
     return ctx;
+}
+
+/**
+ * Label the outgoing request per the provider's catalog policy. Runs after the
+ * credential cleanup so generated headers never get stripped as auth headers.
+ * @param {any} ctx
+ * @param {any} resolved
+ * @param {any} catalogProvider
+ * @param {{chatId?:string, stUserAgent?:string}} requestContext
+ * @param {any} keyStore
+ */
+async function applyProviderRequestHeaders(ctx, resolved, catalogProvider, requestContext, keyStore) {
+    const policy = requestHeaderPolicy(catalogProvider);
+    if (!policy) return;
+    const installId = await ensureInstallId(keyStore?.root || getOmtpRoot());
+    const spoof = resolved.userAgentSpoof !== false;
+    applyRequestHeaders(ctx.headers, {
+        policy,
+        providerId: String(ctx.provider || resolved.id || ''),
+        chatId: requestContext.chatId || '',
+        installId,
+        stUserAgent: requestContext.stUserAgent || '',
+        spoof,
+    });
 }
