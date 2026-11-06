@@ -16,19 +16,26 @@ import {
     evaluateUpdate,
     fetchRemoteInfo,
     isNightly,
+    resolveUpdateChannel,
 } from '../update-check.js';
 import { tr, trf } from './dom.js';
 import { el, notify } from './helpers.js';
 import { state } from './hub-state.js';
 import { persist, settings } from './hub-utils.js';
 
-/** @returns {{checkedAt:number, localVersion:string, remote:object, result:object}|null} */
-function cachedCheck() {
+/** @returns {{checkedAt:number, localVersion:string, channel:string, remote:object, result:object}|null} */
+function cachedCheck(channel) {
     const cached = settings().updateCheck;
     if (!cached || typeof cached !== 'object' || typeof cached.checkedAt !== 'number') return null;
     if (cached.localVersion !== EXTENSION_VERSION) return null;
+    if (cached.channel !== channel) return null;
     if (!cached.remote || !cached.result) return null;
     return cached;
+}
+
+/** The channel the user selected, falling back to the build's own channel. */
+export function updateChannel() {
+    return resolveUpdateChannel(EXTENSION_VERSION, settings().updateChannel);
 }
 
 /**
@@ -36,16 +43,18 @@ function cachedCheck() {
  * @param {{force?: boolean}} [options]
  */
 export async function checkForUpdates({ force = false } = {}) {
-    const cached = cachedCheck();
+    const channel = updateChannel();
+    const cached = cachedCheck(channel);
     if (!force && cached && Date.now() - cached.checkedAt < UPDATE_CACHE_MS) {
         return { ...cached.result, remote: cached.remote, checkedAt: cached.checkedAt, cached: true };
     }
-    if (state.updateInFlight) return state.updateInFlight;
+    if (state.updateInFlight && state.updateInFlightChannel === channel) return state.updateInFlight;
 
+    state.updateInFlightChannel = channel;
     state.updateInFlight = (async () => {
         let remote = null;
         try {
-            remote = await fetchRemoteInfo(EXTENSION_VERSION);
+            remote = await fetchRemoteInfo(EXTENSION_VERSION, { channel });
         } catch (error) {
             console.warn('[omtp] update check failed', error);
         }
@@ -55,12 +64,14 @@ export async function checkForUpdates({ force = false } = {}) {
             main: remote?.main,
             nightly: remote?.nightly,
             release: remote?.release,
+            channel,
         });
         const checkedAt = Date.now();
-        persist({ updateCheck: { checkedAt, localVersion: EXTENSION_VERSION, remote, result } });
+        persist({ updateCheck: { checkedAt, localVersion: EXTENSION_VERSION, channel, remote, result } });
         return { ...result, remote, checkedAt, cached: false };
     })().finally(() => {
         state.updateInFlight = null;
+        state.updateInFlightChannel = null;
     });
 
     return state.updateInFlight;

@@ -9,12 +9,16 @@
  *   bumps `versionCode` on every build;
  * - cuts are tagged `v<line>` and published as GitHub Releases.
  *
- * The checker therefore reads, from cheapest to most specific:
+ * The checker follows one channel at a time (`UPDATE_CHANNELS`):
  *
- * 1. `main`'s `manifest.json` — the release line and `versionCode`;
- * 2. the tip commit of `main` — commit history;
- * 3. the latest GitHub Release and the commit it points at;
- * 4. for nightly installs, the `nightly` branch manifest.
+ * 1. `git` — `main`'s manifest plus its tip commit;
+ * 2. `nightly` — the `nightly` branch manifest;
+ * 3. `release` — the latest GitHub Release and the commit it points at
+ *    (listed but greyed out until the first Release exists).
+ *
+ * Without an explicit channel the build picks its own: nightly installs follow
+ * `nightly`, everything else follows `git`. `versionCode` is only compared
+ * inside that channel (see `CONTRIBUTING.md`); semver decides first.
  *
  * Verdicts:
  *
@@ -55,6 +59,34 @@ export const UPDATE_ENDPOINTS = Object.freeze({
     nightlyCommits: `https://github.com/${GITHUB_REPO}/commits/${NIGHTLY_BRANCH}`,
     releasePage: (tag) => `https://github.com/${GITHUB_REPO}/releases/tag/${encodeURIComponent(String(tag))}`,
 });
+
+/**
+ * Channels the update check can follow. `release` is listed but disabled until
+ * the repository publishes its first GitHub Release.
+ */
+export const UPDATE_CHANNELS = Object.freeze([
+    { id: 'release', enabled: false },
+    { id: 'nightly', enabled: true },
+    { id: 'git', enabled: true },
+]);
+
+/** Channel a build follows when nothing is selected and it is not nightly. */
+export const DEFAULT_UPDATE_CHANNEL = 'git';
+
+/** The channel a running build follows by default. */
+export function defaultUpdateChannel(localVersion) {
+    return isNightly(localVersion) ? 'nightly' : DEFAULT_UPDATE_CHANNEL;
+}
+
+/** True for channels that are published and can be selected in the UI. */
+export function isSelectableChannel(channel) {
+    return UPDATE_CHANNELS.some((entry) => entry.enabled && entry.id === channel);
+}
+
+/** Stored selection when usable, otherwise the build's default channel. */
+export function resolveUpdateChannel(localVersion, channel) {
+    return isSelectableChannel(channel) ? channel : defaultUpdateChannel(localVersion);
+}
 
 /**
  * Compare page for "what am I missing". Nightly builds have no commit hash in
@@ -177,17 +209,20 @@ export async function fetchCommit(ref, { fetchImpl } = {}) {
  * commit, the newest release (with the commit its tag points at) for release
  * installs, or the `nightly` manifest for nightly installs.
  * @param {string} localVersion
- * @param {{fetchImpl?: Function}} [options]
+ * @param {{fetchImpl?: Function, channel?: 'release'|'nightly'|'git'}} [options]
  * @returns {Promise<{main: object, nightly: object|null, release: object|null}>}
  */
-export async function fetchRemoteInfo(localVersion, { fetchImpl } = {}) {
-    const wantsNightly = isNightly(localVersion);
+export async function fetchRemoteInfo(localVersion, { fetchImpl, channel } = {}) {
+    const wantsNightly = channel ? channel === 'nightly' : isNightly(localVersion);
+    const wantsRelease = channel ? channel === 'release' : !wantsNightly;
     const [mainManifest, mainCommit, channelPayload] = await Promise.allSettled([
         fetchJson(UPDATE_ENDPOINTS.mainManifest, { fetchImpl }),
         fetchCommit(GITHUB_BRANCH, { fetchImpl }),
         wantsNightly
             ? fetchJson(UPDATE_ENDPOINTS.nightlyManifest, { fetchImpl })
-            : fetchJson(UPDATE_ENDPOINTS.latestRelease, { allowMissing: true, fetchImpl }),
+            : wantsRelease
+                ? fetchJson(UPDATE_ENDPOINTS.latestRelease, { allowMissing: true, fetchImpl })
+                : Promise.resolve(null),
     ]);
 
     const main = {
@@ -241,13 +276,37 @@ export async function fetchRemoteInfo(localVersion, { fetchImpl } = {}) {
 }
 
 /**
+ * Compare a non-nightly build against `main`'s manifest and commit tip.
+ * @returns {object}
+ */
+function compareWithMain({ local, localLine, localCode, main, context }) {
+    if (!main?.version && !main?.sha) {
+        return verdict('unknown', 'no-remote', context);
+    }
+    const remoteMainVersion = typeof main?.version === 'string' ? main.version : '';
+    const remoteMainCode = Number.isFinite(main?.versionCode) ? Number(main.versionCode) : NaN;
+    const ref = { remoteVersion: remoteMainVersion, remoteRef: main?.sha || null };
+    if (Number.isFinite(localCode) && Number.isFinite(remoteMainCode) && localCode !== remoteMainCode) {
+        return verdict(remoteMainCode > localCode ? 'update' : 'ahead', 'versionCode', { ...context, ...ref });
+    }
+    const precedence = compareSemver(remoteMainVersion, localLine);
+    if (precedence > 0) return verdict('update', 'version', { ...context, ...ref });
+    if (precedence < 0) return verdict('ahead', 'version', { ...context, ...ref });
+    if (remoteMainVersion && remoteMainVersion === local) {
+        return verdict('current', 'version', { ...context, ...ref });
+    }
+    return verdict('unknown', 'incomparable', context);
+}
+
+/**
  * Decide whether anything newer is published.
  * @param {{localVersion?: string, localVersionCode?: number|string,
- *   main?: object|null, nightly?: object|null, release?: object|null}} input
+ *   main?: object|null, nightly?: object|null, release?: object|null,
+ *   channel?: 'release'|'nightly'|'git'}} input
  * @returns {{status:'update'|'pending'|'ahead'|'current'|'unknown', reason:string,
  *   localVersion:string, localLine:string, remoteVersion:string, remoteRef:string|null}}
  */
-export function evaluateUpdate({ localVersion, localVersionCode, main, nightly, release } = {}) {
+export function evaluateUpdate({ localVersion, localVersionCode, main, nightly, release, channel } = {}) {
     const local = String(localVersion ?? '').trim();
     const localLine = releaseLine(local);
     const localCode = Number.isFinite(localVersionCode) ? Number(localVersionCode) : NaN;
@@ -260,7 +319,8 @@ export function evaluateUpdate({ localVersion, localVersionCode, main, nightly, 
         remoteRef: null,
     };
 
-    if (isNightly(local)) {
+    const followsNightly = channel === 'nightly' || (channel == null && isNightly(local));
+    if (followsNightly) {
         if (!nightly || typeof nightly.version !== 'string' || !nightly.version) {
             return verdict('unknown', 'no-nightly', context);
         }
@@ -273,6 +333,10 @@ export function evaluateUpdate({ localVersion, localVersionCode, main, nightly, 
         if (precedence > 0) return verdict('update', 'version', { ...context, ...remote });
         if (precedence < 0) return verdict('ahead', 'version', { ...context, ...remote });
         return verdict('current', 'version', { ...context, ...remote });
+    }
+
+    if (channel === 'git') {
+        return compareWithMain({ local, localLine, localCode, main, context });
     }
 
     if (!main?.version && !main?.sha && !release?.tag) {
@@ -298,15 +362,5 @@ export function evaluateUpdate({ localVersion, localVersionCode, main, nightly, 
         return verdict('current', 'release', { ...context, ...releaseRef });
     }
 
-    if (Number.isFinite(localCode) && Number.isFinite(remoteMainCode) && localCode !== remoteMainCode) {
-        return verdict(remoteMainCode > localCode ? 'update' : 'ahead', 'versionCode', { ...context, ...mainRef });
-    }
-
-    const precedence = compareSemver(remoteMainVersion, localLine);
-    if (precedence > 0) return verdict('update', 'version', { ...context, ...mainRef });
-    if (precedence < 0) return verdict('ahead', 'version', { ...context, ...mainRef });
-    if (remoteMainVersion && remoteMainVersion === local) {
-        return verdict('current', 'version', { ...context, ...mainRef });
-    }
-    return verdict('unknown', 'incomparable', context);
+    return compareWithMain({ local, localLine, localCode, main, context });
 }

@@ -14,9 +14,9 @@
  * nightly branch and to releases, so the repository history stays human-only.
  *
  * `versionCode` is an integer kept independent of the readable version and
- * incremented on every write. `main` and the nightly channel share one
- * counter: the nightly job passes `--floor-code` with the highest code it can
- * see.
+ * incremented on every write. The counters are per channel: `main` only reads
+ * its own files, and the nightly job passes `--floor-code` with the highest
+ * code visible on the `nightly` branch. The two are never compared.
  *
  * The same string is written to `manifest.json`, `package.json`,
  * `server-plugin/package.json` and `src/constants.js`; only the version fields
@@ -150,7 +150,7 @@ export function applyVersion(root, { display, versionCode }) {
 
 /**
  * Compute and write the new identity. `floorCode` keeps `versionCode`
- * monotonic across channels; `version` writes an explicit (manual) version.
+ * monotonic within a channel; `version` writes an explicit (manual) version.
  */
 export function bumpVersion({
     root = DEFAULT_ROOT, channel, date = previousBuildDate(), floorCode = 0, version,

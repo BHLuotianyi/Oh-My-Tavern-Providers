@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    compareSemver, compareUrl, evaluateUpdate, fetchRemoteInfo, isNightly, nightlyDate, parseSemver, releaseLine,
+    compareSemver, compareUrl, defaultUpdateChannel, evaluateUpdate, fetchRemoteInfo, isNightly,
+    isSelectableChannel, nightlyDate, parseSemver, releaseLine, resolveUpdateChannel,
 } from '../../src/update-check.js';
 
 test('semver parsing keeps prerelease but drops build metadata', () => {
@@ -101,6 +102,45 @@ test('nightly installs compare against the nightly branch', () => {
     assert.equal(missing.reason, 'no-nightly');
 });
 
+test('channel helpers default to the running build', () => {
+    assert.equal(defaultUpdateChannel('2.0.0'), 'git');
+    assert.equal(defaultUpdateChannel('2.0.0+nightly.20261105'), 'nightly');
+    assert.equal(resolveUpdateChannel('2.0.0', null), 'git');
+    assert.equal(resolveUpdateChannel('2.0.0+nightly.20261105', 'git'), 'git');
+    // `release` is listed but not published yet, so it falls back.
+    assert.equal(resolveUpdateChannel('2.0.0', 'release'), 'git');
+    assert.equal(isSelectableChannel('release'), false);
+    assert.equal(isSelectableChannel('nightly'), true);
+});
+
+test('an explicit channel overrides the build type', () => {
+    const forcedNightly = evaluateUpdate({
+        localVersion: '2.0.0', localVersionCode: 10,
+        main: { version: '2.0.0', versionCode: 10, sha: 'bbbbbbb' },
+        nightly: { version: '2.0.0+nightly.20261105', versionCode: 12 },
+        channel: 'nightly',
+    });
+    assert.equal(forcedNightly.status, 'update');
+    assert.equal(forcedNightly.reason, 'versionCode');
+
+    const gitIgnoresRelease = evaluateUpdate({
+        localVersion: '2.0.0', localVersionCode: 10,
+        main: { version: '2.0.0', versionCode: 10, sha: 'bbbbbbb' },
+        release: { tag: 'v2.1.0', version: '2.1.0', sha: 'ccccccc' },
+        channel: 'git',
+    });
+    assert.equal(gitIgnoresRelease.status, 'current');
+    assert.equal(gitIgnoresRelease.reason, 'version');
+
+    const nightlyOnGit = evaluateUpdate({
+        localVersion: '2.0.0+nightly.20261105', localVersionCode: 20,
+        main: { version: '2.0.0', versionCode: 10, sha: 'bbbbbbb' },
+        nightly: { version: '2.0.0+nightly.20261106', versionCode: 21 },
+        channel: 'git',
+    });
+    assert.equal(nightlyOnGit.status, 'ahead');
+});
+
 test('without releases the main manifest decides', () => {
     const update = evaluateUpdate({
         localVersion: '1.9.0', localVersionCode: 5,
@@ -194,6 +234,32 @@ test('fetchRemoteInfo reads the nightly manifest for nightly installs', async ()
     assert.equal(evaluateUpdate({
         localVersion: '2.0.0+nightly.20261103', localVersionCode: 11, ...info,
     }).status, 'update');
+});
+
+test('fetchRemoteInfo follows the selected channel', async () => {
+    const git = await fetchRemoteInfo('2.0.0', {
+        channel: 'git',
+        fetchImpl: fakeFetch({
+            'main/manifest.json': { version: '2.0.0', versionCode: 10 },
+            'commits/main': COMMIT('bbbbbbb'),
+            'releases/latest': { tag_name: 'v2.1.0', published_at: '2026-11-04T10:00:00Z' },
+        }),
+    });
+    assert.equal(git.release, null);
+    assert.equal(git.nightly, null);
+
+    const release = await fetchRemoteInfo('2.0.0+nightly.20261105', {
+        channel: 'release',
+        fetchImpl: fakeFetch({
+            'main/manifest.json': { version: '2.0.0', versionCode: 10 },
+            'commits/main': COMMIT('bbbbbbb'),
+            'releases/latest': { tag_name: 'v2.1.0', published_at: '2026-11-04T10:00:00Z' },
+            'commits/v2.1.0': COMMIT('ccccccc', '2026-11-04T09:00:00Z'),
+        }),
+    });
+    assert.equal(release.nightly, null);
+    assert.equal(release.release.tag, 'v2.1.0');
+    assert.equal(release.release.sha, 'ccccccc');
 });
 
 test('fetchRemoteInfo rejects a completely silent GitHub', async () => {

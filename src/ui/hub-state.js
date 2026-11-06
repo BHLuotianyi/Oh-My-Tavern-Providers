@@ -48,6 +48,8 @@ export const state = {
     updatePollTimer: null,
     /** @type {Promise<object>|null} In-flight GitHub check shared by callers. */
     updateInFlight: null,
+    /** @type {string|null} Channel the in-flight check was started for. */
+    updateInFlightChannel: null,
     /** @type {object|null} Last update verdict (see src/update-check.js). */
     updateInfo: null,
     /** @type {string|null} Remote build already announced this session. */

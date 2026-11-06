@@ -187,8 +187,9 @@ Versions are **standard semver**: `MAJOR.MINOR.FIX` is the human-owned release l
 
 - `<line>` is the current version without `+build` (including any manually set `-alpha.N` / `-beta.N`); `YYYYMMDD` is always **UTC+8**.
 - Automation never commits to `main`. The version files there change only when you set a new release line, so the commit history stays human-authored — no bot commit after a push.
-- `versionCode` is a monotonic integer **independent of the readable version**: it increments whenever a version is written (nightly or manual release), and `main` and nightly share the counter (the nightly job reads the highest code it can see and adds one).
+- `versionCode` is monotonic **within a channel**: `main` increments its own version files, nightly increments the highest code visible on the `nightly` branch, and the two counters are independent. A stable Release may therefore carry a smaller number than a newer nightly build; `src/update-check.js` only uses the code to break ties inside the selected channel (semver decides first).
 - `tests/unit/version.test.mjs` enforces that `manifest.json`, `package.json`, `server-plugin/package.json` and `src/constants.js` all agree.
+- The update check follows the build's channel by default (nightly builds read the `nightly` branch, everything else reads `main`); the **Update check** section in the settings panel switches it. The `release` channel stays greyed out until the repository publishes its first GitHub Release.
 
 Workflows:
 

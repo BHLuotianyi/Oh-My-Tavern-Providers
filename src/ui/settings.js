@@ -13,14 +13,17 @@ import {
     DEFAULT_GATEWAY_SETTINGS,
     DEFAULT_GATEWAY_URL,
     DEFAULT_SETTINGS,
+    EXTENSION_VERSION,
     GATEWAY_ADAPTERS,
 } from '../constants.js';
 import { getCatalogInfo, loadCatalog } from '../catalog.js';
 import { getSettings, updateSettings } from '../store.js';
 import { restoreSelection } from '../switch-engine.js';
+import { UPDATE_CHANNELS, resolveUpdateChannel } from '../update-check.js';
+import { initBindingUI } from './bindings.js';
 import { applyNativeSelectorVisibility, describeError, tr, trf } from './dom.js';
 import { el, isPlainObject, notify } from './helpers.js';
-import { initBindingUI } from './bindings.js';
+import { refreshUpdatePill } from './update-pill.js';
 
 const SERVER_CONTROL_IDS = [
     'omtp-gateway-autostart',
@@ -59,6 +62,13 @@ function setText(id, text) {
 function setInputValue(id, value) {
     const element = byId(id);
     if (element && document.activeElement !== element) {
+        element.value = value;
+    }
+}
+
+function setSelectValue(id, value) {
+    const element = byId(id);
+    if (element && typeof value === 'string') {
         element.value = value;
     }
 }
@@ -165,6 +175,7 @@ function applyLocalSettings() {
     setChecked('omtp-auto-apply', settings.autoApplyBindings);
     setInputValue('omtp-gateway-url', settings.gatewayUrl || DEFAULT_GATEWAY_URL);
     setInputValue('omtp-catalog-url', settings.catalogUrl || '');
+    setSelectValue('omtp-update-channel', resolveUpdateChannel(EXTENSION_VERSION, settings.updateChannel));
 }
 
 function setServerControlsDisabled(disabled) {
@@ -853,7 +864,41 @@ function element(root, id) {
     return root?.querySelector?.(`#${id}`) ?? byId(id);
 }
 
+const UPDATE_CHANNEL_LABELS = {
+    release: ['omtp_update_channel_release', 'Release'],
+    nightly: ['omtp_update_channel_nightly', 'Nightly'],
+    git: ['omtp_update_channel_git', 'Git (main)'],
+};
+
+function fillUpdateChannels(select) {
+    if (select.dataset.omtpFilled === '1') {
+        return;
+    }
+    select.dataset.omtpFilled = '1';
+    for (const entry of UPDATE_CHANNELS) {
+        const [key, fallback] = UPDATE_CHANNEL_LABELS[entry.id] || [null, entry.id];
+        const option = el('option', null, key ? tr(key, fallback) : entry.id);
+        option.value = entry.id;
+        option.disabled = !entry.enabled;
+        if (!entry.enabled) {
+            option.title = tr('omtp_update_channel_unavailable', 'No build is published on this channel yet');
+        }
+        select.append(option);
+    }
+}
+
 function bindControls(root) {
+    const updateChannelSelect = element(root, 'omtp-update-channel');
+    if (updateChannelSelect) {
+        fillUpdateChannels(updateChannelSelect);
+        updateChannelSelect.addEventListener('change', () => {
+            updateSettings({ updateChannel: updateChannelSelect.value });
+            refreshUpdatePill({ force: true }).catch((error) => {
+                console.warn('[omtp] update check failed after a channel change', error);
+            });
+        });
+    }
+
     const hideNative = element(root, 'omtp-hide-native');
     hideNative?.addEventListener('change', () => {
         const hide = Boolean(hideNative.checked);
