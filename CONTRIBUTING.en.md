@@ -189,7 +189,7 @@ Versions are **standard semver**: `MAJOR.MINOR.FIX` is the human-owned release l
 - Automation never commits to `main`. The version files there change only when you set a new release line, so the commit history stays human-authored — no bot commit after a push.
 - `versionCode` is monotonic **within a channel**: `main` increments its own version files, nightly increments the highest code visible on the `nightly` branch, and the two counters are independent. A stable Release may therefore carry a smaller number than a newer nightly build; `src/update-check.js` only uses the code to break ties inside the selected channel (semver decides first).
 - `tests/unit/version.test.mjs` enforces that `manifest.json`, `package.json`, `server-plugin/package.json` and `src/constants.js` all agree.
-- The update check follows the build's channel by default (nightly builds read the `nightly` branch, everything else reads `main`); the **Update check** section in the settings panel switches it. The `release` channel stays greyed out until the repository publishes its first GitHub Release.
+- The update check reads only the version numbers in the selected channel's `manifest.json`: nightly builds default to the `nightly` branch, everything else defaults to `main`, and the **Update check** section in the settings panel switches between them. GitHub Releases and commit history are not consulted.
 
 Workflows:
 

@@ -202,7 +202,7 @@ Oh-My-Tavern-Providers/
 - 自动化**从不**往 `main` 提交。`main` 上的版本文件只在你设置新的发布线时改变，因此提交历史始终保持人工撰写，push 之后不会再冒出 bot 提交。
 - `versionCode` **只在同一通道内单调**：`main` 只从自己的版本文件 +1，Nightly 只从 `nightly` 分支可见的最大值 +1，两个计数互不相干。因此稳定版 Release 的数字可能小于更新的 Nightly 构建，这是预期行为；`src/update-check.js` 只在所选通道内用它打破同版本平局（先比 semver）。
 - `tests/unit/version.test.mjs` 强制 `manifest.json`、`package.json`、`server-plugin/package.json`、`src/constants.js` 四份副本严格一致。
-- 更新检查默认跟随构建通道（nightly 构建看 `nightly` 分支，其余看 `main`）；设置面板的 **Update check** 可手动切换。`release` 通道在仓库发布首个 GitHub Release 前置灰。
+- 更新检查只读所选通道 `manifest.json` 里的版本号：nightly 构建默认看 `nightly` 分支，其余默认看 `main`，设置面板的 **Update check** 可在两者间切换。判定不读取 GitHub Release，也不看提交历史。
 
 工作流：
 

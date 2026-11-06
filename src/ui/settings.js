@@ -865,7 +865,6 @@ function element(root, id) {
 }
 
 const UPDATE_CHANNEL_LABELS = {
-    release: ['omtp_update_channel_release', 'Release'],
     nightly: ['omtp_update_channel_nightly', 'Nightly'],
     git: ['omtp_update_channel_git', 'Git (main)'],
 };
@@ -875,14 +874,10 @@ function fillUpdateChannels(select) {
         return;
     }
     select.dataset.omtpFilled = '1';
-    for (const entry of UPDATE_CHANNELS) {
-        const [key, fallback] = UPDATE_CHANNEL_LABELS[entry.id] || [null, entry.id];
-        const option = el('option', null, key ? tr(key, fallback) : entry.id);
-        option.value = entry.id;
-        option.disabled = !entry.enabled;
-        if (!entry.enabled) {
-            option.title = tr('omtp_update_channel_unavailable', 'No build is published on this channel yet');
-        }
+    for (const id of UPDATE_CHANNELS) {
+        const [key, fallback] = UPDATE_CHANNEL_LABELS[id] || [null, id];
+        const option = el('option', null, key ? tr(key, fallback) : id);
+        option.value = id;
         select.append(option);
     }
 }

@@ -12,7 +12,6 @@ import { EXTENSION_VERSION, EXTENSION_VERSION_CODE } from '../constants.js';
 import {
     UPDATE_CACHE_MS,
     UPDATE_ENDPOINTS,
-    compareUrl,
     evaluateUpdate,
     fetchRemoteInfo,
     isNightly,
@@ -124,12 +123,7 @@ function paint(status, label, title, dotClass) {
 
 /** Where a click should land for the current verdict. */
 function targetUrl(info) {
-    if (isNightly(info?.localVersion)) return UPDATE_ENDPOINTS.nightlyCommits;
-    if (info?.reason === 'release' && info.releaseTag) return UPDATE_ENDPOINTS.releasePage(info.releaseTag);
-    // Every other verdict that compares against a release starts from its tag.
-    if (info?.releaseTag) return compareUrl(info.releaseTag);
-    if (info?.remoteRef && /^[0-9a-f]{7,40}$/i.test(info.remoteRef)) return compareUrl(info.remoteRef);
-    return UPDATE_ENDPOINTS.commits;
+    return isNightly(info?.localVersion) ? UPDATE_ENDPOINTS.nightlyCommits : UPDATE_ENDPOINTS.commits;
 }
 
 /**
@@ -164,16 +158,6 @@ export async function refreshUpdatePill({ force = false } = {}) {
             announce(info);
             break;
         }
-        case 'pending': {
-            const label = tr('omtp_update_pending', 'main has newer commits');
-            paint('pending', label, trf(
-                'omtp_update_pending_hint',
-                'The running build is the newest release, but main has unreleased commits (latest ${0}); click to review or pull them',
-                remoteLabel(info),
-            ), 'omtp-dot-pending');
-            announce(info);
-            break;
-        }
         case 'current':
             paint('current', tr('omtp_update_current', 'Up to date'), trf(
                 'omtp_update_current_hint',
@@ -202,9 +186,11 @@ function announce(info) {
     const key = info.remoteRef || info.remoteVersion;
     if (!key || state.updateNotifiedFor === key) return;
     state.updateNotifiedFor = key;
-    notify('info', info.status === 'pending'
-        ? trf('omtp_update_pending_notify', 'main has commits since the last release (${0}); pull to update.', remoteLabel(info))
-        : trf('omtp_update_notify', 'OMTP update available: ${0}. Click the update indicator in the footer to view it.', remoteLabel(info)));
+    notify('info', trf(
+        'omtp_update_notify',
+        'OMTP update available: ${0}. Click the update indicator in the footer to view it.',
+        remoteLabel(info),
+    ));
 }
 
 /**
@@ -212,7 +198,7 @@ function announce(info) {
  */
 export async function onUpdatePillClick() {
     const info = state.updateInfo;
-    if (info && (info.status === 'update' || info.status === 'pending')) {
+    if (info && info.status === 'update') {
         window.open(targetUrl(info), '_blank', 'noopener');
         return;
     }
