@@ -12,7 +12,7 @@ import {
     saveConfig,
 } from './lib/config.mjs';
 import { KeyStore, KeyStoreUnreadableError } from './lib/key-store.mjs';
-import { freshLiveModels, loadLiveModels, saveLiveModels, staleLiveModels } from './lib/live-models-store.mjs';
+import { freshLiveModels, loadLiveModels, saveLiveModels } from './lib/live-models-store.mjs';
 import { CatalogService } from './lib/catalog-service.mjs';
 import { GatewayServer, asyncHandler, buildGatewayContext, credentialStorageId, resolveProviderCredentials } from './lib/gateway-server.mjs';
 import { buildModelsProbe, buildProviderContext, isSupportedAdapter, SUPPORTED_ADAPTERS, userAgentSpoofEnabled } from './lib/provider-config.mjs';
@@ -470,20 +470,9 @@ async function probeProviderModels(current, providerId, { refresh = false } = {}
     const adapter = await getAdapter(resolved.adapter);
     const probe = await probeProvider(resolved, adapter, provider, { keyStore: current.keyStore });
     if (probe.error) {
-        // A cache older than the in-process TTL is still better than an empty
-        // list after a restart, so a failed background probe falls back to it.
-        // An explicit refresh (`?refresh=true`) always reports the error.
-        const seen = refresh ? null : staleLiveModels(liveModelsCache, providerId);
-        if (seen) {
-            return {
-                ok: true,
-                cached: true,
-                stale: true,
-                models: seen.models,
-                at: seen.at,
-                error: probe.error,
-            };
-        }
+        // No silent fallback: a failed probe is reported as a failure even when
+        // an older list is still on disk, so the caller never picks a model the
+        // provider no longer serves.
         return { ok: false, error: probe.error, models: [] };
     }
     clearAuthFailure(providerId);

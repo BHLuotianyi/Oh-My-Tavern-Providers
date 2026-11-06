@@ -2,10 +2,13 @@
  * Disk-backed cache for live model lists discovered through provider APIs.
  *
  * The gateway keeps successful probe results in memory as well; this store
- * makes them survive a SillyTavern restart so a provider that is temporarily
- * unreachable still shows its last known models. The file lives with the rest
- * of the server state in `<DATA_ROOT>/omtp/live-models.json` and contains no
- * credentials, only model metadata.
+ * makes them survive a SillyTavern restart inside the freshness window, so a
+ * restart does not repeat a probe it already has an answer for. Entries are
+ * never served as a fallback: once a list is older than `LIVE_MODELS_TTL` the
+ * next request probes upstream, and a failed probe is reported as an error.
+ * The file lives with the rest of the server state in
+ * `<DATA_ROOT>/omtp/live-models.json` and contains no credentials, only model
+ * metadata.
  */
 
 import { omtpPath, readJsonFile, writeJsonAtomic } from './config.mjs';
@@ -13,13 +16,10 @@ import { omtpPath, readJsonFile, writeJsonAtomic } from './config.mjs';
 export const LIVE_MODELS_FILE = 'live-models.json';
 export const LIVE_MODELS_STORE_VERSION = 1;
 
-/** Persisted lists older than this are dropped when the cache is loaded. */
-export const LIVE_MODELS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
 /** Upper bound on providers kept on disk; least recently probed are dropped. */
 export const LIVE_MODELS_MAX_PROVIDERS = 128;
 
-/** In-process freshness window: younger results answer without a network call. */
+/** Freshness window: younger results answer without a network call. */
 export const LIVE_MODELS_TTL = 300_000;
 
 function isPlainObject(value) {
@@ -44,18 +44,6 @@ function cacheEntry(cache, providerId) {
 export function freshLiveModels(cache, providerId, { ttl = LIVE_MODELS_TTL, now = Date.now() } = {}) {
     const entry = cacheEntry(cache, providerId);
     return entry && now - entry.at < ttl ? entry : null;
-}
-
-/**
- * Entry still inside the retention window, used as a fallback when a
- * background probe fails (a restart should not blank the model list).
- * @param {Map<string, any>} cache
- * @param {string} providerId
- * @param {{maxAge?:number, now?:number}} [options]
- */
-export function staleLiveModels(cache, providerId, { maxAge = LIVE_MODELS_MAX_AGE_MS, now = Date.now() } = {}) {
-    const entry = cacheEntry(cache, providerId);
-    return entry && now - entry.at <= maxAge ? entry : null;
 }
 
 /** Normalize a stored model list; null when nothing usable remains. */
@@ -96,7 +84,7 @@ export async function loadLiveModels(root, now = Date.now()) {
         }
         const models = normalizeModels(entry.models);
         const at = Number(entry.at);
-        if (!models || !Number.isFinite(at) || now - at > LIVE_MODELS_MAX_AGE_MS) {
+        if (!models || !Number.isFinite(at) || now - at >= LIVE_MODELS_TTL) {
             continue;
         }
         cache.set(providerId, { models, at });
@@ -105,7 +93,8 @@ export async function loadLiveModels(root, now = Date.now()) {
 }
 
 /**
- * Persist `cache`, dropping expired entries and keeping the newest providers.
+ * Persist `cache`, dropping entries outside the freshness window and
+ * keeping the newest providers.
  *
  * @param {string} root OMTP data directory
  * @param {Map<string, {models: object[], at: number}>} cache
@@ -120,7 +109,7 @@ export async function saveLiveModels(root, cache, now = Date.now()) {
         const models = normalizeModels(entry?.models);
         const at = Number(entry?.at);
         if (typeof providerId !== 'string' || !providerId || !models
-            || !Number.isFinite(at) || now - at > LIVE_MODELS_MAX_AGE_MS) {
+            || !Number.isFinite(at) || now - at >= LIVE_MODELS_TTL) {
             dropped += 1;
             continue;
         }

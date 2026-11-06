@@ -95,7 +95,7 @@ flowchart LR
   告别到处复制粘贴配置的烦恼。在面板的 **登录 (Sign-in)** 标签页中：
   - **OAuth 授权码（PKCE）与设备码**：支持 Claude Pro/Max、Google Antigravity、Gemini CLI、OpenAI Codex、Kilo 等订阅账号登录；点击登录立即在新标签页打开授权页，本机回环端口自动接收回调，远程部署时也支持直接粘贴回调链接。
   - **API Key 状态防呆**：已保存的密钥显示为圆点掩码，明确区分「已登录」、「未配置」与「🔴 密钥被上游拒绝（显示后四位 `****last4`）」，并提供直达各厂商控制台的领 Key 链接。
-  - **一键实时探测模型（Live Probe）**：本地 Ollama / LM Studio / vLLM 或任意服务商只需点击 `🔄` 按钮，即可直接拉取上游 `/models` 实时可用列表并标记 `live` 徽章。**刷新成功的列表会持久化到服务端数据目录 `data/omtp/live-models.json`（保留 7 天）**，重启酒馆或上游暂时不可用时仍能直接展示上次探测结果。
+  - **一键实时探测模型（Live Probe）**：本地 Ollama / LM Studio / vLLM 或任意服务商只需点击 `🔄` 按钮，即可直接拉取上游 `/models` 实时可用列表并标记 `live` 徽章。**刷新成功的列表会持久化到服务端数据目录 `data/omtp/live-models.json`**，5 分钟内重启酒馆无需重新探测；探测失败时直接报错，不会展示已过期的模型列表。
 
 - **📊 16 家订阅额度监控 + 当前对话实时计费（对齐 `omp /usage` & `omp stats`）**
   - **订阅额度页**：直接读取 Claude Pro/Max、ChatGPT Codex、Antigravity/Gemini CLI、Z.AI/智谱、Kimi Code、MiniMax Token Plan、xAI SuperGrok、DeepSeek 等 16 类接口的 5 小时 / 周度配额百分比、重置倒计时与账户余额（70% 橙色预警、90% 红色告警）。

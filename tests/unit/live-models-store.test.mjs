@@ -6,9 +6,10 @@ import path from 'node:path';
 
 import {
     LIVE_MODELS_FILE,
-    LIVE_MODELS_MAX_AGE_MS,
     LIVE_MODELS_MAX_PROVIDERS,
     LIVE_MODELS_STORE_VERSION,
+    LIVE_MODELS_TTL,
+    freshLiveModels,
     loadLiveModels,
     saveLiveModels,
 } from '../../server-plugin/lib/live-models-store.mjs';
@@ -48,13 +49,13 @@ test('the cache file is private to the account', async () => {
     assert.equal(mode, 0o600);
 });
 
-test('expired entries are dropped on read and on write', async () => {
+test('entries outside the freshness window are dropped on read and on write', async () => {
     const root = tempRoot();
     const now = 1_800_000_000_000;
     fs.writeFileSync(path.join(root, LIVE_MODELS_FILE), JSON.stringify({
         version: LIVE_MODELS_STORE_VERSION,
         providers: {
-            stale: { at: now - LIVE_MODELS_MAX_AGE_MS - 1, models: [{ id: 'old' }] },
+            expired: { at: now - LIVE_MODELS_TTL - 1, models: [{ id: 'old' }] },
             fresh: { at: now - 1000, models: [{ id: 'new' }] },
         },
     }));
@@ -62,7 +63,7 @@ test('expired entries are dropped on read and on write', async () => {
     const loaded = await loadLiveModels(root, now);
     assert.deepEqual([...loaded.keys()], ['fresh']);
 
-    loaded.set('another-stale', { models: [{ id: 'old' }], at: now - LIVE_MODELS_MAX_AGE_MS - 1 });
+    loaded.set('another-expired', { models: [{ id: 'old' }], at: now - LIVE_MODELS_TTL - 1 });
     const result = await saveLiveModels(root, loaded, now);
     assert.deepEqual(result, { providers: 1, dropped: 1 });
     assert.deepEqual(Object.keys(readStore(root).providers), ['fresh']);
@@ -117,37 +118,33 @@ test('only the newest providers are persisted', async () => {
     assert.ok(providers[`provider-${LIVE_MODELS_MAX_PROVIDERS + 4}`]);
 });
 
-test('freshness decides cache hits, stale fallbacks and misses', async () => {
-    const { freshLiveModels, staleLiveModels, LIVE_MODELS_TTL } = await import('../../server-plugin/lib/live-models-store.mjs');
+test('freshness decides cache hits and misses', async () => {
     const now = 1_000_000;
     const cache = new Map([
         ['fresh', { models: [{ id: 'a' }], at: now - 1000 }],
-        ['stale', { models: [{ id: 'b' }], at: now - LIVE_MODELS_TTL - 1000 }],
-        ['expired', { models: [{ id: 'c' }], at: now - LIVE_MODELS_MAX_AGE_MS - 1 }],
+        ['expired', { models: [{ id: 'b' }], at: now - LIVE_MODELS_TTL }],
         ['empty', { models: [], at: now }],
     ]);
 
     assert.equal(freshLiveModels(cache, 'fresh', { now }).models[0].id, 'a');
-    assert.equal(freshLiveModels(cache, 'stale', { now }), null);
+    assert.equal(freshLiveModels(cache, 'expired', { now }), null);
+    assert.equal(freshLiveModels(cache, 'empty', { now }), null);
     assert.equal(freshLiveModels(cache, 'missing', { now }), null);
-
-    assert.equal(staleLiveModels(cache, 'stale', { now }).models[0].id, 'b');
-    assert.equal(staleLiveModels(cache, 'fresh', { now }).models[0].id, 'a');
-    assert.equal(staleLiveModels(cache, 'expired', { now }), null);
-    assert.equal(staleLiveModels(cache, 'empty', { now }), null);
-    assert.equal(staleLiveModels(null, 'fresh', { now }), null);
+    assert.equal(freshLiveModels(null, 'fresh', { now }), null);
 });
 
-test('a restart keeps the last successful list as a stale fallback', async () => {
+test('a restart inside the freshness window reuses the persisted list', async () => {
     const root = tempRoot();
     const now = 2_000_000_000_000;
     const cache = new Map([['openai', { models: [{ id: 'gpt-x' }], at: now - 60_000 }]]);
     await saveLiveModels(root, cache, now);
 
-    // Next boot, long after the in-process freshness window: the probe would
-    // be retried, but a failure still has the persisted list to fall back to.
-    const restarted = await loadLiveModels(root, now + 3_600_000);
-    const { freshLiveModels, staleLiveModels } = await import('../../server-plugin/lib/live-models-store.mjs');
-    assert.equal(freshLiveModels(restarted, 'openai', { now: now + 3_600_000 }), null);
-    assert.deepEqual(staleLiveModels(restarted, 'openai', { now: now + 3_600_000 }).models, [{ id: 'gpt-x' }]);
+    const restarted = await loadLiveModels(root, now + 60_000);
+    assert.deepEqual(freshLiveModels(restarted, 'openai', { now: now + 60_000 }).models, [{ id: 'gpt-x' }]);
+
+    // Past the window there is no fallback: the entry is gone, so the next
+    // request probes upstream and reports a failure if that probe fails.
+    const later = await loadLiveModels(root, now + LIVE_MODELS_TTL + 1);
+    assert.equal(freshLiveModels(later, 'openai', { now: now + LIVE_MODELS_TTL + 1 }), null);
+    assert.equal(later.size, 0);
 });
