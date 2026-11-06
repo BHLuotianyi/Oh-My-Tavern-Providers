@@ -113,11 +113,8 @@ export function readCurrent(root = DEFAULT_ROOT) {
  * `versionCode` moves.
  */
 function replaceOnce(source, pattern, replacement, file) {
-    const next = source.replace(pattern, replacement);
-    if (next === source && !pattern.test(source)) {
-        throw new Error(`${file}: version field not found (${pattern})`);
-    }
-    return next;
+    if (!pattern.test(source)) throw new Error(`${file}: version field not found (${pattern})`);
+    return source.replace(pattern, replacement);
 }
 
 function writeJsonField(source, key, literal, file) {
@@ -134,17 +131,17 @@ export function applyVersion(root, { display, versionCode }) {
 
     for (const target of TARGETS) {
         const file = path.join(root, target.file);
-        const source = fs.readFileSync(file, 'utf8');
-        let next = source;
+        const original = fs.readFileSync(file, 'utf8');
+        let content = original;
         if (target.constants) {
-            next = replaceOnce(next, /(export const EXTENSION_VERSION = ')[^']*(';)/, `$1${display}$2`, target.file);
-            next = replaceOnce(next, /(export const EXTENSION_VERSION_CODE = )\d+(;)/, `$1${code}$2`, target.file);
+            content = replaceOnce(content, /(export const EXTENSION_VERSION = ')[^']*(';)/, `$1${display}$2`, target.file);
+            content = replaceOnce(content, /(export const EXTENSION_VERSION_CODE = )\d+(;)/, `$1${code}$2`, target.file);
         } else {
-            next = writeJsonField(next, 'version', JSON.stringify(display), target.file);
-            next = writeJsonField(next, 'versionCode', String(code), target.file);
+            content = writeJsonField(content, 'version', JSON.stringify(display), target.file);
+            content = writeJsonField(content, 'versionCode', String(code), target.file);
         }
         // Leave untouched files untouched: no mtime churn, no noisy diffs.
-        if (next !== source) fs.writeFileSync(file, next);
+        if (content !== original) fs.writeFileSync(file, content);
         written.push(target.file);
     }
 

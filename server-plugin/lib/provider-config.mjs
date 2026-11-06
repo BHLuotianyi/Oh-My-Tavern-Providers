@@ -152,6 +152,15 @@ function defaultBaseUrlFor(adapter, catalogProvider, extraConfig) {
 }
 
 /**
+ * The User-Agent disguise is on unless the stored config says otherwise.
+ * @param {Record<string, any>|null|undefined} config Resolved or stored config.
+ * @returns {boolean}
+ */
+export function userAgentSpoofEnabled(config) {
+    return config?.userAgentSpoof !== false;
+}
+
+/**
  * Merge catalog metadata, stored overrides and key information into the config
  * consumed by gateway adapters.
  *
@@ -198,9 +207,9 @@ export function buildProviderConfig(catalogProvider, options = {}) {
         keySource,
         available: Boolean(adapter) && Boolean(keyless || hasAdapterCredentials(adapter, apiKey, extraConfig)),
         keyless,
-        // Default on; only providers whose catalog policy declares a spoof UA
-        // expose the switch, but the flag round-trips for every provider.
-        userAgentSpoof: stored.userAgentSpoof !== false,
+        // Only providers whose catalog policy declares a spoof UA expose the
+        // switch, but the flag round-trips for every provider.
+        userAgentSpoof: userAgentSpoofEnabled(stored),
         custom: Boolean(stored.custom || catalogProvider?.custom),
         models: Array.isArray(stored.models) && stored.models.length > 0 ? stored.models : catalogProvider?.models || [],
     };

@@ -11,7 +11,7 @@ import {
     tokensEqual,
 } from './config.mjs';
 import { applyRequestHeaders, requestHeaderPolicy } from './request-headers.mjs';
-import { buildProviderContext } from './provider-config.mjs';
+import { buildProviderContext, userAgentSpoofEnabled } from './provider-config.mjs';
 import { resolveAccessToken } from './oauth.mjs';
 import { openAIErrorEnvelope } from './sse.mjs';
 import { log, logError } from './redact.mjs';
@@ -590,13 +590,12 @@ async function applyProviderRequestHeaders(ctx, resolved, catalogProvider, reque
     const policy = requestHeaderPolicy(catalogProvider);
     if (!policy) return;
     const installId = await ensureInstallId(keyStore?.root || getOmtpRoot());
-    const spoof = resolved.userAgentSpoof !== false;
     applyRequestHeaders(ctx.headers, {
         policy,
         providerId: String(ctx.provider || resolved.id || ''),
         chatId: requestContext.chatId || '',
         installId,
         stUserAgent: requestContext.stUserAgent || '',
-        spoof,
+        spoof: userAgentSpoofEnabled(resolved),
     });
 }

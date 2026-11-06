@@ -10,7 +10,7 @@ import {
     writeFileAtomic,
     writeJsonAtomic,
 } from './config.mjs';
-import { buildProviderConfig, isKeylessProvider, isSupportedAdapter } from './provider-config.mjs';
+import { buildProviderConfig, isKeylessProvider, isSupportedAdapter, userAgentSpoofEnabled } from './provider-config.mjs';
 import { headersForHook } from './custom-logins/kimi-fingerprint.mjs';
 import { logError } from './redact.mjs';
 
@@ -446,7 +446,7 @@ export class KeyStore {
             models: Array.isArray(config.models) ? config.models : [],
             hasKey: Boolean(config.apiKey),
             last4: typeof config.apiKey === 'string' ? config.apiKey.slice(-4) : '',
-            userAgentSpoof: config.userAgentSpoof !== false,
+            userAgentSpoof: userAgentSpoofEnabled(config),
             updatedAt: config.updatedAt || 0,
         };
     }

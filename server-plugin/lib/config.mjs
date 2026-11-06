@@ -162,6 +162,14 @@ export async function ensureGatewayToken(root = getOmtpRoot()) {
 /** @type {Map<string,string>} In-process install id per OMTP root. */
 const installIdCache = new Map();
 
+/** `crypto.randomUUID()` output: a v4 UUID. */
+const INSTALL_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** @param {string} value */
+function isInstallId(value) {
+    return INSTALL_ID_PATTERN.test(value);
+}
+
 /**
  * Stable per-installation id: random UUID v4 persisted at the OMTP root.
  * Used to label requests that have no conversation (usage polls, model
@@ -174,11 +182,10 @@ export async function ensureInstallId(root = getOmtpRoot()) {
     if (cached) return cached;
     await ensureOmtpRoot(root);
     const idPath = omtpPath(root, INSTALL_ID_FILE);
-    const valid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
     let id = '';
     try {
         const existing = (await fs.promises.readFile(idPath, 'utf8')).trim();
-        if (valid(existing)) id = existing;
+        if (isInstallId(existing)) id = existing;
         else await fs.promises.rm(idPath, { force: true });
     } catch (error) {
         if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') throw error;
@@ -192,7 +199,7 @@ export async function ensureInstallId(root = getOmtpRoot()) {
             if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EEXIST') throw error;
             // Another process won the create; adopt its id when it is usable.
             const existing = (await fs.promises.readFile(idPath, 'utf8').catch(() => '')).trim();
-            id = valid(existing) ? existing : candidate;
+            id = isInstallId(existing) ? existing : candidate;
         }
     }
     installIdCache.set(root, id);

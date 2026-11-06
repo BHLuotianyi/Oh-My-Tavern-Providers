@@ -148,7 +148,7 @@
     "omtp_update_unknown": "Update check failed",
     "omtp_update_unknown_hint": "GitHub is unreachable — click to retry",
     "omtp_update_unknown_short": "unknown",
-    "omtp_update_notify": "OMTP update available: ${0}. Click the header indicator to view it.",
+    "omtp_update_notify": "OMTP update available: ${0}. Click the update indicator in the footer to view it.",
     "omtp_no_credentials": "No credentials / not signed in",
     "omtp_settings_title": "OMTP Model Hub",
     "omtp_needs_api_key": "Needs API key",

@@ -84,7 +84,7 @@ function findHeader(headers, name) {
  * @param {string} name
  * @param {string} value
  */
-export function setHeader(headers, name, value) {
+function setHeader(headers, name, value) {
     const target = name.toLowerCase();
     for (const key of Object.keys(headers)) {
         if (key.toLowerCase() === target) delete headers[key];
@@ -98,7 +98,7 @@ export function setHeader(headers, name, value) {
  * @param {string} name
  * @param {string} value
  */
-export function setHeaderIfAbsent(headers, name, value) {
+function setHeaderIfAbsent(headers, name, value) {
     if (findHeader(headers, name)) return;
     headers[name] = value;
 }

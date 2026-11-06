@@ -1,11 +1,12 @@
 /**
- * Header "update" pill: compares the running build with what GitHub publishes.
+ * Footer update indicator: compares the running build with what GitHub
+ * publishes.
  *
  * The decision logic lives in `src/update-check.js`; this module only fetches,
  * caches the verdict in extension settings (10 minutes, GitHub's anonymous API
- * allows 60 requests per hour) and paints the indicator next to the gateway
- * pill. A found update or an unreleased `main` tip raises one notification per
- * remote build, so a long session is not nagged on every poll.
+ * allows 60 requests per hour) and paints the bottom-left status line. A found
+ * update or an unreleased `main` tip raises one notification per remote build,
+ * so a long session is not nagged on every poll.
  */
 import { EXTENSION_VERSION, EXTENSION_VERSION_CODE } from '../constants.js';
 import {
@@ -114,14 +115,14 @@ function paint(status, label, title, dotClass) {
 function targetUrl(info) {
     if (isNightly(info?.localVersion)) return UPDATE_ENDPOINTS.nightlyCommits;
     if (info?.reason === 'release' && info.releaseTag) return UPDATE_ENDPOINTS.releasePage(info.releaseTag);
-    if (info?.reason === 'commits' && info.releaseTag) return compareUrl(info.releaseTag);
-    if (info?.releaseTag && info.reason === 'versionCode') return compareUrl(info.releaseTag);
+    // Every other verdict that compares against a release starts from its tag.
+    if (info?.releaseTag) return compareUrl(info.releaseTag);
     if (info?.remoteRef && /^[0-9a-f]{7,40}$/i.test(info.remoteRef)) return compareUrl(info.remoteRef);
     return UPDATE_ENDPOINTS.commits;
 }
 
 /**
- * Re-check and repaint the header pill.
+ * Re-check and repaint the footer status line.
  * @param {{force?: boolean}} [options]
  * @returns {Promise<object|null>}
  */
@@ -192,7 +193,7 @@ function announce(info) {
     state.updateNotifiedFor = key;
     notify('info', info.status === 'pending'
         ? trf('omtp_update_pending_notify', 'main has commits since the last release (${0}); pull to update.', remoteLabel(info))
-        : trf('omtp_update_notify', 'OMTP update available: ${0}. Click the header indicator to view it.', remoteLabel(info)));
+        : trf('omtp_update_notify', 'OMTP update available: ${0}. Click the update indicator in the footer to view it.', remoteLabel(info)));
 }
 
 /**

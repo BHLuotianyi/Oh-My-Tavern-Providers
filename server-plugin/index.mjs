@@ -14,7 +14,7 @@ import {
 import { KeyStore, KeyStoreUnreadableError } from './lib/key-store.mjs';
 import { CatalogService } from './lib/catalog-service.mjs';
 import { GatewayServer, asyncHandler, buildGatewayContext, credentialStorageId, resolveProviderCredentials } from './lib/gateway-server.mjs';
-import { buildModelsProbe, buildProviderContext, isSupportedAdapter, SUPPORTED_ADAPTERS } from './lib/provider-config.mjs';
+import { buildModelsProbe, buildProviderContext, isSupportedAdapter, SUPPORTED_ADAPTERS, userAgentSpoofEnabled } from './lib/provider-config.mjs';
 import { parseStructuredCredential } from './lib/oauth.mjs';
 import { importFromOmp } from './lib/import-omp.mjs';
 import { installProxyFetch } from './lib/proxy-fetch.mjs';
@@ -301,7 +301,7 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
             || (provider?.authLogin?.kind === 'custom' && !customHookSupported(provider.authLogin.hook)),
         ),
         keyInvalidReason: authFailure?.message ?? null,
-        userAgentSpoof: resolved.userAgentSpoof !== false,
+        userAgentSpoof: userAgentSpoofEnabled(resolved),
         supportsUserAgentSpoof: Boolean(provider?.requestHeaders?.spoofUserAgent),
         unsupportedReason: synthetic.unsupportedReason || authFailure?.message || null,
     };
@@ -687,13 +687,12 @@ function registerStatsRoutes(router) {
                 if (!resolved?.apiKey) {
                     continue;
                 }
-                const policy = provider.requestHeaders;
-                const spoof = resolved.userAgentSpoof !== false && Boolean(policy?.spoofUserAgent);
+                const spoofUserAgent = provider.requestHeaders?.spoofUserAgent || '';
                 rows.push(await fetchProviderUsage(provider.id, resolved, {
                     refresh,
                     label: resolved.label,
                     installId: await ensureInstallId(current.root),
-                    userAgent: spoof ? policy.spoofUserAgent : '',
+                    userAgent: userAgentSpoofEnabled(resolved) ? spoofUserAgent : '',
                 }));
             }
         };

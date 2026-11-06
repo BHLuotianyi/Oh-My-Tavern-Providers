@@ -148,7 +148,7 @@
     "omtp_update_unknown": "更新检查失败",
     "omtp_update_unknown_hint": "无法访问 GitHub，点击重试",
     "omtp_update_unknown_short": "未知",
-    "omtp_update_notify": "OMTP 有新版本：${0}，点击顶栏指示灯查看。",
+    "omtp_update_notify": "OMTP 有新版本：${0}，点击底栏的状态指示查看。",
     "omtp_no_credentials": "未配置凭据 / 未登录",
     "omtp_settings_title": "OMTP 模型中心",
     "omtp_needs_api_key": "需要 API 密钥",
