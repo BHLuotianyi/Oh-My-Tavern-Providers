@@ -12,6 +12,7 @@ import {
     saveConfig,
 } from './lib/config.mjs';
 import { KeyStore, KeyStoreUnreadableError } from './lib/key-store.mjs';
+import { freshLiveModels, loadLiveModels, saveLiveModels, staleLiveModels } from './lib/live-models-store.mjs';
 import { CatalogService } from './lib/catalog-service.mjs';
 import { GatewayServer, asyncHandler, buildGatewayContext, credentialStorageId, resolveProviderCredentials } from './lib/gateway-server.mjs';
 import { buildModelsProbe, buildProviderContext, isSupportedAdapter, SUPPORTED_ADAPTERS, userAgentSpoofEnabled } from './lib/provider-config.mjs';
@@ -324,7 +325,46 @@ function extractModelIds(value) {
 
 /** Successful live model lists, keyed by provider id. */
 const liveModelsCache = new Map();
-const LIVE_MODELS_TTL = 300_000;
+
+/**
+ * Mirror the in-memory cache into `data/omtp/live-models.json`. Writes are
+ * chained so two probes finishing together cannot interleave and persist an
+ * older snapshot over a newer one.
+ */
+let liveModelsPersistQueue = Promise.resolve();
+
+function persistLiveModels() {
+    if (!state) return Promise.resolve();
+    const root = state.root;
+    liveModelsPersistQueue = liveModelsPersistQueue
+        .then(() => saveLiveModels(root, liveModelsCache))
+        .catch((error) => {
+            logError('failed to persist the live model cache', error);
+        });
+    return liveModelsPersistQueue;
+}
+
+/**
+ * Seed the in-memory cache from disk so previously discovered model lists
+ * survive a restart. A missing or corrupt file only logs; the next probe
+ * repopulates the cache.
+ * @param {string} root
+ */
+async function hydrateLiveModels(root) {
+    try {
+        for (const [providerId, entry] of await loadLiveModels(root)) {
+            liveModelsCache.set(providerId, entry);
+        }
+    } catch (error) {
+        logError('failed to load the persisted live model cache', error);
+    }
+}
+
+/** Drop one provider's cached models, in memory and on disk. */
+async function forgetLiveModels(providerId) {
+    liveModelsCache.delete(String(providerId));
+    await persistLiveModels();
+}
 
 /**
  * Call a provider's live model listing: the adapter's `listModels` when it has
@@ -403,9 +443,11 @@ function describeModels(rawModels) {
  * @returns {Promise<any>} response payload
  */
 async function probeProviderModels(current, providerId, { refresh = false } = {}) {
-    const cached = liveModelsCache.get(providerId);
-    if (!refresh && cached && Date.now() - cached.at < LIVE_MODELS_TTL) {
-        return { ok: true, cached: true, models: cached.models, at: cached.at };
+    if (!refresh) {
+        const cached = freshLiveModels(liveModelsCache, providerId);
+        if (cached) {
+            return { ok: true, cached: true, models: cached.models, at: cached.at };
+        }
     }
 
     const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
@@ -428,12 +470,29 @@ async function probeProviderModels(current, providerId, { refresh = false } = {}
     const adapter = await getAdapter(resolved.adapter);
     const probe = await probeProvider(resolved, adapter, provider, { keyStore: current.keyStore });
     if (probe.error) {
+        // A cache older than the in-process TTL is still better than an empty
+        // list after a restart, so a failed background probe falls back to it.
+        // An explicit refresh (`?refresh=true`) always reports the error.
+        const seen = refresh ? null : staleLiveModels(liveModelsCache, providerId);
+        if (seen) {
+            return {
+                ok: true,
+                cached: true,
+                stale: true,
+                models: seen.models,
+                at: seen.at,
+                error: probe.error,
+            };
+        }
         return { ok: false, error: probe.error, models: [] };
     }
     clearAuthFailure(providerId);
     const models = probe.models || [];
-    liveModelsCache.set(providerId, { models, at: Date.now() });
-    return { ok: true, models, at: Date.now() };
+    const at = Date.now();
+    liveModelsCache.set(providerId, { models, at });
+    // Only successful probes touch the file; failures keep the last list.
+    await persistLiveModels();
+    return { ok: true, models, at };
 }
 
 /**
@@ -524,7 +583,7 @@ function registerProviderRoutes(router) {
         if (!key) throw new HttpError(400, 'key is required', 'invalid_key');
         await current.keyStore.setProviderConfig(providerId, { apiKey: key, ignoreStSecret: false });
         clearAuthFailure(providerId);
-        liveModelsCache.delete(providerId);
+        await forgetLiveModels(providerId);
         current.catalogService.invalidate();
         const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
         res.json({ ok: true, provider: status });
@@ -535,7 +594,7 @@ function registerProviderRoutes(router) {
         const providerId = String(req.params.id || '');
         await current.keyStore.clearProviderKey(providerId);
         clearAuthFailure(providerId);
-        liveModelsCache.delete(providerId);
+        await forgetLiveModels(providerId);
         current.catalogService.invalidate();
         const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
         res.json({ ok: true, provider: status });
@@ -728,7 +787,7 @@ function registerLoginRoutes(router) {
         }
         if (session.status === 'done') {
             clearAuthFailure(session.providerId);
-            liveModelsCache.delete(session.providerId);
+            await forgetLiveModels(session.providerId);
         }
         res.json({ ok: true, ...describeSession(session) });
     }));
@@ -743,7 +802,7 @@ function registerLoginRoutes(router) {
         const session = await submitCode(req.params.session, code);
         if (session.status === 'done') {
             clearAuthFailure(session.providerId);
-            liveModelsCache.delete(session.providerId);
+            await forgetLiveModels(session.providerId);
         }
         res.json({ ok: session.status === 'done', ...describeSession(session) });
     }));
@@ -762,7 +821,7 @@ function registerLoginRoutes(router) {
         const providerId = String(req.params.id || '');
         await current.keyStore.clearProviderKey(providerId);
         clearAuthFailure(providerId);
-        liveModelsCache.delete(providerId);
+        await forgetLiveModels(providerId);
         current.catalogService.invalidate();
         const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
         res.json({ ok: true, provider: status });
@@ -841,7 +900,7 @@ function registerImportRoutes(router) {
         // the previous key must not survive and label the new one "rejected".
         for (const id of result.credentialProviders || []) {
             clearAuthFailure(id);
-            liveModelsCache.delete(id);
+            await forgetLiveModels(id);
         }
         res.json(result);
     }));
@@ -901,6 +960,7 @@ function registerRoutes(router) {
 async function createState() {
     const root = getOmtpRoot();
     await ensureOmtpRoot(root);
+    await hydrateLiveModels(root);
     // Behind a system proxy Node's fetch fails as a bare "fetch failed";
     // routing through the environment's proxy (with a direct fallback) is the
     // only way login, probes and the gateway can reach the internet there.

@@ -104,3 +104,22 @@ npm run mock
    - **Models JSON**：`echo`
    - **API key**：任意非空字符（如 `x`）
 3. 回到 **全部 (All)** 标签页选中 `mock/echo` 发送消息，即可验证网关转发、流式计费与 Extra Body 注入。完整端到端手工检查清单见 [`tests/e2e/README.md`](../tests/e2e/README.md)。
+
+## 5. 实时模型列表的本地缓存
+
+点击服务商旁的 `🔄`（或打开服务商时后台探测）会请求 `GET /api/plugins/omtp/providers/:id/models`。探测成功后，服务端插件把结果写入数据目录 `data/omtp/live-models.json`（`0600`），文件不包含任何密钥：
+
+```json
+{
+  "version": 1,
+  "providers": {
+    "<providerId>": { "at": 1793942451762, "models": [{ "id": "gpt-x", "name": "GPT X" }] }
+  }
+}
+```
+
+- **写入时机**：仅当探测成功且返回非空列表时写入；失败的刷新不会清空磁盘上的上次结果。更换/删除密钥、退出登录或导入 OMP 凭据时，会移除对应服务商的缓存条目。
+- **启动加载**：`createState()` 通过 `server-plugin/lib/live-models-store.mjs` 的 `loadLiveModels(root)` 把磁盘条目注入内存缓存，因此重启酒馆后无需重新请求上游即可继续使用上次结果。
+- **新鲜度**：内存中 5 分钟内（`LIVE_MODELS_TTL`）的结果直接命中、不再请求；超过 5 分钟时后台请求会重新探测，若探测失败则回退到 7 天内（`LIVE_MODELS_MAX_AGE_MS`）的磁盘结果并返回 `stale: true`；显式 `?refresh=true` 永远返回真实探测结果或错误。
+- **容量与容错**：最多保留 128 家服务商（`LIVE_MODELS_MAX_PROVIDERS`，按最近探测时间裁剪），过期条目在读写时丢弃；文件缺失、损坏或版本不符时按空缓存启动。
+- **隐私**：只缓存模型 id 与元数据，不缓存密钥。逻辑位于 `server-plugin/lib/live-models-store.mjs`，由 `tests/unit/live-models-store.test.mjs` 覆盖。

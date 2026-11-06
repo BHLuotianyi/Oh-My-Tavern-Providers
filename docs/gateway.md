@@ -39,7 +39,7 @@
 | | `POST /providers/:id/key` · `DELETE /providers/:id/key` | 加密保存或清除单个服务商 API Key |
 | | `POST /providers/:id/config` · `DELETE /providers/:id/config` | 新增/更新或删除自定义服务商配置（`label/adapter/baseUrl/headers/extraConfig/models`） |
 | | `POST /providers/:id/test` | 使用真实适配器向上游发起探针测试连通性 |
-| | `GET /providers/:id/models` | 调用上游 `/models` 实时探测可用模型列表（支持 `?refresh=true`） |
+| | `GET /providers/:id/models` | 调用上游 `/models` 实时探测可用模型列表（支持 `?refresh=true`）。成功结果写入 `data/omtp/live-models.json`；非强制请求在上游失败时回退到已缓存的列表并标记 `stale: true` |
 | **OAuth 与登录** | `POST /providers/:id/login` | 启动 `oauth-code`、`device-code` 或 `custom` 登录会话 |
 | | `GET /providers/:id/login/:session` | 轮询登录会话状态（`pending` / `done` / `error`） |
 | | `POST /providers/:id/login/:session/code` | 手动粘贴回调 URL 或授权码完成 `oauth-code` 登录 |
@@ -130,6 +130,7 @@
 | `usage-stats.json` | JSON | 按对话、模型、日期持久化的 Token 与预估费用账本 |
 | `catalog.json` | JSON（可选） | 在线刷新拉取的目录缓存层 |
 | `imported-catalog.json` | JSON（可选） | 从本地 `oh-my-pi` 导入生成的增量目录覆盖层 |
+| `live-models.json` | `0600` JSON（可选） | 最近 7 天成功探测到的各服务商实时模型列表（不含密钥），启动时载入内存缓存 |
 
 **三级密钥解析优先级**（由高到低）：
 1. **OMTP 加密密钥库**（`data/omtp/providers.json`）

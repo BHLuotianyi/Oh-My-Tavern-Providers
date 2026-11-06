@@ -94,7 +94,7 @@ flowchart LR
 - **🔑 Unified Sign-in Center (Mirrors `omp /login`)**
   - **OAuth PKCE & Device-Code Flows**: Sign in to Claude Pro/Max, Google Antigravity, Gemini CLI, OpenAI Codex, and Kilo directly from the **Sign-in** tab. OMTP opens the authorize page in a new tab, listens on the loopback callback port, and provides a paste box when running on a remote server.
   - **Clear Credential States**: Stored keys render as masked dots and distinguish between `Signed in`, `Not signed in`, and `🔴 Key rejected · ****last4`.
-  - **Live Model Probing**: Click `🔄` on any provider (including local Ollama / LM Studio / vLLM) to query its live `/models` endpoint and tag discovered models with a `live` badge.
+  - **Live Model Probing**: Click `🔄` on any provider (including local Ollama / LM Studio / vLLM) to query its live `/models` endpoint and tag discovered models with a `live` badge. **Successful lists are persisted to the server data directory (`data/omtp/live-models.json`, kept for 7 days)**, so a SillyTavern restart or a temporarily unreachable provider still shows the last probe result.
 
 - **📊 16 Subscription Quota Monitors + Per-Chat Token & Cost Ledger**
   - **Usage Tab (`/usage`)**: Reads real-time 5-hour / weekly quota windows, reset countdowns, and prepaid balances from Claude Pro/Max, ChatGPT Codex, Antigravity/Gemini CLI, Z.AI/Zhipu, Kimi Code, MiniMax Token Plan, xAI SuperGrok, DeepSeek, and 8 more providers.

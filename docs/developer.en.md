@@ -104,3 +104,22 @@ npm run mock
    - **Models JSON**: `echo`
    - **API key**: any non-empty string (e.g. `x`)
 3. Select `mock/echo` in the **All** tab and send a message. For the full manual checklist, see [`tests/e2e/README.md`](../tests/e2e/README.md).
+
+## 5. Live Model List Cache
+
+Clicking `🔄` next to a provider (or opening one, which probes in the background) calls `GET /api/plugins/omtp/providers/:id/models`. On success the server plugin persists the result to `data/omtp/live-models.json` (`0600`); the file contains no credentials:
+
+```json
+{
+  "version": 1,
+  "providers": {
+    "<providerId>": { "at": 1793942451762, "models": [{ "id": "gpt-x", "name": "GPT X" }] }
+  }
+}
+```
+
+- **When written**: only after a successful, non-empty probe. A failed refresh never clears the previous list on disk. Changing or deleting a key, logging out, or importing OMP credentials removes that provider's entry.
+- **Startup**: `createState()` seeds the in-memory cache via `loadLiveModels(root)` from `server-plugin/lib/live-models-store.mjs`, so a SillyTavern restart reuses the last result without an upstream request.
+- **Freshness**: in-memory results younger than 5 minutes (`LIVE_MODELS_TTL`) answer without probing. Older entries are re-probed; if that probe fails, the list stored within the 7-day `LIVE_MODELS_MAX_AGE_MS` window is returned with `stale: true`. An explicit `?refresh=true` always reports the real probe result or error.
+- **Capacity & resilience**: at most 128 providers (`LIVE_MODELS_MAX_PROVIDERS`, least recently probed are trimmed), expired entries are dropped on read and write, and a missing, corrupt, or foreign-version file starts as an empty cache.
+- **Privacy**: only model ids and metadata are stored, never credentials. The logic lives in `server-plugin/lib/live-models-store.mjs` and is covered by `tests/unit/live-models-store.test.mjs`.
