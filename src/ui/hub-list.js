@@ -157,11 +157,12 @@ function appendEmptyState(container, text) {
     container.append(el('div', 'omtp-empty-state', text));
 }
 
-/** Show the model filters and footer except on the static About page. */
+/** Show the model filters and footer counts except on the static About page. */
 function syncTabChrome() {
     const hidden = state.currentTab === 'about';
     document.querySelector('#omtp-tabs .omtp-tab-filters')?.classList.toggle('omtp-hidden', hidden);
-    document.getElementById('omtp-hub-footer')?.classList.toggle('omtp-hidden', hidden);
+    // The footer itself stays: its left side carries the version/update status.
+    document.querySelector('#omtp-hub-footer .omtp-footer-counts')?.classList.toggle('omtp-hidden', hidden);
 }
 
 /**

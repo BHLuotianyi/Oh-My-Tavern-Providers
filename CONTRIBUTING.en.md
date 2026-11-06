@@ -104,7 +104,7 @@ Oh-My-Tavern-Providers/
 │       ├── hub-quick.js          # Top 1–9 quick slot bar, row flash, footer counters
 │       ├── hub-actions.js        # Use model, chat/character binding toggles, provider settings jump
 │       ├── hub-modal.js          # Modal DOM builder, gateway/update pills, keyboard navigation & focus trap
-│       ├── update-pill.js        # Header update indicator (GitHub releases/commits)
+│       ├── update-pill.js        # Bottom-left version/update status (GitHub releases/commits)
 │       ├── login-panel.js        # Sign-in tab (OAuth PKCE / device code / custom hooks / API key entry)
 │       ├── usage-panel.js        # Quota bars and per-chat / all-time token statistics table
 │       ├── usage-chip.js         # Top-bar token & estimated cost badge

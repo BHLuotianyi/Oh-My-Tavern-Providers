@@ -100,8 +100,7 @@ body.omtp-hide-native-api-selector #rm_api_block {
     padding: 4px 10px;
 }
 
-.omtp-gateway-pill,
-.omtp-update-pill {
+.omtp-gateway-pill {
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
@@ -118,23 +117,9 @@ body.omtp-hide-native-api-selector #rm_api_block {
     user-select: none;
     transition: all 0.2s ease;
 }
-.omtp-gateway-pill:hover,
-.omtp-update-pill:hover {
+.omtp-gateway-pill:hover {
     border-color: var(--SmartThemeQuoteColor, #7aa2f7);
     background: rgba(255, 255, 255, 0.1);
-}
-.omtp-update-pill .omtp-status-label {
-    max-width: 22ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-/* Dots only once the header gets tight: tooltips still explain each state. */
-@media (max-width: 760px) {
-    .omtp-gateway-pill .omtp-status-label,
-    .omtp-update-pill .omtp-status-label {
-        display: none;
-    }
 }
 .omtp-status-dot {
     width: 9px;
@@ -797,6 +782,55 @@ body.omtp-hide-native-api-selector #rm_api_block {
 #omtp-hub-footer .omtp-footer-counts {
     margin-left: auto;
     opacity: 0.65;
+}
+
+/* Bottom-left status: running version + update verdict, quiet until hover. */
+.omtp-update-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 60%;
+    padding: 2px 6px;
+    margin-left: -6px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    opacity: 0.75;
+    transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+.omtp-update-status:hover,
+.omtp-update-status:focus-visible {
+    opacity: 1;
+    border-color: var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    outline: none;
+}
+.omtp-update-status .omtp-status-dot {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+}
+.omtp-update-status .omtp-update-version {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.9;
+}
+.omtp-update-status .omtp-update-sep {
+    opacity: 0.35;
+}
+.omtp-update-status .omtp-status-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.omtp-update-status[data-status="update"] .omtp-status-label {
+    color: #f5b23f;
+}
+.omtp-update-status[data-status="pending"] .omtp-status-label {
+    color: #7dc9f2;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1553,7 +1587,7 @@ body.omtp-hide-native-api-selector #rm_api_block {
 }
 
 #omtp-tabs .omtp-tab-filters.omtp-hidden,
-#omtp-hub-footer.omtp-hidden {
+#omtp-hub-footer .omtp-footer-counts.omtp-hidden {
     display: none;
 }
 

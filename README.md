@@ -226,7 +226,7 @@ git pull
 - **推理强度按模型独立记忆**：在详情页或用 `/effort` 为 `Claude Opus 5.5`、`DeepSeek V4.1 Flash`、`Gemini 4 Argon` 等模型设定的推理档位会按模型独立保存，切回时自动恢复并同步写入 `openai_reasoning_effort`。
 - **自定义附加请求体（Extra Body JSON）**：点击详情页「编辑附加请求体」，可为单个模型注入自定义 JSON 参数（如特定采样参数或上游扩展字段），生成时自动深度合并，同时严密保护 `model`、`messages`、`stream` 等核心路由字段不被误覆盖。
 - **配置档案（Connection Profile）管理**：在「配置档案」分组里可直接从当前连接新建档案、复制、改名、逐项编辑（API、服务器地址、模型、预设、密钥、模板…）、一键应用或停止使用；勾选即可决定某项设置是否写入档案，所有改动实时同步回酒馆原生下拉框。
-- **更新指示灯**：面板顶栏与「网关在线」并列的指示灯会比对 GitHub 上的 release、`manifest.json` 的 `versionCode` 与 `main` 的提交历史：有新版本变黄、`main` 有未发布提交变蓝，点击直达 release 页或对比视图（结果缓存 10 分钟，遵循 GitHub 匿名 API 限额）。
+- **更新指示灯**：面板左下角（与模型统计同栏）显示当前版本与更新状态，会比对 GitHub 上的 release、`manifest.json` 的 `versionCode` 与 `main` 的提交历史：有新版本变黄、`main` 有未发布提交变蓝，点击直达 release 页或对比视图（结果缓存 10 分钟，遵循 GitHub 匿名 API 限额）。
 - **主流过滤与中文译名开关**：面板右上角支持一键切换「仅显示主流供应商（52 家）」、「仅看有评分模型」以及「显示供应商官方中文名（如深度求索、月之暗面、智谱、硅基流动）」。
 - **与本地 OMP 无缝联动**：如果你本机安装了 `oh-my-pi`，可在「扩展设置 → OMTP Model Hub → 导入本地 OMP」中一键导入本地模型覆盖层，并可选将 `~/.omp/agent/agent.db` 中的 API Key 与 OAuth 会话（含 Antigravity、Gemini CLI、Anthropic）直接导入 OMTP 加密密钥库。
 

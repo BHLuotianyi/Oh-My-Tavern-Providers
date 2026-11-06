@@ -17,7 +17,7 @@ import {
     isNightly,
 } from '../update-check.js';
 import { tr, trf } from './dom.js';
-import { notify } from './helpers.js';
+import { el, notify } from './helpers.js';
 import { state } from './hub-state.js';
 import { persist, settings } from './hub-utils.js';
 
@@ -65,6 +65,32 @@ export async function checkForUpdates({ force = false } = {}) {
     return state.updateInFlight;
 }
 
+/** `2.0.0+nightly.20261103` -> `v2.0.0+nightly.20261103`. */
+function versionLabel(version) {
+    const text = String(version ?? '').trim().replace(/^v/i, '');
+    return text ? `v${text}` : 'v—';
+}
+
+/**
+ * Build the bottom-left status line: current version plus the update verdict.
+ * The hub creates it once and `refreshUpdatePill` only repaints its parts.
+ */
+export function createUpdateStatus() {
+    const status = el('button', 'omtp-update-status');
+    status.id = 'omtp-update-status';
+    status.type = 'button';
+    status.title = tr('omtp_update_status', 'Update status');
+    const dot = el('span', 'omtp-status-dot');
+    dot.id = 'omtp-update-dot';
+    const version = el('span', 'omtp-update-version', versionLabel(EXTENSION_VERSION));
+    version.id = 'omtp-update-version';
+    const label = el('span', 'omtp-status-label', tr('omtp_update_checking', 'Checking for updates…'));
+    label.id = 'omtp-update-label';
+    status.append(dot, version, el('span', 'omtp-update-sep', '·'), label);
+    status.addEventListener('click', onUpdatePillClick);
+    return status;
+}
+
 /** Short label for the remote side of a verdict. */
 function remoteLabel(info) {
     if (info?.remoteVersion) return info.remoteVersion;
@@ -76,12 +102,12 @@ function remoteLabel(info) {
 function paint(status, label, title, dotClass) {
     const dot = document.getElementById('omtp-update-dot');
     const text = document.getElementById('omtp-update-label');
-    const pill = document.getElementById('omtp-update-pill');
-    if (!dot || !text || !pill) return;
+    const host = document.getElementById('omtp-update-status');
+    if (!dot || !text || !host) return;
     dot.className = `omtp-status-dot ${dotClass}`;
     text.textContent = label;
-    pill.title = title || tr('omtp_update_status', 'Update status');
-    pill.dataset.status = status;
+    host.title = title || tr('omtp_update_status', 'Update status');
+    host.dataset.status = status;
 }
 
 /** Where a click should land for the current verdict. */
@@ -100,7 +126,7 @@ function targetUrl(info) {
  * @returns {Promise<object|null>}
  */
 export async function refreshUpdatePill({ force = false } = {}) {
-    if (!document.getElementById('omtp-update-pill')) return null;
+    if (!document.getElementById('omtp-update-status')) return null;
     paint('checking', tr('omtp_update_checking', 'Checking for updates…'), tr('omtp_update_status', 'Update status'), '');
 
     let info;
@@ -170,7 +196,7 @@ function announce(info) {
 }
 
 /**
- * Pill click: open GitHub for an actionable verdict, otherwise retry.
+ * Status-line click: open GitHub for an actionable verdict, otherwise retry.
  */
 export async function onUpdatePillClick() {
     const info = state.updateInfo;

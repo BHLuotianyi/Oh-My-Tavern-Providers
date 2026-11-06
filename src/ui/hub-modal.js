@@ -25,7 +25,7 @@ import { renderDetails, toggleFavorite } from './hub-details.js';
 import { assignQuickSlotFromSelection, renderAll, renderFooter, syncTabs, useQuickSlot } from './hub-quick.js';
 import { renderProviderList } from './hub-sidebar.js';
 import { useEntry } from './hub-actions.js';
-import { onUpdatePillClick, refreshUpdatePill } from './update-pill.js';
+import { createUpdateStatus, refreshUpdatePill } from './update-pill.js';
 
 /**
  * Poll the gateway status endpoint and paint the header pill.
@@ -119,20 +119,7 @@ function buildModalHeader() {
     pill.append(dot, label);
     pill.addEventListener('click', onGatewayPillClick);
 
-    // Same shape as the gateway pill: dot + label, click to act.
-    const updatePill = el('button', 'omtp-update-pill');
-    updatePill.id = 'omtp-update-pill';
-    updatePill.type = 'button';
-    updatePill.title = tr('omtp_update_status', 'Update status');
-    updatePill.setAttribute('aria-label', updatePill.title);
-    const updateDot = el('span', 'omtp-status-dot');
-    updateDot.id = 'omtp-update-dot';
-    const updateLabel = el('span', 'omtp-status-label', tr('omtp_update_checking', 'Checking for updates…'));
-    updateLabel.id = 'omtp-update-label';
-    updatePill.append(updateDot, updateLabel);
-    updatePill.addEventListener('click', onUpdatePillClick);
-
-    header.append(title, pill, updatePill, search, close);
+    header.append(title, pill, search, close);
     return { header, search, close };
 }
 
@@ -311,6 +298,8 @@ function ensureModal() {
     const body = buildBody();
     const footer = el('footer');
     footer.id = 'omtp-hub-footer';
+    // Bottom-left: running version + update verdict, beside the model counts.
+    footer.append(createUpdateStatus());
 
     hub.append(header, quickBar, quickHint, tabs, body, footer);
     overlay.append(hub);

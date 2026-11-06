@@ -104,7 +104,7 @@ Oh-My-Tavern-Providers/
 │       ├── hub-quick.js          # 顶部 1–9 快速槽位栏、顶栏高亮与脚部统计
 │       ├── hub-actions.js        # 使用模型、对话/角色绑定切换、跳转服务商设置、复制选择器
 │       ├── hub-modal.js          # 模态框 DOM 构建、网关/更新指示灯、键盘导航与焦点陷阱
-│       ├── update-pill.js        # 顶栏更新指示灯（对比 GitHub release / 提交并提示）
+│       ├── update-pill.js        # 面板左下角版本/更新状态（对比 GitHub release / 提交并提示）
 │       ├── login-panel.js        # 登录中心（OAuth PKCE / 设备码 / 自定义钩子 / API Key 掩码录入）
 │       ├── usage-panel.js        # 服务商实时额度进度条与会话/累计 Token 统计表
 │       ├── usage-chip.js         # 聊天顶栏实时 Token 与预估费用徽章

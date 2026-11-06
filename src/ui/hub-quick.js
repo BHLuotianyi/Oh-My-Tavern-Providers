@@ -273,7 +273,6 @@ export function renderFooter() {
     if (!footer) {
         return;
     }
-    footer.replaceChildren();
 
     // Count every listed provider, not just the ones that own catalog entries:
     // local runtimes and OAuth plans appear before their first live probe.
@@ -287,7 +286,12 @@ export function renderFooter() {
     const modelText = unlocked.length === 1
         ? tr('omtp_footer_model_one', '1 usable model')
         : trf('omtp_footer_model_other', '${0} usable models', unlocked.length);
-    footer.append(el('span', 'omtp-footer-counts', `${providerText} · ${modelText}`));
+    let counts = footer.querySelector('.omtp-footer-counts');
+    if (!counts) {
+        counts = el('span', 'omtp-footer-counts');
+        footer.append(counts);
+    }
+    counts.textContent = `${providerText} · ${modelText}`;
 }
 
 /**
