@@ -107,9 +107,16 @@ export function readCurrent(root = DEFAULT_ROOT) {
     };
 }
 
+/**
+ * Replace the single version field. Re-running with the same value is a no-op,
+ * not an error: nightly re-builds of one day share a display string and only
+ * `versionCode` moves.
+ */
 function replaceOnce(source, pattern, replacement, file) {
     const next = source.replace(pattern, replacement);
-    if (next === source) throw new Error(`${file}: version field not found (${pattern})`);
+    if (next === source && !pattern.test(source)) {
+        throw new Error(`${file}: version field not found (${pattern})`);
+    }
     return next;
 }
 
@@ -127,15 +134,17 @@ export function applyVersion(root, { display, versionCode }) {
 
     for (const target of TARGETS) {
         const file = path.join(root, target.file);
-        let source = fs.readFileSync(file, 'utf8');
+        const source = fs.readFileSync(file, 'utf8');
+        let next = source;
         if (target.constants) {
-            source = replaceOnce(source, /(export const EXTENSION_VERSION = ')[^']*(';)/, `$1${display}$2`, target.file);
-            source = replaceOnce(source, /(export const EXTENSION_VERSION_CODE = )\d+(;)/, `$1${code}$2`, target.file);
+            next = replaceOnce(next, /(export const EXTENSION_VERSION = ')[^']*(';)/, `$1${display}$2`, target.file);
+            next = replaceOnce(next, /(export const EXTENSION_VERSION_CODE = )\d+(;)/, `$1${code}$2`, target.file);
         } else {
-            source = writeJsonField(source, 'version', JSON.stringify(display), target.file);
-            source = writeJsonField(source, 'versionCode', String(code), target.file);
+            next = writeJsonField(next, 'version', JSON.stringify(display), target.file);
+            next = writeJsonField(next, 'versionCode', String(code), target.file);
         }
-        fs.writeFileSync(file, source);
+        // Leave untouched files untouched: no mtime churn, no noisy diffs.
+        if (next !== source) fs.writeFileSync(file, next);
         written.push(target.file);
     }
 

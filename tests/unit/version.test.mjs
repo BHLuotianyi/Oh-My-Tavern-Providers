@@ -27,3 +27,37 @@ test('release identity is consistent across manifest, packages and constants', (
     // line, and only the nightly channel appends build metadata.
     assert.doesNotMatch(EXTENSION_VERSION, /\+git\./);
 });
+
+test('an unchanged display version rewrites only the bumped fields', async () => {
+    const os = await import('node:os');
+    const { applyVersion, bumpVersion } = await import('../../tools/version.mjs');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'omtp-version-'));
+    fs.mkdirSync(path.join(root, 'src'));
+    fs.mkdirSync(path.join(root, 'server-plugin'));
+    const identity = { version: '2.0.0', versionCode: 10 };
+    for (const file of ['manifest.json', 'package.json', 'server-plugin/package.json']) {
+        fs.writeFileSync(path.join(root, file), `${JSON.stringify(identity, null, 2)}\n`);
+    }
+    fs.writeFileSync(path.join(root, 'src/constants.js'), [
+        "export const EXTENSION_VERSION = '2.0.0';",
+        'export const EXTENSION_VERSION_CODE = 10;',
+        '',
+    ].join('\n'));
+
+    // Same display string, higher code: this used to throw "version field not
+    // found" because the no-op replacement looked like a missing pattern.
+    const first = bumpVersion({ root, channel: 'manual', version: '2.0.0' });
+    assert.deepEqual(first.files, ['manifest.json', 'package.json', 'server-plugin/package.json', 'src/constants.js']);
+    assert.equal(first.versionCode, 11);
+    for (const file of ['manifest.json', 'package.json', 'server-plugin/package.json']) {
+        const parsed = JSON.parse(fs.readFileSync(path.join(root, file), 'utf8'));
+        assert.equal(parsed.version, '2.0.0');
+        assert.equal(parsed.versionCode, 11);
+    }
+    assert.match(fs.readFileSync(path.join(root, 'src/constants.js'), 'utf8'), /EXTENSION_VERSION_CODE = 11/);
+
+    // A byte-identical write is skipped entirely.
+    const before = fs.readFileSync(path.join(root, 'server-plugin/package.json'), 'utf8');
+    applyVersion(root, { display: '2.0.0', versionCode: 11 });
+    assert.equal(fs.readFileSync(path.join(root, 'server-plugin/package.json'), 'utf8'), before);
+});
