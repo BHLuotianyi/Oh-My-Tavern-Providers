@@ -329,6 +329,11 @@ export async function chat(req, ctx) {
   const body = buildConverse(req, ctx);
   if (!body.messages?.length) return invalidMessages();
 
+  // Known limitation: this uses the non-streaming `/converse` endpoint and
+  // synthesizes SSE from the complete result. The first byte arrives only
+  // after generation finishes and a client abort cannot cancel the upstream
+  // call. `/converse-stream` needs AWS event-stream framing plus chunked
+  // SigV4 signing, which this dependency-free adapter does not implement yet.
   const base = trimSlash(ctx.baseUrl || '').replace('{region}', region);
   const url =
     base && /amazonaws\.com/.test(base)

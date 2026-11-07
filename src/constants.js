@@ -180,6 +180,25 @@ export const DEFAULT_GATEWAY_SETTINGS = Object.freeze({
     requireAuth: true,
 });
 
+/**
+ * Header required by the server plugin's management-route guard. Requests
+ * from the OMTP UI carry it; a foreign web page cannot add a custom header
+ * without a CORS preflight that SillyTavern does not grant.
+ */
+export const OMTP_CLIENT_HEADER = 'x-omtp-client';
+export const OMTP_CLIENT_HEADER_VALUE = 'omtp-web';
+
+/**
+ * Add the OMTP client marker to a header object.
+ * @param {Record<string, any>|Headers} [headers]
+ * @returns {Record<string, any>}
+ */
+export function withClientHeader(headers = {}) {
+    const base = headers instanceof Headers ? Object.fromEntries(headers.entries()) : { ...(headers || {}) };
+    base[OMTP_CLIENT_HEADER] = OMTP_CLIENT_HEADER_VALUE;
+    return base;
+}
+
 /** Default gateway URL used when the server plugin status is unavailable. */
 export const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:4100/v1';
 

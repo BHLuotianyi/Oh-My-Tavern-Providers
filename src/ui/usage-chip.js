@@ -6,8 +6,10 @@
  * the gateway's counters (`/stats?since=`), so they cover streaming and
  * non-streaming replies alike.
  */
-import { getRequestHeaders } from '../../../../../../script.js';
-import { API_BASE } from '../constants.js';
+import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
+
+const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
+import { API_BASE, withClientHeader } from '../constants.js';
 import { currentChatId, ensureUsageSession } from '../usage-session.js';
 import { tr, trf } from './dom.js';
 import { formatTokens, formatUsd } from './helpers.js';
@@ -23,7 +25,10 @@ let timer = null;
  * @param {{force?: boolean}} [options]
  */
 export async function refreshUsageChip({ force = false, chatId } = {}) {
-    if (!chip) {
+    // Keep a local reference: disposeUsageChip() may null `chip` while the
+    // request is in flight, and writing to a torn-down node is a no-op error.
+    const target = chip;
+    if (!target) {
         return;
     }
     if (force) {
@@ -40,17 +45,18 @@ export async function refreshUsageChip({ force = false, chatId } = {}) {
             throw new Error(`HTTP ${response.status}`);
         }
         const data = await response.json();
+        if (chip !== target || target.isConnected === false) return;
         const totals = data?.totals || {};
         const requests = Number(totals.requests) || 0;
         if (!requests) {
-            chip.hidden = true;
-            chip.textContent = '';
+            target.hidden = true;
+            target.textContent = '';
             return;
         }
-        chip.hidden = false;
+        target.hidden = false;
         const tokens = (Number(totals.input) || 0) + (Number(totals.cachedInput) || 0) + (Number(totals.output) || 0);
-        chip.textContent = `${trf('omtp_chip_tokens', '${0} tok', formatTokens(tokens))} · ${formatUsd(totals.costUsd)}`;
-        chip.title = [
+        target.textContent = `${trf('omtp_chip_tokens', '${0} tok', formatTokens(tokens))} · ${formatUsd(totals.costUsd)}`;
+        target.title = [
             trf('omtp_chip_requests', '${0} requests this chat', requests),
             trf('omtp_chip_input', 'input ${0}', formatTokens(totals.input)),
             trf('omtp_chip_cached', 'cached ${0}', formatTokens(totals.cachedInput)),

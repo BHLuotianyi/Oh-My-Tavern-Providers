@@ -36,12 +36,38 @@ async function queryAuthCredentialsFallback(dbPath) {
 }
 
 /**
+ * Only look for OMP files in the known OMP locations. The management route
+ * accepts `catalogPath` from the client, so without this guard any directory
+ * on the machine containing `models.json` + `rules.json` could be read.
+ * Extra roots can be granted with `OMTP_OMP_CATALOG_ROOTS` (path.delimiter
+ * separated) for non-standard checkouts.
+ *
+ * @param {string} candidate
+ * @returns {string|null} the resolved path, or null when outside the roots
+ */
+function allowedCatalogPath(candidate) {
+    const extras = String(process.env.OMTP_OMP_CATALOG_ROOTS || '')
+        .split(path.delimiter)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    const roots = [
+        path.join(os.homedir(), 'oh-my-pi'),
+        path.join(os.homedir(), '.omp'),
+        ...extras,
+    ].map((entry) => path.resolve(String(entry).replace(/^~(?=$|\/)/, os.homedir())));
+    const resolved = path.resolve(String(candidate).replace(/^~(?=$|\/)/, os.homedir()));
+    const allowed = roots.some((root) => resolved === root || resolved.startsWith(root + path.sep));
+    return allowed ? resolved : null;
+}
+
+/**
  * @param {string} candidate
  * @returns {Promise<{modelsPath:string, rulesPath:string}|null>}
  */
 async function resolveCatalogPaths(candidate) {
     if (!candidate) return null;
-    const resolved = path.resolve(String(candidate).replace(/^~(?=$|\/)/, os.homedir()));
+    const resolved = allowedCatalogPath(candidate);
+    if (!resolved) return null;
     /** @type {Array<{modelsPath:string, rulesPath:string}>} */
     const options = [];
     if (path.basename(resolved) === 'models.json') {

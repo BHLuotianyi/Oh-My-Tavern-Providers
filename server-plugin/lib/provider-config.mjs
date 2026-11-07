@@ -5,6 +5,7 @@
  * `{ id, label, adapter, baseUrl, apiKey, headers, extraConfig, keySource,
  *    available, custom, models }`.
  */
+import { validateBaseUrl } from './catalog-safety.mjs';
 
 const ADAPTER_BY_API = new Map([
     ['openai-completions', 'openai'],
@@ -184,7 +185,15 @@ export function buildProviderConfig(catalogProvider, options = {}) {
     } else if (adapter === 'bedrock') {
         extraConfig.region = extraConfig.region || 'us-east-1';
     }
-    const baseUrl = trimTrailingSlash(stored.baseUrl || defaultBaseUrlFor(adapter, catalogProvider, extraConfig));
+    const fallbackBaseUrl = defaultBaseUrlFor(adapter, catalogProvider, extraConfig);
+    let baseUrl;
+    try {
+        // Last line of defence: a stale or hand-edited stored endpoint must
+        // never be used to send decrypted credentials to an unsafe scheme.
+        baseUrl = validateBaseUrl(stored.baseUrl || fallbackBaseUrl);
+    } catch {
+        baseUrl = trimTrailingSlash(fallbackBaseUrl || '');
+    }
     const apiKey = typeof options.apiKey === 'string' ? options.apiKey : '';
     const keySource = options.keySource || (apiKey ? 'omtp' : 'none');
     const keyless = Boolean(options.keyless);

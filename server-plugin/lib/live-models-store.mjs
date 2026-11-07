@@ -35,6 +35,11 @@ function cacheEntry(cache, providerId) {
     return Number.isFinite(at) ? { models: entry.models, at } : null;
 }
 
+/** One boundary for serving and pruning: a list is usable only below `ttl`. */
+function isFresh(at, now, ttl = LIVE_MODELS_TTL) {
+    return now - at < ttl;
+}
+
 /**
  * Entry fresh enough to answer a non-forced request without probing.
  * @param {Map<string, any>} cache
@@ -43,7 +48,7 @@ function cacheEntry(cache, providerId) {
  */
 export function freshLiveModels(cache, providerId, { ttl = LIVE_MODELS_TTL, now = Date.now() } = {}) {
     const entry = cacheEntry(cache, providerId);
-    return entry && now - entry.at < ttl ? entry : null;
+    return entry && isFresh(entry.at, now, ttl) ? entry : null;
 }
 
 /** Normalize a stored model list; null when nothing usable remains. */
@@ -84,7 +89,7 @@ export async function loadLiveModels(root, now = Date.now()) {
         }
         const models = normalizeModels(entry.models);
         const at = Number(entry.at);
-        if (!models || !Number.isFinite(at) || now - at >= LIVE_MODELS_TTL) {
+        if (!models || !Number.isFinite(at) || !isFresh(at, now)) {
             continue;
         }
         cache.set(providerId, { models, at });
@@ -109,7 +114,7 @@ export async function saveLiveModels(root, cache, now = Date.now()) {
         const models = normalizeModels(entry?.models);
         const at = Number(entry?.at);
         if (typeof providerId !== 'string' || !providerId || !models
-            || !Number.isFinite(at) || now - at >= LIVE_MODELS_TTL) {
+            || !Number.isFinite(at) || !isFresh(at, now)) {
             dropped += 1;
             continue;
         }

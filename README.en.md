@@ -56,7 +56,7 @@ OMTP Model Hub
 ├── Dual-Track Routing: zero-proxy native writes when ST supports the model, local 127.0.0.1:4100 gateway otherwise
 ├── Roleplay Personality Radar: 8-axis AA-PersonalityBench radar + OMTP roleplay-weighted score
 ├── Sign-in Center: OAuth PKCE / device code / Claude Pro·Max / Codex / Antigravity / API keys
-└── Live Quotas & Accounting: 16 subscription quota bars, top-bar per-chat token/cost chip, /omtp stats dashboard
+└── Live Quotas & Accounting: 21 providers / 16 quota adapters, top-bar per-chat token/cost chip, /omtp stats dashboard
 ```
 
 ---
@@ -96,7 +96,7 @@ flowchart LR
   - **Clear Credential States**: Stored keys render as masked dots and distinguish between `Signed in`, `Not signed in`, and `🔴 Key rejected · ****last4`.
   - **Live Model Probing**: Click `🔄` on any provider (including local Ollama / LM Studio / vLLM) to query its live `/models` endpoint and tag discovered models with a `live` badge. **Successful lists are persisted to the server data directory (`data/omtp/live-models.json`)** so a restart within five minutes skips the probe; a failed probe reports an error instead of showing an expired list.
 
-- **📊 16 Subscription Quota Monitors + Per-Chat Token & Cost Ledger**
+- **📊 21 Subscription Quota Monitors (16 adapters) + Per-Chat Token & Cost Ledger**
   - **Usage Tab (`/usage`)**: Reads real-time 5-hour / weekly quota windows, reset countdowns, and prepaid balances from Claude Pro/Max, ChatGPT Codex, Antigravity/Gemini CLI, Z.AI/Zhipu, Kimi Code, MiniMax Token Plan, xAI SuperGrok, DeepSeek, and 8 more providers.
   - **Top-Bar Token Chip**: Shows the active chat's running token count and estimated cost (`12.4k tok · $0.018`), preserving cached-input and reasoning/thoughts token breakdowns across Anthropic, Gemini, Bedrock, and Responses APIs.
   - **Local Stats Dashboard (`/omtp stats`)**: Spawns a loopback dashboard server (default port `3847`) with KPI cards, a 60-day bar chart, per-model breakdown, and a per-chat session selector.
@@ -106,6 +106,9 @@ flowchart LR
 ## Getting Started
 
 Requirements: **SillyTavern >= 1.12.7** and **Node.js >= 18.0.0**.
+
+> [!NOTE]
+> SillyTavern 1.12.7–1.16.x has no manifest lifecycle hooks. OMTP still initializes there and polls for the "extension disabled" state to restore gateway settings, but **deleting the extension folder outright** leaves nothing loaded: disable it first (or use Extension Settings → Restore native connection).
 
 ### 🚌 Step-by-Step Zero-CLI Tutorial (GitHub ZIP Download)
 
@@ -157,6 +160,7 @@ git clone https://github.com/BHLuotianyi/Oh-My-Tavern-Providers omtp-model-hub
    ```bash
    cp -r SillyTavern/public/scripts/extensions/third-party/omtp-model-hub/server-plugin SillyTavern/plugins/omtp
    ```
+   > The bundled catalog is derived from OMP's `models.json` (MIT). If you redistribute `server-plugin` on its own, include the repository [`NOTICE`](./NOTICE) with the full MIT text and attribution.
 2. Set `enableServerPlugins: true` in `SillyTavern/config.yaml`.
 3. Restart SillyTavern.
 
@@ -231,7 +235,7 @@ git pull
 
 ## Privacy & Security
 
-- **Local AES-256-GCM KeyStore**: Provider API keys, OAuth tokens, and custom provider configs are encrypted with AES-256-GCM (`data/omtp/master.key`, mode `0600`) inside `data/omtp/providers.json`. Management endpoints only ever return the key source and last 4 characters.
+- **Local AES-256-GCM KeyStore**: Provider API keys, OAuth tokens, and custom provider configs are encrypted with AES-256-GCM (`data/omtp/master.key`, mode `0600`) inside `data/omtp/providers.json`. Management endpoints only return the key source, the last 4 characters, or a masked account email (for example `a***@example.com`). They also require the `x-omtp-client: omtp-web` header and enforce same-origin checks; a foreign web page cannot read the gateway token or rewrite credentials without a CORS preflight. Set `OMTP_STRICT_HOST=1` (plus optional `OMTP_ALLOWED_HOSTS`) to pin the Host header behind a reverse proxy. Refreshed/imported catalogs may only update model metadata — routing and OAuth endpoints always come from the bundled catalog — and a corrupt `master.key` is backed up and reported instead of being silently regenerated. Disabling gateway authentication now needs an explicit confirmation from the settings UI.
 - **OAuth Clients Shipped by Policy**: Installed-app `client_id` / `client_secret` pairs are public identifiers (RFC 8252 §8.1). So that Antigravity, Gemini CLI and similar subscriptions work out of the box, the catalog ships those **public client pairs**; every other provider's values are scrubbed to environment references at build time. You can always override them with `OMTP_<PROVIDER>_CLIENT_ID` / `OMTP_<PROVIDER>_CLIENT_SECRET` or `data/omtp/oauth-clients.json` (mode `0600`, git-ignored). Your own API keys and OAuth tokens only ever live in the encrypted KeyStore.
 - **Zero Telemetry, Loopback Only**: The gateway binds strictly to `127.0.0.1` and connects directly to upstream provider endpoints.
 
@@ -274,7 +278,7 @@ OMTP is dedicated to chat and roleplay text generation in SillyTavern; the catal
 
 | Guide | Contents |
 |---|---|
-| 🔌 [**Gateway & Server Plugin Reference (docs/gateway.en.md)**](./docs/gateway.en.md) | Listener ports & auth, all 24 plugin HTTP routes, 9 protocol adapters, 16 quota endpoints, `data/omtp/` files |
+| 🔌 [**Gateway & Server Plugin Reference (docs/gateway.en.md)**](./docs/gateway.en.md) | Listener ports & auth, all 24 plugin HTTP routes, 9 protocol adapters, 21 providers / 16 quota adapters, `data/omtp/` files |
 | 🛠️ [**Developer API & Build Guide (docs/developer.en.md)**](./docs/developer.en.md) | `globalThis.OMTP` methods & events, selector grammar, catalog & personality build scripts, local mock server |
 | 🧪 [**End-to-End Verification Checklist (tests/e2e/README.md)**](./tests/e2e/README.md) | Manual verification walkthrough for native routing, gateway streaming, bindings, and teardown rollback |
 | 🤝 [**Contributing & Architecture Guide (CONTRIBUTING.en.md)**](./CONTRIBUTING.en.md) | Repository layout, standalone layer contracts, quality guardrails, style & PR workflow |

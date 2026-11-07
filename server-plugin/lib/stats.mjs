@@ -11,6 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { logError } from './redact.mjs';
 
 const FLUSH_DELAY_MS = 1500;
@@ -99,6 +100,19 @@ export class UsageStats {
                     at: Number(entry.at) || 0,
                 });
             }
+            if (Array.isArray(raw?.events)) {
+                this.events = raw.events
+                    .filter((event) => event && Number.isFinite(Number(event.at)) && event.tokens)
+                    .slice(-MAX_EVENTS)
+                    .map((event) => ({
+                        at: Number(event.at),
+                        chatId: String(event.chatId || ''),
+                        provider: String(event.provider || ''),
+                        model: String(event.model || ''),
+                        costUsd: Number(event.costUsd) || 0,
+                        tokens: { ...emptyTotals(), ...event.tokens },
+                    }));
+            }
         } catch {
             // First run or unreadable file: start empty.
         }
@@ -118,10 +132,15 @@ export class UsageStats {
                 at: entry.at,
                 byModel: [...entry.byModel.values()],
             })),
+            // Without the event ring, "last 24h" silently resets to zero after
+            // every restart while still claiming to be complete.
+            events: this.events,
         };
         try {
             fs.mkdirSync(this.root, { recursive: true });
-            const tmp = `${this.file}.tmp`;
+            // Unique temp name: two processes sharing DATA_ROOT must not
+            // overwrite each other's half-written stats file.
+            const tmp = `${this.file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
             fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
             fs.renameSync(tmp, this.file);
         } catch (error) {
@@ -158,10 +177,10 @@ export class UsageStats {
         const cacheWrite = Number(usage?.cacheWrite) || 0;
         const output = Number(usage?.output) || 0;
         const reasoning = Number(usage?.reasoning) || 0;
-        if (!input && !cachedInput && !cacheWrite && !output) {
+        if (!input && !cachedInput && !cacheWrite && !output && !reasoning) {
             return null;
         }
-        const costUsd = estimateCost({ input, cachedInput, cacheWrite, output }, price);
+        const costUsd = estimateCost({ input, cachedInput, cacheWrite, output, reasoning }, price);
         const stamp = this.now();
         // The dashboard renders local times, so bucket by the server's local
         // date; `en-CA` yields YYYY-MM-DD and sorts chronologically.
@@ -349,19 +368,32 @@ export class UsageStats {
 
 /**
  * USD estimate from per-million prices.
- * @param {{input:number, cachedInput:number, cacheWrite:number, output:number}} tokens
- * @param {{input?:number, output?:number, cacheRead?:number, cacheWrite?:number}|null} price
+ *
+ * The catalog writes a numeric 0 when it has no cache price, so `??` alone
+ * would treat cache reads/writes as free. Zero means "unknown": fall back to
+ * the input rate. Reasoning tokens are billed at the output rate.
+ *
+ * @param {{input:number, cachedInput:number, cacheWrite:number, output:number, reasoning?:number}} tokens
+ * @param {{input?:number, output?:number, cacheRead?:number, cacheWrite?:number, reasoning?:number}|null} price
  * @returns {number}
  */
 export function estimateCost(tokens, price) {
     if (!price) return 0;
     const perMillion = (count, rate) => (Number(count) || 0) * (Number(rate) || 0) / 1_000_000;
-    const cacheReadRate = price.cacheRead ?? price.input ?? 0;
-    const cacheWriteRate = price.cacheWrite ?? price.input ?? 0;
-    return perMillion(tokens.input, price.input)
+    const rateOr = (value, fallback) => {
+        const rate = Number(value);
+        return Number.isFinite(rate) && rate > 0 ? rate : fallback;
+    };
+    const inputRate = rateOr(price.input, 0);
+    const outputRate = rateOr(price.output, 0);
+    const cacheReadRate = rateOr(price.cacheRead, inputRate);
+    const cacheWriteRate = rateOr(price.cacheWrite, inputRate);
+    const reasoningRate = rateOr(price.reasoning, outputRate);
+    return perMillion(tokens.input, inputRate)
         + perMillion(tokens.cachedInput, cacheReadRate)
         + perMillion(tokens.cacheWrite, cacheWriteRate)
-        + perMillion(tokens.output, price.output);
+        + perMillion(tokens.output, outputRate)
+        + perMillion(tokens.reasoning, reasoningRate);
 }
 
 /**

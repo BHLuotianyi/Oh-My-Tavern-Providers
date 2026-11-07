@@ -1,15 +1,18 @@
 name: Checks
 
-# Runs the full suite on every push to `main`. Build identities are written by
-# the nightly and release channels only, so this workflow never touches the
-# version files and never commits: `main` history stays human-authored.
+# Runs the full suite on every push to `main` and on pull requests. Build
+# identities are written by the nightly and release channels only, so this
+# workflow never touches the version files and never commits: `main` history
+# stays human-authored.
 on:
   push:
     branches: [main]
+  # Run the same gates before a PR can merge, not only after it lands on main.
+  pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: checks-main
+  group: checks-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -18,11 +21,15 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18', '20', '22']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
       - name: Unit tests
         run: npm test
       - name: Catalog validation

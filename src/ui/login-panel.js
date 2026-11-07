@@ -6,8 +6,25 @@
  * login engine; providers whose policy needs provider-specific code point at
  * the OMP import instead.
  */
-import { getRequestHeaders } from '../../../../../../script.js';
-import { API_BASE } from '../constants.js';
+import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
+
+const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
+
+/**
+ * Authorize URLs come from the server (and ultimately from a catalog policy).
+ * Never let a non-http(s) URL reach `location.href` or an anchor href.
+ * @param {unknown} value
+ * @returns {string}
+ */
+function safeAuthorizeUrl(value) {
+    try {
+        const url = new URL(String(value || ''));
+        return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+    } catch {
+        return '';
+    }
+}
+import { API_BASE, withClientHeader } from '../constants.js';
 import { apiKeyUrlFor } from '../provider-links.js';
 import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
 import { getSettings } from '../store.js';
@@ -385,9 +402,10 @@ async function startLogin(provider, row, actions) {
             method: 'POST',
             body: JSON.stringify({ locale: navigator.language || '' }),
         });
-        if (popup && started.url) {
+        const authorizeUrl = safeAuthorizeUrl(started.url);
+        if (popup && authorizeUrl) {
             try {
-                popup.location.href = started.url;
+                popup.location.href = authorizeUrl;
             } catch {
                 // The browser can still refuse; the link below stays visible.
             }
@@ -415,12 +433,13 @@ async function startLogin(provider, row, actions) {
 function renderLoginFlow(id, started, panel, popup, actions) {
     panel.replaceChildren();
     panel.append(el('div', 'omtp-login-instruction', started.instructions || tr('omtp_login_browser_hint', 'Complete the login in your browser.')));
-    if (started.url) {
+    const authorizeUrl = safeAuthorizeUrl(started.url);
+    if (authorizeUrl) {
         if (!popup) {
             panel.append(el('div', 'omtp-login-hint', tr('omtp_login_popup_blocked', 'The browser blocked the sign-in tab — open it below.')));
         }
-        const link = el('a', 'omtp-login-url', started.url);
-        link.href = started.url;
+        const link = el('a', 'omtp-login-url', authorizeUrl);
+        link.href = authorizeUrl;
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
         panel.append(link);

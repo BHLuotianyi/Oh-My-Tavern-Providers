@@ -25,7 +25,7 @@ When your changes affect user-facing behavior, routes, or APIs, update the corre
 |---|---|
 | [`README.md`](./README.md) / [`README.en.md`](./README.en.md) | User overview, highlights, 30-second install, 3-minute quick tour, key features, and FAQ |
 | [`CONTRIBUTING.md`](./CONTRIBUTING.md) / [`CONTRIBUTING.en.md`](./CONTRIBUTING.en.md) | Module boundaries, coding conventions, guardrails, and PR workflow |
-| [`docs/gateway.md`](./docs/gateway.md) / [`docs/gateway.en.md`](./docs/gateway.en.md) | Gateway listener & auth, all 24 plugin HTTP routes, 9 protocol adapters, 16 quota endpoints, `data/omtp/` specs |
+| [`docs/gateway.md`](./docs/gateway.md) / [`docs/gateway.en.md`](./docs/gateway.en.md) | Gateway listener & auth, all 24 plugin HTTP routes, 9 protocol adapters, 21 providers / 16 quota adapters, `data/omtp/` specs |
 | [`docs/developer.md`](./docs/developer.md) / [`docs/developer.en.md`](./docs/developer.en.md) | `globalThis.OMTP` surface, selector grammar, catalog & personality build scripts, local mock server |
 | [`tests/e2e/README.md`](./tests/e2e/README.md) | Manual end-to-end verification checklist inside a live SillyTavern instance |
 

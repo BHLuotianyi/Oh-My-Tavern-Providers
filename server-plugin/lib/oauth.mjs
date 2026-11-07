@@ -113,20 +113,39 @@ async function refreshCredential(providerId, credential, doFetch, root = '', log
  * @param {any} [login] compiled login policy, for the public client id fallback
  * @returns {Promise<{apiKey:string, credential:any|null}>}
  */
+/** @type {Map<string, Promise<{apiKey:string, credential:any, refreshError:any}>>} */
+const inFlightRefreshes = new Map();
+
 export async function resolveAccessToken(resolved, keyStore, doFetch = globalThis.fetch, root = '', login = null) {
     const credential = parseStructuredCredential(resolved?.apiKey);
-    if (!credential) return { apiKey: resolved?.apiKey || '', credential: null };
+    if (!credential) return { apiKey: resolved?.apiKey || '', credential: null, refreshError: null };
     const expires = Number(credential.expires || 0);
-    if (expires && expires > Date.now() + 60_000) return { apiKey: credential.access, credential };
-    if (!credential.refresh) return { apiKey: credential.access, credential };
-    try {
-        const next = await refreshCredential(resolved.id, credential, doFetch, root || keyStore?.root || '', login);
-        if (keyStore?.setProviderConfig && resolved.keySource === 'omtp') {
-            await keyStore.setProviderConfig(resolved.id, { apiKey: JSON.stringify(next) });
-        }
-        return { apiKey: next.access, credential: next };
-    } catch (error) {
-        logError(`oauth refresh failed for ${resolved.id}`, error);
-        return { apiKey: credential.access, credential };
+    if (expires && expires > Date.now() + 60_000) return { apiKey: credential.access, credential, refreshError: null };
+    if (!credential.refresh) return { apiKey: credential.access, credential, refreshError: null };
+
+    // Rotating refresh tokens are single-use. Without a per-provider lock,
+    // concurrent requests each refresh, and the last writer invalidates the
+    // access tokens handed to all the others.
+    const key = String(resolved.id || 'anonymous');
+    let pending = inFlightRefreshes.get(key);
+    if (!pending) {
+        pending = (async () => {
+            try {
+                const next = await refreshCredential(resolved.id, credential, doFetch, root || keyStore?.root || '', login);
+                if (keyStore?.setProviderConfig && resolved.keySource === 'omtp') {
+                    await keyStore.setProviderConfig(resolved.id, { apiKey: JSON.stringify(next) });
+                }
+                return { apiKey: next.access, credential: next, refreshError: null };
+            } catch (error) {
+                logError(`oauth refresh failed for ${resolved.id}`, error);
+                // Keep the old token for compatibility, but surface the failure
+                // instead of pretending the credential is healthy.
+                return { apiKey: credential.access, credential, refreshError: error };
+            } finally {
+                inFlightRefreshes.delete(key);
+            }
+        })();
+        inFlightRefreshes.set(key, pending);
     }
+    return pending;
 }

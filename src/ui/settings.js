@@ -6,7 +6,9 @@
  * the plugin is missing (or `enableServerPlugins` is false) native/translated
  * selection keeps working and the server-only controls are disabled.
  */
-import { getRequestHeaders } from '../../../../../../script.js';
+import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
+
+const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../../../../popup.js';
 import {
     API_BASE,
@@ -15,6 +17,7 @@ import {
     DEFAULT_SETTINGS,
     EXTENSION_VERSION,
     GATEWAY_ADAPTERS,
+    withClientHeader,
 } from '../constants.js';
 import { getCatalogInfo, loadCatalog } from '../catalog.js';
 import { getSettings, updateSettings } from '../store.js';
@@ -515,11 +518,16 @@ async function submitCustomProvider({ idInput, labelInput, adapterSelect, baseUr
         errorLine.textContent = models.error;
         return false;
     }
+    const baseUrl = safeHttpUrl(baseUrlInput.value);
+    if (!baseUrl) {
+        errorLine.textContent = tr('omtp_invalid_url', 'Enter a valid http(s) URL without a query string.');
+        return false;
+    }
     const config = {
         custom: true,
         label: labelInput.value.trim() || id,
         adapter: adapterSelect.value,
-        baseUrl: baseUrlInput.value.trim(),
+        baseUrl,
         models: models.value,
     };
     try {
@@ -716,12 +724,26 @@ async function restartGateway() {
 }
 
 async function saveGatewayConfig() {
+    const requireAuth = Boolean(byId('omtp-gateway-requireauth')?.checked);
+    if (!requireAuth) {
+        const confirmed = await confirmAction(
+            tr('omtp_gateway_insecure_title', 'Disable gateway authentication?'),
+            tr('omtp_gateway_insecure_body', 'Without a token, any process on this computer can use the local gateway and the API keys stored in OMTP. Only disable this on a machine you fully trust.'),
+        );
+        if (!confirmed) {
+            await refreshServerStatus();
+            return;
+        }
+    }
     try {
         await apiFetch('/config', {
             method: 'POST',
             body: {
                 autoStart: Boolean(byId('omtp-gateway-autostart')?.checked),
-                requireAuth: Boolean(byId('omtp-gateway-requireauth')?.checked),
+                requireAuth,
+                // The server requires an explicit confirmation before it turns
+                // the gateway into an unauthenticated endpoint.
+                ...(requireAuth ? {} : { confirmInsecure: true }),
             },
         });
         notify('success', tr('omtp_gateway_saved', 'Gateway settings saved'));
@@ -832,6 +854,27 @@ async function clearSettings() {
     await refreshSettingsUI();
 }
 
+/**
+ * Only plain http(s) URLs are usable as gateway / catalog / provider bases.
+ * Returns '' for an empty value and null for anything unsafe.
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function safeHttpUrl(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return '';
+    try {
+        const url = new URL(raw);
+        if ((url.protocol === 'http:' || url.protocol === 'https:')
+            && !url.username && !url.password && !url.search && !url.hash) {
+            return url.toString().replace(/\/+$/, '');
+        }
+    } catch {
+        // Not a URL at all.
+    }
+    return null;
+}
+
 function normalizeHotkey(value) {
     const raw = String(value ?? '').trim().toLowerCase().replace(/\s+/g, '');
     if (!raw) {
@@ -842,7 +885,9 @@ function normalizeHotkey(value) {
         return null;
     }
     const key = parts.pop();
-    if (!/^[a-z0-9]$/.test(key)) {
+    // Alt+1..9 belong to the quick slots; letting the hub hotkey claim a
+    // digit makes those slots permanently unreachable.
+    if (!/^[a-z0]$/.test(key)) {
         return null;
     }
     const modifiers = [];
@@ -920,9 +965,15 @@ function bindControls(root) {
 
     const gatewayUrl = element(root, 'omtp-gateway-url');
     gatewayUrl?.addEventListener('change', () => {
-        const value = gatewayUrl.value.trim() || DEFAULT_GATEWAY_URL;
-        gatewayUrl.value = value;
-        updateSettings({ gatewayUrl: value });
+        const value = safeHttpUrl(gatewayUrl.value);
+        if (value === null) {
+            notify('error', tr('omtp_invalid_url', 'Enter a valid http(s) URL without a query string.'));
+            gatewayUrl.value = getSettings().gatewayUrl || DEFAULT_GATEWAY_URL;
+            return;
+        }
+        const next = value || DEFAULT_GATEWAY_URL;
+        gatewayUrl.value = next;
+        updateSettings({ gatewayUrl: next });
     });
 
     element(root, 'omtp-gateway-autostart')?.addEventListener('change', () => saveGatewayConfig());
@@ -934,7 +985,13 @@ function bindControls(root) {
 
     const catalogUrl = element(root, 'omtp-catalog-url');
     catalogUrl?.addEventListener('change', () => {
-        updateSettings({ catalogUrl: catalogUrl.value.trim() });
+        const value = safeHttpUrl(catalogUrl.value);
+        if (value === null) {
+            notify('error', tr('omtp_invalid_url', 'Enter a valid http(s) URL without a query string.'));
+            catalogUrl.value = getSettings().catalogUrl || '';
+            return;
+        }
+        updateSettings({ catalogUrl: value });
     });
 
     element(root, 'omtp-catalog-refresh')?.addEventListener('click', (event) => {

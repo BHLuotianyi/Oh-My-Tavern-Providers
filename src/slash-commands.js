@@ -17,8 +17,10 @@ import { SlashCommand } from '../../../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../../../slash-commands/SlashCommandArgument.js';
 import { SlashCommandParser } from '../../../../slash-commands/SlashCommandParser.js';
 import { oai_settings } from '../../../../openai.js';
-import { getRequestHeaders } from '../../../../../script.js';
-import { API_BASE, REASONING_LEVELS } from './constants.js';
+import { getRequestHeaders as stRequestHeaders } from '../../../../../script.js';
+
+const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
+import { API_BASE, REASONING_LEVELS, withClientHeader } from './constants.js';
 import { EFFORT_ALIASES, normalizeEffortList } from './reasoning.js';
 import { getEntries, resolveEntry, withProviderAvailability } from './catalog.js';
 import { switchToSelector } from './public-api.js';

@@ -8,11 +8,12 @@
     flex: 0 0 auto;
 }
 
-/* Hide native API selector and API connection drawer button */
+/* Hide the native selector controls, but keep the drawer (and OMTP's own
+   tools inside #rm_api_block) reachable — otherwise the "show native API
+   selector" button hides itself and can only be undone from settings. */
 body.omtp-hide-native-api-selector #main-API-selector-block,
-body.omtp-hide-native-api-selector #top-settings-holder > .drawer:has(#API-status-top),
 body.omtp-hide-native-api-selector #API-status-top,
-body.omtp-hide-native-api-selector #rm_api_block {
+body.omtp-hide-native-api-selector #rm_api_block > *:not(#omtp-api-drawer-tools) {
     display: none !important;
 }
 

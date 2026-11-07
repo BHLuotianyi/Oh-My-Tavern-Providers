@@ -21,11 +21,12 @@ function responsesUrl(ctx) {
   const extra = ctx.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
   const deployment = extra.deployment || ctx.model;
   const apiVersion = extra.apiVersion || DEFAULT_API_VERSION;
-  let base = trimSlash(ctx.baseUrl);
+  const query = `?api-version=${encodeURIComponent(apiVersion)}`;
+  let base = trimSlash(String(ctx.baseUrl || '').split('?')[0]);
+  // A custom URL may already be the full deployment endpoint.
+  if (/\/openai\/deployments\/[^/]+\/responses$/i.test(base)) return `${base}${query}`;
   if (/\/openai$/.test(base)) base = base.slice(0, -'/openai'.length);
-  return `${base}/openai/deployments/${encodeURIComponent(deployment)}/responses?api-version=${encodeURIComponent(
-    apiVersion,
-  )}`;
+  return `${base}/openai/deployments/${encodeURIComponent(deployment)}/responses${query}`;
 }
 
 export async function chat(req, ctx) {

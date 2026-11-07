@@ -414,7 +414,7 @@ export class GatewayServer {
                     this.stats.record({
                         provider: ref.provider,
                         model: ref.model,
-                        price: modelInfo?.cost || null,
+                        price: priceForModel(catalogProvider, modelInfo),
                         usage: tokens,
                         // SillyTavern sends the open chat id in this header,
                         // percent-encoded so non-Latin-1 names survive HTTP.
@@ -441,17 +441,38 @@ export class GatewayServer {
 }
 
 /**
+ * Live-discovered models have no catalog price. Rather than silently booking
+ * them as $0 (which makes the dashboard lie), fall back to the provider's
+ * default model price, or to the median priced model of that provider.
+ *
+ * @param {any} catalogProvider
+ * @param {any} modelInfo
+ * @returns {any|null}
+ */
+function priceForModel(catalogProvider, modelInfo) {
+    if (modelInfo?.cost && Object.keys(modelInfo.cost).length) return modelInfo.cost;
+    const priced = (catalogProvider?.models || [])
+        .filter((model) => model?.cost && Number.isFinite(Number(model.cost.output)));
+    if (!priced.length) return null;
+    const byDefault = priced.find((model) => model.id === catalogProvider?.defaultModel);
+    if (byDefault) return byDefault.cost;
+    const sorted = [...priced].sort((a, b) => Number(a.cost.output) - Number(b.cost.output));
+    return sorted[Math.floor(sorted.length / 2)].cost;
+}
+
+/**
  * Pass-through stream that feeds the usage tap.
  * @param {any} tap
+ * @param {() => void} onFinish called exactly once, including on early close
  */
-function createUsageTransform(tap) {
+function createUsageTransform(tap, onFinish) {
     return new Transform({
         transform(chunk, _encoding, done) {
             tap.push(chunk);
             done(null, chunk);
         },
         flush(done) {
-            tap.end();
+            onFinish();
             done();
         },
     });
@@ -467,7 +488,17 @@ function createUsageTransform(tap) {
  */
 function pipeUpstream(upstream, res, controller, usageTap) {
     const nodeStream = Readable.fromWeb(/** @type {any} */ (upstream.body));
+    // tap.end() records usage and must run exactly once. A destroyed stream
+    // never reaches Transform.flush(), so an aborted/errored response used to
+    // lose the tokens that had already been generated and billed upstream.
+    let finished = false;
+    const finish = () => {
+        if (finished) return;
+        finished = true;
+        usageTap.end();
+    };
     nodeStream.on('error', (error) => {
+        finish();
         if (controller.signal.aborted) return;
         logError('gateway stream failed', error);
         if (!res.headersSent) {
@@ -481,9 +512,10 @@ function pipeUpstream(upstream, res, controller, usageTap) {
         }
     });
     res.on('close', () => {
+        finish();
         if (!nodeStream.destroyed) nodeStream.destroy();
     });
-    nodeStream.pipe(createUsageTransform(usageTap)).pipe(res);
+    nodeStream.pipe(createUsageTransform(usageTap, finish)).pipe(res);
 }
 
 /**

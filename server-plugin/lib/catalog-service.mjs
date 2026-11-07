@@ -10,6 +10,7 @@ import {
 } from './config.mjs';
 import { normalizeCustomModel } from './key-store.mjs';
 import { buildProviderConfig } from './provider-config.mjs';
+import { sanitizeExternalLayer, validateBaseUrl } from './catalog-safety.mjs';
 import { log, logError } from './redact.mjs';
 
 const DEFAULT_OMP_MODELS_URL = 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/catalog/src/models.json';
@@ -116,6 +117,17 @@ async function fetchJsonLimited(url, signal) {
         headers: { Accept: 'application/json', 'User-Agent': 'omtp-gateway/0.1.0' },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+    // A redirect must not turn a trusted catalog URL into an arbitrary
+    // internal endpoint (blind SSRF). Same-host redirects are fine.
+    if (response.url) {
+        let sameHost = false;
+        try {
+            sameHost = new URL(response.url).host === new URL(url).host;
+        } catch {
+            sameHost = false;
+        }
+        if (!sameHost) throw new Error('Catalog redirect to a different host is not allowed');
+    }
     const declaredLength = Number(response.headers.get('content-length') || 0);
     if (declaredLength > MAX_FETCH_BYTES) throw new Error(`Catalog exceeds ${MAX_FETCH_BYTES} bytes`);
     const buffer = Buffer.from(await response.arrayBuffer());
@@ -189,11 +201,18 @@ export class CatalogService {
             if (unreadable || !config?.custom || !config.adapter) continue;
             const models = (Array.isArray(config.models) ? config.models : []).map(normalizeCustomModel).filter(Boolean);
             if (models.length === 0) continue;
+            let baseUrl = '';
+            try {
+                baseUrl = validateBaseUrl(config.baseUrl);
+            } catch (error) {
+                logError(`ignoring custom provider ${id} with an unsafe base URL`, error);
+                continue;
+            }
             providers[id] = {
                 id,
                 label: config.label || id,
                 api: 'custom',
-                baseUrl: config.baseUrl || '',
+                baseUrl,
                 envVars: [],
                 authKind: 'api-key',
                 defaultModel: models[0].id,
@@ -212,17 +231,22 @@ export class CatalogService {
      */
     async loadActive(force = false) {
         if (this._catalog && !force) return this._catalog;
-        let merged = await this.loadBundled(force);
+        const bundled = await this.loadBundled(force);
+        // Copy so the layers below never mutate the trusted bundled object.
+        let merged = { ...bundled };
         this._source = 'bundled';
 
+        // Cached / imported layers come from the network or from disk and can
+        // only contribute model metadata. Routing, headers and OAuth endpoints
+        // always come from the bundled catalog.
         const cached = await this.readLayer(CACHED_CATALOG_FILE);
         if (cached) {
-            merged = mergeCatalog(merged, cached);
+            merged = mergeCatalog(merged, sanitizeExternalLayer(cached, bundled));
             this._source = 'cached';
         }
         const imported = await this.readLayer(IMPORTED_CATALOG_FILE);
         if (imported) {
-            merged = mergeCatalog(merged, imported);
+            merged = mergeCatalog(merged, sanitizeExternalLayer(imported, bundled));
             this._source = 'cached';
         }
         const custom = await this.buildCustomProviders();
@@ -338,21 +362,27 @@ export class CatalogService {
                 const bundled = await this.loadBundled(true);
                 catalog = normalizeCatalog(payload, rules, providerMapFromCatalog(bundled));
             }
-            const validation = validateCatalog(catalog, { expectedProviders: 0, minModels: 0 });
+            // External data may only contribute model metadata. Validate the
+            // merged result (so routing fields from the bundled catalog are
+            // present), then persist just the sanitized overlay.
+            const bundled = await this.loadBundled(true);
+            const safe = sanitizeExternalLayer(catalog, bundled);
+            const effective = mergeCatalog(bundled, safe);
+            const validation = validateCatalog(effective, { expectedProviders: 0, minModels: 0 });
             if (!validation.ok || validation.providers === 0) {
                 return { ok: false, error: `Catalog validation failed: ${validation.errors.slice(0, 5).join('; ')}` };
             }
-            if (!catalog.generatedAt) catalog.generatedAt = new Date().toISOString();
-            catalog.stats = computeStats(catalog.providers);
+            if (!safe.generatedAt) safe.generatedAt = new Date().toISOString();
+            safe.stats = computeStats(safe.providers);
             await writeJsonAtomic(omtpPath(this.root, CACHED_CATALOG_FILE), {
-                ...catalog,
-                providers: stripCatalogCredentials(catalog.providers),
+                ...safe,
+                providers: stripCatalogCredentials(safe.providers),
             });
             this._catalog = null;
             this._bundled = null;
             const active = await this.loadActive(true);
             this._source = 'refreshed';
-            log(`catalog refreshed: ${catalog.stats.providers} providers, ${catalog.stats.models} models`);
+            log(`catalog refreshed: ${effective.stats.providers} providers, ${effective.stats.models} models`);
             return {
                 ok: true,
                 version: active.generatedAt,

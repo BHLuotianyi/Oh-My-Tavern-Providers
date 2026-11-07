@@ -25,7 +25,7 @@
 |---|---|
 | [`README.md`](./README.md) / [`README.en.md`](./README.en.md) | 面向所有用户：项目定位、亮点、30 秒安装、3 分钟上手、核心功能与 FAQ |
 | [`CONTRIBUTING.md`](./CONTRIBUTING.md) / [`CONTRIBUTING.en.md`](./CONTRIBUTING.en.md) | 面向贡献者：模块架构边界、代码风格、测试门禁与 PR 规范 |
-| [`docs/gateway.md`](./docs/gateway.md) / [`docs/gateway.en.md`](./docs/gateway.en.md) | 网关端口/鉴权、24 条插件 HTTP 路由、9 类协议适配器、16 家额度接口、`data/omtp/` 存储规格 |
+| [`docs/gateway.md`](./docs/gateway.md) / [`docs/gateway.en.md`](./docs/gateway.en.md) | 网关端口/鉴权、24 条插件 HTTP 路由、9 类协议适配器、21 家服务商 / 16 类额度适配器、`data/omtp/` 存储规格 |
 | [`docs/developer.md`](./docs/developer.md) / [`docs/developer.en.md`](./docs/developer.en.md) | `globalThis.OMTP` 公开 API、选择器语法、目录与人格快照构建脚本、本地 Mock 联调 |
 | [`tests/e2e/README.md`](./tests/e2e/README.md) | 在真实 SillyTavern 宿主中执行手工端到端验证的步骤清单 |
 

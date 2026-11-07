@@ -167,7 +167,12 @@ function readManifest(result) {
     if (result.status !== 'fulfilled' || !result.value || typeof result.value !== 'object') return null;
     const version = typeof result.value.version === 'string' ? result.value.version : '';
     if (!version) return null;
-    const code = Number(result.value.versionCode);
+    // Number(null) === 0 and Number('') === 0: treating a missing/malformed
+    // code as 0 would make the local build look "ahead" forever.
+    const rawCode = result.value.versionCode;
+    const code = typeof rawCode === 'number' || (typeof rawCode === 'string' && rawCode.trim())
+        ? Number(rawCode)
+        : NaN;
     return { version, versionCode: Number.isFinite(code) ? code : null };
 }
 
@@ -198,10 +203,13 @@ export async function fetchRemoteInfo(localVersion, { fetchImpl, channel } = {})
  * Compare the running build against one channel's manifest.
  * @returns {object}
  */
-function compareManifest({ local, localLine, localCode, remote, context }) {
+function compareManifest({ local, localLine, localCode, remote, context, channelMatches = true }) {
     const ref = { remoteVersion: remote.version, remoteRef: null };
     const remoteCode = remote.versionCode;
-    if (Number.isFinite(localCode) && Number.isFinite(remoteCode) && localCode !== remoteCode) {
+    // Version codes are per-channel counters (see tools/version.mjs). When the
+    // user follows a channel the running build does not belong to, comparing
+    // them produces a permanent "local is ahead" verdict.
+    if (channelMatches && Number.isFinite(localCode) && Number.isFinite(remoteCode) && localCode !== remoteCode) {
         return verdict(remoteCode > localCode ? 'update' : 'ahead', 'versionCode', { ...context, ...ref });
     }
     const precedence = compareSemver(remote.version, localLine);
@@ -209,6 +217,9 @@ function compareManifest({ local, localLine, localCode, remote, context }) {
     if (precedence < 0) return verdict('ahead', 'version', { ...context, ...ref });
     const localNightly = nightlyDate(local);
     const remoteNightly = nightlyDate(remote.version);
+    if (remoteNightly && !localNightly) {
+        return verdict('update', 'version', { ...context, ...ref });
+    }
     if (localNightly && remoteNightly && localNightly !== remoteNightly) {
         return verdict(remoteNightly > localNightly ? 'update' : 'ahead', 'version', { ...context, ...ref });
     }
@@ -235,15 +246,17 @@ export function evaluateUpdate({ localVersion, localVersionCode, main, nightly, 
     };
 
     const followsNightly = channel === 'nightly' || (channel == null && isNightly(local));
+    const localChannel = isNightly(local) ? 'nightly' : 'git';
+    const channelMatches = localChannel === (followsNightly ? 'nightly' : 'git');
     if (followsNightly) {
         if (!nightly?.version) {
             return verdict('unknown', 'no-nightly', context);
         }
-        return compareManifest({ local, localLine, localCode, remote: nightly, context });
+        return compareManifest({ local, localLine, localCode, remote: nightly, context, channelMatches });
     }
 
     if (!main?.version) {
         return verdict('unknown', 'no-main', context);
     }
-    return compareManifest({ local, localLine, localCode, remote: main, context });
+    return compareManifest({ local, localLine, localCode, remote: main, context, channelMatches });
 }

@@ -154,3 +154,12 @@ Node's built-in `fetch` ignores proxy environment variables, so the server plugi
 Loopback and private ranges (`127.0.0.0/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`) always connect directly. A failed tunnel falls back to a direct connection; a failure after request bytes reached the tunnel is not replayed, so a completion is never billed twice.
 
 The sign-in callback is served by a separate loopback listener, not by this proxy wrapper. A `localhost` redirect URI binds both `127.0.0.1` and `::1`, so a client that only tries one address family still reaches it. A browser proxy that does not bypass loopback (`--proxy-bypass-list="<-loopback>"`, Proxifier, some AV web shields), a container without the callback port published, or a browser on another machine cannot deliver the code; the panel then explains that and asks for the address-bar URL to be pasted.
+
+
+## Appendix: management-route hardening
+
+- Every `/api/plugins/omtp/*` route requires the `x-omtp-client: omtp-web` header plus `Origin` / `Sec-Fetch-Site` checks. The OMTP UI adds it automatically; third-party clients must add it or receive 403 `untrusted_client`.
+- Optional: `OMTP_STRICT_HOST=1` pins the Host header (localhost / 127.0.0.1 / ::1 by default); add reverse-proxy names with `OMTP_ALLOWED_HOSTS=host1,host2`.
+- `POST /config` needs `confirmInsecure: true` to set `requireAuth: false`. `baseUrl` values are validated as plain http(s) URLs, both at the API boundary and again in `buildProviderConfig`.
+- Refreshed/imported catalog layers can only override model metadata; routing and OAuth endpoints always come from the bundled catalog. Cross-host redirects are rejected and OMP imports are restricted to `~/oh-my-pi`, `~/.omp`, or `OMTP_OMP_CATALOG_ROOTS`.
+- A corrupt `master.key` is backed up and reported instead of being silently regenerated.

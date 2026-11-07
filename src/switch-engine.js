@@ -14,7 +14,7 @@
 import { getSettings, saveSettings, getEntryKey, parseEntryKey } from './store.js';
 import { codedError } from './errors.js';
 import { resolveEntry } from './catalog.js';
-import { API_BASE, EVENTS, MAX_RECENTS, PROFILE_PROVIDER_ID, REASONING_LEVELS } from './constants.js';
+import { API_BASE, EVENTS, MAX_RECENTS, PROFILE_PROVIDER_ID, REASONING_LEVELS, withClientHeader } from './constants.js';
 import { currentChatId } from './usage-session.js';
 import { NATIVE_ADAPTERS } from './adapters/native.js';
 import {
@@ -22,8 +22,10 @@ import {
   online_status,
   isGenerating,
   saveSettingsDebounced,
-  getRequestHeaders,
+  getRequestHeaders as stRequestHeaders,
 } from '../../../../../script.js';
+
+const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
 import { eventSource } from '../../../../events.js';
 import { oai_settings } from '../../../../openai.js';
 import { textgenerationwebui_settings } from '../../../../textgen-settings.js';

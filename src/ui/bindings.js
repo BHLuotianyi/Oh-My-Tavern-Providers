@@ -18,7 +18,7 @@ import { REASONING_LEVELS, ST_EVENTS } from '../constants.js';
 import { getEntryKey, getSettings, isValidRef, parseEntryKey, saveSettings } from '../store.js';
 import { applyReasoning, captureSelection, switchToEntry } from '../switch-engine.js';
 import { getEntries, loadCatalog, resolveEntry } from '../catalog.js';
-import { tr } from './dom.js';
+import { tr, trf } from './dom.js';
 import { isPlainObject, notify } from './helpers.js';
 import { codedError } from '../errors.js';
 
@@ -382,7 +382,7 @@ async function switchToBoundModel(chatId, key) {
         // Remember the attempt so a broken binding never loops.
         lastAppliedChatId = chatId;
         lastAppliedRef = key;
-        notify('error', `Bound model unavailable: ${error?.message ?? error}`);
+        notify('error', trf('omtp_binding_unavailable', 'Bound model unavailable: ${0}', error?.message ?? String(error)));
     }
 }
 

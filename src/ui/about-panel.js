@@ -6,7 +6,7 @@
  * version. Nothing is hard-coded except the licence, which is a property of the
  * source tree rather than of the running process.
  */
-import { API_BASE } from '../constants.js';
+import { API_BASE, withClientHeader } from '../constants.js';
 import { tr, trf } from './dom.js';
 import { el } from './helpers.js';
 
@@ -94,7 +94,7 @@ async function loadFacts() {
         console.warn('[omtp] could not read the extension manifest', error);
     }
     try {
-        const response = await fetch(`${API_BASE}/status`, { signal: AbortSignal.timeout(3000) });
+        const response = await fetch(`${API_BASE}/status`, { headers: withClientHeader(), signal: AbortSignal.timeout(3000) });
         if (response.ok) facts.status = await response.json();
     } catch (error) {
         console.warn('[omtp] could not read gateway status', error);

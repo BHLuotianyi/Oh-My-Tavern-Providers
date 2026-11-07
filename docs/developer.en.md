@@ -123,3 +123,14 @@ Clicking `🔄` next to a provider (or opening one, which probes in the backgrou
 - **Freshness**: results younger than 5 minutes (`LIVE_MODELS_TTL`) answer without probing. Anything older is re-probed. **There is no fallback**: a failed probe returns `ok: false` with the error instead of the expired list, so a model the provider no longer serves is never offered; `?refresh=true` likewise reports the real result or error.
 - **Capacity & resilience**: at most 128 providers (`LIVE_MODELS_MAX_PROVIDERS`, least recently probed are trimmed), entries past the freshness window are dropped on read and write, and a missing, corrupt, or foreign-version file starts as an empty cache.
 - **Privacy**: only model ids and metadata are stored, never credentials. The logic lives in `server-plugin/lib/live-models-store.mjs` and is covered by `tests/unit/live-models-store.test.mjs`.
+
+
+## Appendix: calling the plugin HTTP API directly
+
+Server routes live under `/api/plugins/omtp/*`. Besides the host authentication headers, every request must carry `x-omtp-client: omtp-web`, otherwise the plugin returns 403:
+
+```js
+const res = await fetch('/api/plugins/omtp/status', {
+  headers: { ...getRequestHeaders(), 'x-omtp-client': 'omtp-web' },
+});
+```

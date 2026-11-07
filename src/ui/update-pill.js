@@ -62,7 +62,6 @@ export async function checkForUpdates({ force = false } = {}) {
             localVersionCode: EXTENSION_VERSION_CODE,
             main: remote?.main,
             nightly: remote?.nightly,
-            release: remote?.release,
             channel,
         });
         const checkedAt = Date.now();
@@ -143,6 +142,8 @@ export async function refreshUpdatePill({ force = false } = {}) {
             localVersion: EXTENSION_VERSION,
             localVersionCode: EXTENSION_VERSION_CODE,
             main: null,
+            nightly: null,
+            channel: updateChannel(),
         });
         console.warn('[omtp] update check threw', error);
     }

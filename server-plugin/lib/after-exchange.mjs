@@ -29,6 +29,29 @@
  */
 import { log } from './redact.mjs';
 
+/**
+ * Upstream error bodies can echo tokens, and request URLs often carry a
+ * `?key=`/`?code=`. Errors here surface in logs and in the login API response,
+ * so keep the diagnostic useful without leaking either.
+ * @param {unknown} url
+ * @param {unknown} body
+ * @returns {string}
+ */
+function safeErrorContext(url, body) {
+    let safeUrl = '[url hidden]';
+    try {
+        const parsed = new URL(String(url || ''));
+        parsed.search = '';
+        parsed.hash = '';
+        safeUrl = parsed.toString();
+    } catch {
+        // Keep the placeholder for a malformed URL.
+    }
+    const text = String(body ?? '');
+    const excerpt = text.length > 300 ? `${text.slice(0, 300)}…[truncated]` : text;
+    return `url=${safeUrl}; body=${excerpt}`;
+}
+
 /** Failure raised by a ported hook; distinguished from transport errors. */
 class AfterExchangeError extends Error {}
 
@@ -243,13 +266,13 @@ async function fetchAnthropicBootstrapIdentity(token, context) {
     });
     const body = await response.text();
     if (!response.ok) {
-        throw new Error(`HTTP request failed. status=${response.status}; url=${url}; body=${body}`);
+        throw new Error(`HTTP request failed. status=${response.status}; ${safeErrorContext(url, body)}`);
     }
     let data;
     try {
         data = JSON.parse(body);
     } catch {
-        throw new Error(`Anthropic bootstrap returned invalid JSON. url=${url}; body=${body}`);
+        throw new Error(`Anthropic bootstrap returned invalid JSON. ${safeErrorContext(url, body)}`);
     }
     const account = isRecord(data?.oauth_account) ? data.oauth_account : {};
     return {
@@ -814,7 +837,7 @@ async function zaiGetJson(url, headers, context) {
     });
     const body = await response.text();
     if (!response.ok) {
-        throw new Error(`HTTP request failed. status=${response.status}; url=${url}; body=${body}`);
+        throw new Error(`HTTP request failed. status=${response.status}; ${safeErrorContext(url, body)}`);
     }
     return body.length > 0 ? JSON.parse(body) : undefined;
 }
@@ -835,7 +858,7 @@ async function zaiPostJson(url, payload, headers, context) {
     });
     const body = await response.text();
     if (!response.ok) {
-        throw new Error(`HTTP request failed. status=${response.status}; url=${url}; body=${body}`);
+        throw new Error(`HTTP request failed. status=${response.status}; ${safeErrorContext(url, body)}`);
     }
     return body.length > 0 ? JSON.parse(body) : undefined;
 }

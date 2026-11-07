@@ -1,4 +1,7 @@
 {
+    "omtp_invalid_url": "Enter a valid http(s) URL without a query string.",
+    "omtp_gateway_insecure_title": "Disable gateway authentication?",
+    "omtp_gateway_insecure_body": "Without a token, any process on this computer can use the local gateway and the API keys stored in OMTP. Only disable this on a machine you fully trust.",
     "omtp_topbar_title": "OMTP Model Hub",
     "omtp_hub_title": "OMTP Model Hub",
     "omtp_switch_model": "Switch model",

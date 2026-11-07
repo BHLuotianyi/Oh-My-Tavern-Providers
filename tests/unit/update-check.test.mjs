@@ -110,7 +110,9 @@ test('a nightly build follows the nightly branch by version number', () => {
     assert.equal(missing.reason, 'no-nightly');
 });
 
-test('an explicit channel overrides the build type', () => {
+test('versionCode counters are only compared within the build\'s own channel', () => {
+    // A git build following the nightly channel: the counters live on
+    // different scales, so only semver/nightly date may decide.
     const forcedNightly = evaluateUpdate({
         localVersion: '2.0.0', localVersionCode: 10,
         main: { version: '2.0.0', versionCode: 10 },
@@ -118,15 +120,34 @@ test('an explicit channel overrides the build type', () => {
         channel: 'nightly',
     });
     assert.equal(forcedNightly.status, 'update');
-    assert.equal(forcedNightly.reason, 'versionCode');
+    assert.equal(forcedNightly.reason, 'version');
 
+    // A nightly build following git must not look "ahead" forever just
+    // because nightly counters are larger.
     const nightlyOnGit = evaluateUpdate({
-        localVersion: '2.0.0+nightly.20261105', localVersionCode: 20,
+        localVersion: '2.0.0+nightly.20261105', localVersionCode: 100,
         main: { version: '2.0.0', versionCode: 10 },
-        nightly: { version: '2.0.0+nightly.20261106', versionCode: 21 },
+        nightly: { version: '2.0.0+nightly.20261106', versionCode: 101 },
         channel: 'git',
     });
-    assert.equal(nightlyOnGit.status, 'ahead');
+    assert.equal(nightlyOnGit.status, 'current');
+
+    // Same channel: the counter still wins over semver.
+    const sameChannel = evaluateUpdate({
+        localVersion: '2.0.0', localVersionCode: 10,
+        main: { version: '2.0.0', versionCode: 11 },
+        channel: 'git',
+    });
+    assert.equal(sameChannel.status, 'update');
+    assert.equal(sameChannel.reason, 'versionCode');
+
+    // A malformed remote code must not be treated as 0 ("local is ahead").
+    const missingCode = evaluateUpdate({
+        localVersion: '2.0.0', localVersionCode: 10,
+        main: { version: '2.1.0', versionCode: null },
+        channel: 'git',
+    });
+    assert.equal(missingCode.status, 'update');
 });
 
 test('missing or unusable GitHub data is reported as unknown', () => {

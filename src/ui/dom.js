@@ -129,6 +129,23 @@ function listen(target, type, handler, options) {
 }
 
 /**
+ * Re-injecting a UI node used to leave its old listeners in `boundListeners`
+ * forever (holding detached DOM until teardown). Drop those records when the
+ * node is removed mid-session.
+ * @param {Element|null} root
+ */
+function removeInjected(root) {
+    if (!root) return;
+    for (let i = boundListeners.length - 1; i >= 0; i -= 1) {
+        const { target } = boundListeners[i];
+        if (target === root || (typeof root.contains === 'function' && root.contains(target))) {
+            boundListeners.splice(i, 1);
+        }
+    }
+    root.remove();
+}
+
+/**
  * Inject the top-bar drawer button before the native system settings drawer.
  * @param {{onOpen?: Function}} [options]
  * @returns {HTMLElement|null}
@@ -140,7 +157,7 @@ export function injectTopBarButton({ onOpen } = {}) {
         return null;
     }
 
-    document.getElementById(TOP_BAR_ID)?.remove();
+    removeInjected(document.getElementById(TOP_BAR_ID));
 
     const button = document.createElement('div');
     button.id = TOP_BAR_ID;
@@ -208,7 +225,7 @@ export function injectApiDrawerTools({ onOpen, onShowNative } = {}) {
         return null;
     }
 
-    document.getElementById(API_TOOLS_ID)?.remove();
+    removeInjected(document.getElementById(API_TOOLS_ID));
 
     const tools = document.createElement('div');
     tools.id = API_TOOLS_ID;
@@ -254,12 +271,10 @@ export function injectApiDrawerTools({ onOpen, onShowNative } = {}) {
  */
 export function applyNativeSelectorVisibility(settings = getSettings()) {
     const hide = Boolean(settings?.hideNativeSelector ?? true);
+    // Only the body class controls visibility. The old code also wrote an
+    // inline `display` on SillyTavern's native drawer and restored it to ''
+    // on teardown, which could never restore a pre-existing inline value.
     document.body.classList.toggle(HIDE_NATIVE_CLASS, hide);
-    const apiStatusButton = document.getElementById('API-status-top');
-    const apiDrawer = apiStatusButton?.closest?.('.drawer');
-    if (apiDrawer) {
-        apiDrawer.style.display = hide ? 'none' : '';
-    }
     const nativeButton = document.getElementById('omtp-show-native-api');
     if (nativeButton) {
         nativeButton.textContent = hide
@@ -301,13 +316,10 @@ export function cleanupDom() {
         }
     }
     removeGlobalHotkeyHandler();
-    document.getElementById(TOP_BAR_ID)?.remove();
-    document.getElementById(API_TOOLS_ID)?.remove();
+    removeInjected(document.getElementById(TOP_BAR_ID));
+    removeInjected(document.getElementById(API_TOOLS_ID));
     document.getElementById(MODAL_ID)?.remove();
     document.getElementById('omtp-settings')?.remove();
     document.body.classList.remove(HIDE_NATIVE_CLASS);
-    const apiStatusButton = document.getElementById('API-status-top');
-    const apiDrawer = apiStatusButton?.closest?.('.drawer');
-    if (apiDrawer) apiDrawer.style.display = '';
     document.querySelectorAll('.omtp-highlight').forEach((element) => element.classList.remove('omtp-highlight'));
 }

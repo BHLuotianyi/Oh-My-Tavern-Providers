@@ -200,7 +200,8 @@ function translateToolConfig(choice) {
 function mapAntigravityWireModel(model, effort = 'low') {
   if (/-(?:minimal|extra-low|low|medium|high|tiered|thinking)$/.test(model)) return model;
   if (model.startsWith('gemini-3.8-flash') || model.startsWith('gemini-4-argon')) {
-    const tier = effort === 'high' ? 'high' : effort === 'medium' ? 'medium' : 'low';
+    // `max` used to fall through to `-low`, unlike the other adapters.
+    const tier = effort === 'max' || effort === 'high' ? 'high' : effort === 'medium' ? 'medium' : 'low';
     return `${model}-${tier}`;
   }
   return model;
@@ -287,6 +288,11 @@ async function postWithFailover(endpoints, path, { headers, body, signal, doFetc
   for (const endpoint of endpoints) {
     try {
       const response = await doFetch(`${endpoint}${path}`, { method: 'POST', headers, body, signal });
+      // Release a rejected response body before it is overwritten; otherwise
+      // the socket and the unread payload linger for the rest of the request.
+      if (upstream && upstream !== response) {
+        try { await upstream.body?.cancel?.(); } catch { /* body already consumed */ }
+      }
       upstream = response;
       if (response.ok || response.status === 401 || response.status === 403) break;
     } catch (error) {

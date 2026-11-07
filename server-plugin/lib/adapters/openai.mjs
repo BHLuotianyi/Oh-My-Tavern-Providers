@@ -238,19 +238,26 @@ export async function runJsonAdapter({
   return new Response(JSON.stringify(translate(json)), { status: 200, headers: JSON_HEADERS });
 }
 
-/** Normalize whatever parseSse yields into a parsed event object. */
+/**
+ * Normalize whatever parseSse yields into a parsed event object.
+ * A single malformed `data:` line (heartbeat, vendor error text, or a
+ * multi-line payload joined with `\n`) must not abort the whole stream.
+ */
 export function coerceSseEvent(raw) {
-  if (raw == null) return null;
-  if (typeof raw === 'string') {
-    const text = raw.trim();
+  const parse = (value) => {
+    const text = value.trim();
     if (!text || text === '[DONE]') return null;
-    return JSON.parse(text);
-  }
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  };
+  if (raw == null) return null;
+  if (typeof raw === 'string') return parse(raw);
   if (typeof raw === 'object') {
     if (typeof raw.data === 'string' && raw.type === undefined && raw.candidates === undefined) {
-      const text = raw.data.trim();
-      if (!text || text === '[DONE]') return null;
-      return JSON.parse(text);
+      return parse(raw.data);
     }
     return raw;
   }
@@ -311,12 +318,22 @@ export function newCompletionId() {
  */
 export function sseResponse(upstream, handler) {
   const encoder = new TextEncoder();
+  // Every chunk of one response must share id/created. Individual frame
+  // builders use Date.now()/randomUUID(), so normalize them centrally here
+  // instead of touching every adapter's handler.
+  const responseId = newCompletionId();
+  const created = Math.floor(Date.now() / 1000);
   const body = new ReadableStream({
     async start(controller) {
       const emit = (frame) => {
         if (frame == null) return;
-        const text = typeof frame === 'string' ? frame : `data: ${JSON.stringify(frame)}\n\n`;
+        let text = typeof frame === 'string' ? frame : `data: ${JSON.stringify(frame)}\n\n`;
         if (!text) return;
+        if (text.includes('"chat.completion.chunk"')) {
+          text = text
+            .replace(/"id":"(?:[^"\\]|\\.)*"/, `"id":${JSON.stringify(responseId)}`)
+            .replace(/"created":\d+/, `"created":${created}`);
+        }
         controller.enqueue(encoder.encode(text));
       };
       try {

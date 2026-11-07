@@ -1,13 +1,15 @@
 /**
  * Catalog loading, entry registry and provider grouping for the hub.
  */
-import { getRequestHeaders } from '../../../../../../script.js';
+import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
+
+const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
 import { Fuse } from '../../../../../../lib.js';
 import * as catalogApi from '../catalog.js';
 import * as engine from '../switch-engine.js';
 import { loadPersonality, personalityFor } from '../personality.js';
 import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
-import { LAB_PROVIDERS, MAINSTREAM_PROVIDERS, PROFILE_PROVIDER_ID } from '../constants.js';
+import { LAB_PROVIDERS, MAINSTREAM_PROVIDERS, PROFILE_PROVIDER_ID, withClientHeader } from '../constants.js';
 import { tr } from './dom.js';
 import { notify } from './helpers.js';
 import { state } from './hub-state.js';

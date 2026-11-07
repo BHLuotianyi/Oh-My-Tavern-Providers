@@ -56,7 +56,7 @@ OMTP Model Hub
 ├── 双轨智能路由：SillyTavern 原生支持则零代理直写，其余自动走本地 127.0.0.1:4100 网关
 ├── 角色扮演人格雷达：内置 AA-PersonalityBench 八维雷达图 + OMTP 专属 RP 加权评分
 ├── 订阅与密钥中心：OAuth PKCE / 设备码 / Claude Pro·Max / Codex / Antigravity / API Key
-└── 实时额度与记账：16 类订阅套餐进度条、顶栏当前对话 Token/费用徽章、/omtp stats 独立统计面板
+└── 实时额度与记账：21 家服务商 / 16 类额度适配器进度条、顶栏当前对话 Token/费用徽章、/omtp stats 独立统计面板
 ```
 
 ---
@@ -97,9 +97,9 @@ flowchart LR
   - **API Key 状态防呆**：已保存的密钥显示为圆点掩码，明确区分「已登录」、「未配置」与「🔴 密钥被上游拒绝（显示后四位 `****last4`）」，并提供直达各厂商控制台的领 Key 链接。
   - **一键实时探测模型（Live Probe）**：本地 Ollama / LM Studio / vLLM 或任意服务商只需点击 `🔄` 按钮，即可直接拉取上游 `/models` 实时可用列表并标记 `live` 徽章。**刷新成功的列表会持久化到服务端数据目录 `data/omtp/live-models.json`**，5 分钟内重启酒馆无需重新探测；探测失败时直接报错，不会展示已过期的模型列表。
 
-- **📊 16 家订阅额度监控 + 当前对话实时计费（对齐 `omp /usage` & `omp stats`）**
-  - **订阅额度页**：直接读取 Claude Pro/Max、ChatGPT Codex、Antigravity/Gemini CLI、Z.AI/智谱、Kimi Code、MiniMax Token Plan、xAI SuperGrok、DeepSeek 等 16 类接口的 5 小时 / 周度配额百分比、重置倒计时与账户余额（70% 橙色预警、90% 红色告警）。
-  - **顶栏实时账单徽章**：聊天顶栏常驻小徽章（如 `12.4k token · $0.018`），自动识别 Anthropic、Gemini、Bedrock、Responses API 的**缓存命中（Cache Read/Write）与思维链（Reasoning/Thoughts）Token**，按目录单价精确折算缓存折扣。
+- **📊 21 家订阅额度监控（16 类适配器）+ 当前对话实时计费（对齐 `omp /usage` & `omp stats`）**
+  - **订阅额度页**：直接读取 Claude Pro/Max、ChatGPT Codex、Antigravity/Gemini CLI、Z.AI/智谱、Kimi Code、MiniMax Token Plan、xAI SuperGrok、DeepSeek 等 21 家服务商 / 16 类接口的 5 小时 / 周度配额百分比、重置倒计时与账户余额（70% 橙色预警、90% 红色告警）。
+  - **顶栏实时账单徽章**：聊天顶栏常驻小徽章（如 `12.4k token · $0.018`），自动识别 Anthropic、Gemini、Bedrock、Responses API 的**缓存命中（Cache Read/Write）与思维链（Reasoning/Thoughts）Token**，按目录单价精确折算缓存折扣。思维链 Token 按输出单价计费，目录中缺失的缓存单价回退到输入单价；通过 Live Probe 实时发现、尚未收录单价的模型按该服务商默认模型（或已定价模型的中位价）估算，避免账单误报 $0。
   - **独立统计大屏（`/omtp stats`）**：一行命令启动本机统计页面（默认端口 `3847`），展示 60 天柱状图、按模型/按对话成本排行，点击任意历史对话即可单看该场聊天的消耗。
 
 ---
@@ -107,6 +107,9 @@ flowchart LR
 ## 快速开始 / Getting Started
 
 环境要求：**SillyTavern >= 1.12.7**，**Node.js >= 18.0.0**。
+
+> [!NOTE]
+> SillyTavern 1.12.7–1.16.x 不支持扩展 manifest 的生命周期 hooks。OMTP 在这些版本上仍可正常初始化，并通过轮询检测「停用扩展」来自动还原网关配置；但**直接删除扩展文件夹**后不会再有任何代码被加载，请先停用扩展再删除，或到「扩展设置 → 恢复原生连接」手动还原。
 
 ### 🚌 宝宝巴士版教程（0 命令行 · 点击 + 复制即可）
 
@@ -158,6 +161,7 @@ git clone https://github.com/BHLuotianyi/Oh-My-Tavern-Providers omtp-model-hub
    ```bash
    cp -r SillyTavern/public/scripts/extensions/third-party/omtp-model-hub/server-plugin SillyTavern/plugins/omtp
    ```
+   > 内置模型目录衍生自 OMP 的 `models.json`（MIT）。若单独分发 `server-plugin` 目录，请一并附上仓库根目录的 [`NOTICE`](./NOTICE)（含 MIT 许可全文与署名）。
 2. 在 `SillyTavern/config.yaml` 中配置 `enableServerPlugins: true`。
 3. 重启 SillyTavern 并刷新网页。
 
@@ -234,7 +238,11 @@ git pull
 
 ## 隐私与安全边界 / Privacy & Security
 
-- **凭据不出本机**：所有通过 OMTP 录入的 API Key、OAuth 刷新令牌与自定义服务商配置均使用 **AES-256-GCM**（主密钥 `data/omtp/master.key`，权限 `0600`）加密保存在 `data/omtp/providers.json`。HTTP 管理接口永远只返回凭据来源与末四位字符。
+- **凭据不出本机**：所有通过 OMTP 录入的 API Key、OAuth 刷新令牌与自定义服务商配置均使用 **AES-256-GCM**（主密钥 `data/omtp/master.key`，权限 `0600`）加密保存在 `data/omtp/providers.json`。HTTP 管理接口只返回凭据来源、末四位字符，或掩码后的账号邮箱（如 `a***@example.com`）。
+- **管理接口有来源校验**：`/api/plugins/omtp/*` 要求请求携带 `x-omtp-client: omtp-web`（OMTP 前端自动添加），并校验 `Origin` 与 `Sec-Fetch-Site`，使跨站网页无法在未经 CORS 预检的情况下读取网关令牌或改写凭据。第三方脚本直接调用这些接口时需自行带上该头。反向代理或域名部署可设置 `OMTP_STRICT_HOST=1`，并用 `OMTP_ALLOWED_HOSTS`（逗号分隔）补充允许的 Host，进一步防 DNS rebinding。
+- **目录层只能更新模型数据**：从网络刷新或本地 OMP 导入的目录只能覆盖模型列表、名称与价格；`baseUrl`、`gatewayAdapter`、`authLogin`、请求头等路由与认证字段始终取自随扩展发布的内置目录，避免被投毒目录把密钥导向其它服务器。刷新请求拒绝跨主机重定向；`/import/omp` 仅允许 `~/oh-my-pi`、`~/.omp` 或 `OMTP_OMP_CATALOG_ROOTS` 指定的目录。
+- **关闭网关鉴权需显式确认**：设置面板取消勾选「网关鉴权」时会先弹出确认，并向服务端发送 `confirmInsecure`；缺少该确认的请求会被拒绝。
+- **`master.key` 损坏不再静默重建**：密钥文件无法解析时，OMTP 会备份为 `master.key.corrupt-<时间戳>` 并报错，而不是生成新密钥导致已存凭据永久不可解；恢复备份即可继续使用。
 - **OAuth 客户端凭据按策略内置**：已安装应用的 `client_id` / `client_secret` 属于公开标识（RFC 8252 §8.1），因此为了让 Antigravity、Gemini CLI 等订阅登录开箱即用，目录会内置这类**公开客户端对**；其余服务商的凭据在构建时被剥离为环境变量引用。任何情况下都可以用 `OMTP_<PROVIDER>_CLIENT_ID` / `OMTP_<PROVIDER>_CLIENT_SECRET` 或本地 `data/omtp/oauth-clients.json`（权限 `0600`，已 gitignore）覆盖。用户自己的 API Key 与 OAuth 令牌永远只保存在加密密钥库中。
 - **零遥测、零云端中转**：OMTP 不包含任何统计上报、遥测或第三方代理服务器；网关仅监听 `127.0.0.1`，所有上游请求均由你的机器直连目标服务商官方端点。
 
@@ -277,7 +285,7 @@ OMTP 专注于 SillyTavern 的对话与角色扮演文本生成体验，目录�
 
 | 文档 | 内容概览 |
 |---|---|
-| 🔌 [**本地网关与服务端架构参考 (docs/gateway.md)**](./docs/gateway.md) | 网关端口与鉴权、24 条插件 HTTP 路由、9 类协议适配器、16 家实时额度接口、`data/omtp/` 文件规格 |
+| 🔌 [**本地网关与服务端架构参考 (docs/gateway.md)**](./docs/gateway.md) | 网关端口与鉴权、24 条插件 HTTP 路由、9 类协议适配器、21 家服务商 / 16 类额度适配器、`data/omtp/` 文件规格 |
 | 🛠️ [**开发者 API 与构建指南 (docs/developer.md)**](./docs/developer.md) | `globalThis.OMTP` 完整方法与事件、选择器语法规则、目录与人格快照构建脚本、本地 Mock 零成本调试 |
 | 🧪 [**端到端验证清单 (tests/e2e/README.md)**](./tests/e2e/README.md) | 在 SillyTavern 中手工验证原生路由、网关流式转发、绑定与清理回滚的步骤说明 |
 | 🤝 [**贡献指南与模块架构 (CONTRIBUTING.md)**](./CONTRIBUTING.md) | 仓库目录全景、双层独立契约、质量护栏、代码风格与 PR 提交流程 |

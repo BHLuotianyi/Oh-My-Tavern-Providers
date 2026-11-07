@@ -16,7 +16,7 @@ import { freshLiveModels, loadLiveModels, saveLiveModels } from './lib/live-mode
 import { CatalogService } from './lib/catalog-service.mjs';
 import { GatewayServer, asyncHandler, buildGatewayContext, credentialStorageId, resolveProviderCredentials } from './lib/gateway-server.mjs';
 import { buildModelsProbe, buildProviderContext, isSupportedAdapter, SUPPORTED_ADAPTERS, userAgentSpoofEnabled } from './lib/provider-config.mjs';
-import { parseStructuredCredential } from './lib/oauth.mjs';
+import { parseStructuredCredential, resolveAccessToken } from './lib/oauth.mjs';
 import { importFromOmp } from './lib/import-omp.mjs';
 import { installProxyFetch } from './lib/proxy-fetch.mjs';
 import { getAdapter } from './lib/adapters/index.mjs';
@@ -25,6 +25,8 @@ import { headerHookSupported } from './lib/custom-logins/kimi-fingerprint.mjs';
 import { USAGE_PROVIDERS, fetchProviderUsage } from './lib/usage.mjs';
 import { loginEnv } from './lib/oauth-clients.mjs';
 import { UsageStats } from './lib/stats.mjs';
+import { checkTrustedClient } from './lib/client-guard.mjs';
+import { validateBaseUrl } from './lib/catalog-safety.mjs';
 import { ensureStatsServer, statsServerStatus, stopStatsServer } from './lib/stats-server.mjs';
 import {
     cancelLogin,
@@ -204,15 +206,19 @@ function clearAuthFailure(providerId) {
 }
 
 /**
- * Human-readable tail of a stored key: structured credentials expose their
- * account email when known, otherwise the last four characters.
+ * Human-readable tail of a stored key. OAuth credentials carry an account
+ * email, but returning it verbatim would expose PII on a management route;
+ * mask the local part and keep only the last four characters otherwise.
  * @param {{apiKey?:string}} resolved
  * @returns {string}
  */
 function describeLast4(resolved) {
     if (!resolved.apiKey) return '';
     const structured = parseStructuredCredential(resolved.apiKey);
-    if (structured?.email) return structured.email;
+    if (structured?.email) {
+        const [local, domain] = String(structured.email).split('@');
+        return domain ? `${(local || '').slice(0, 1) || '*'}***@${domain}` : String(structured.email).slice(-4);
+    }
     if (structured?.access) return structured.access.slice(-4);
     return resolved.apiKey.slice(-4);
 }
@@ -613,6 +619,13 @@ function registerProviderRoutes(router) {
         if (patch.models !== undefined && !Array.isArray(patch.models)) {
             throw new HttpError(400, 'models must be an array', 'invalid_models');
         }
+        if (patch.baseUrl !== undefined && patch.baseUrl !== null && patch.baseUrl !== '') {
+            try {
+                patch.baseUrl = validateBaseUrl(patch.baseUrl);
+            } catch (error) {
+                throw new HttpError(400, error instanceof Error ? error.message : 'Invalid base URL', 'invalid_base_url');
+            }
+        }
         if (Object.keys(patch).length === 0) throw new HttpError(400, 'No config fields supplied', 'invalid_config');
         await current.keyStore.setProviderConfig(providerId, patch);
         current.catalogService.invalidate();
@@ -735,8 +748,13 @@ function registerStatsRoutes(router) {
                 if (!resolved?.apiKey) {
                     continue;
                 }
+                // Subscription credentials expire: refresh before the quota
+                // call, exactly like the gateway context does. Otherwise the
+                // usage page reports 401 while chat completions still work.
+                const access = await resolveAccessToken(resolved, current.keyStore, fetch, current.root).catch(() => null);
+                const usageConfig = access?.apiKey ? { ...resolved, apiKey: access.apiKey } : resolved;
                 const spoofUserAgent = provider.requestHeaders?.spoofUserAgent || '';
-                rows.push(await fetchProviderUsage(provider.id, resolved, {
+                rows.push(await fetchProviderUsage(provider.id, usageConfig, {
                     refresh,
                     label: resolved.label,
                     installId: await ensureInstallId(current.root),
@@ -845,7 +863,14 @@ function registerConfigRoutes(router) {
         const patch = {};
         if (typeof body.autoStart === 'boolean') patch.autoStart = body.autoStart;
         if (body.port !== undefined) patch.port = body.port;
-        if (typeof body.requireAuth === 'boolean') patch.requireAuth = body.requireAuth;
+        if (typeof body.requireAuth === 'boolean') {
+            // Turning the gateway into an unauthenticated endpoint must be an
+            // explicit, interactive decision, never a side effect of a script.
+            if (body.requireAuth === false && body.confirmInsecure !== true) {
+                throw new HttpError(400, 'Disabling gateway authentication requires an explicit confirmation', 'insecure_gateway_confirmation_required');
+            }
+            patch.requireAuth = body.requireAuth;
+        }
         const before = await loadConfig(current.root);
         const config = await saveConfig(current.root, patch);
         const changed = config.autoStart !== before.autoStart
@@ -899,6 +924,18 @@ function registerImportRoutes(router) {
  * @param {any} router
  */
 function registerRoutes(router) {
+    // SillyTavern authenticates plugin routes, but a browser page on another
+    // origin can still reach a loopback server. Require the OMTP client header
+    // on every management call so a foreign page has to pass a CORS preflight
+    // it will not get. See lib/client-guard.mjs for the strict Host option.
+    router.use((req, res, next) => {
+        const check = checkTrustedClient(req);
+        if (!check.ok) {
+            next(new HttpError(403, `OMTP management request rejected (${check.reason})`, 'untrusted_client'));
+            return;
+        }
+        next();
+    });
     registerProviderRoutes(router);
     registerStatsRoutes(router);
     registerLoginRoutes(router);

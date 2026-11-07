@@ -5,6 +5,7 @@ import {
   createFinishEmitter,
   hasCredential,
   invalidMessages,
+  joinUrl,
   missingApiKey,
   missingBaseUrl,
   newCompletionId,
@@ -279,7 +280,8 @@ export async function chat(req, ctx) {
   if (payload.error) return invalidMessages();
 
   return runJsonAdapter({
-    url: `${trimSlash(resolveBaseUrl(ctx.baseUrl, ctx.extraConfig || {}))}/responses`,
+    // Avoid `/responses/responses` when the user supplied a full endpoint.
+    url: joinUrl(resolveBaseUrl(ctx.baseUrl, ctx.extraConfig || {}), '/responses'),
     headers: { 'Content-Type': 'application/json', ...authHeaders(ctx) },
     payload,
     label: 'Responses',

@@ -38,7 +38,10 @@ export async function chat(req, ctx) {
 }
 
 export async function listModels(ctx) {
-  const base = trimSlash(ctx?.baseUrl || 'http://127.0.0.1:11434');
+  const configured = trimSlash(ctx?.baseUrl || 'http://127.0.0.1:11434');
+  // Chat uses the `.../v1` OpenAI-compatible base, but native discovery lives
+  // at the origin. Keeping `/v1` produced `/v1/api/tags` and `/v1/v1/models`.
+  const base = configured.replace(/\/v\d+$/, '');
   const doFetch = ctx?.fetchImpl || fetch;
   try {
     const response = await doFetch(`${base}/api/tags`, { signal: ctx?.signal });

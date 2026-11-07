@@ -26,4 +26,29 @@ if (typeof window !== 'undefined' && typeof document === 'object') {
     } else {
         setTimeout(autoInit, 0);
     }
+
+    // Old hosts never call the disable/clean hooks, so disabling the extension
+    // there used to leave Custom OpenAI pointing at 127.0.0.1:4100. Poll the
+    // host's disabled list and run the same teardown a modern host would.
+    // Removing the files entirely still needs a manual restore (nothing is
+    // loaded after the next reload) — documented in the README.
+    const parts = new URL(import.meta.url).pathname.split('/');
+    const thirdPartyIndex = parts.indexOf('third-party');
+    const extensionId = thirdPartyIndex >= 0
+        ? `third-party/${parts[thirdPartyIndex + 1]}`
+        : 'third-party/omtp-model-hub';
+    const watcher = setInterval(async () => {
+        let disabled = false;
+        try {
+            const { extension_settings } = await import('../../../extensions.js');
+            disabled = Array.isArray(extension_settings?.disabledExtensions)
+                && extension_settings.disabledExtensions.includes(extensionId);
+        } catch {
+            return;
+        }
+        if (!disabled) return;
+        clearInterval(watcher);
+        disable().catch((err) => console.warn('[omtp] legacy teardown failed', err));
+    }, 3000);
+    watcher.unref?.();
 }

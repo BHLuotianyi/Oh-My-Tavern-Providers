@@ -123,3 +123,14 @@ npm run mock
 - **新鲜度**：5 分钟内（`LIVE_MODELS_TTL`）的结果直接命中、不再请求；超过 5 分钟一律重新探测。**没有回退**：探测失败时接口返回 `ok: false` 与错误信息，绝不会把过期列表当成可用结果返回，避免用户选中上游已下架的模型；`?refresh=true` 同样直接返回真实结果或错误。
 - **容量与容错**：最多保留 128 家服务商（`LIVE_MODELS_MAX_PROVIDERS`，按最近探测时间裁剪），超出新鲜期的条目在读写时丢弃；文件缺失、损坏或版本不符时按空缓存启动。
 - **隐私**：只缓存模型 id 与元数据，不缓存密钥。逻辑位于 `server-plugin/lib/live-models-store.mjs`，由 `tests/unit/live-models-store.test.mjs` 覆盖。
+
+
+## 附：直接调用插件 HTTP 接口
+
+服务端插件挂载在 `/api/plugins/omtp/*`。除 `globalThis.OMTP` 的封装外，所有请求都必须同时携带 SillyTavern 的认证头与 `x-omtp-client: omtp-web`，否则返回 403：
+
+```js
+const res = await fetch('/api/plugins/omtp/status', {
+  headers: { ...getRequestHeaders(), 'x-omtp-client': 'omtp-web' },
+});
+```

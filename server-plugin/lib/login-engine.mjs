@@ -868,7 +868,7 @@ async function handleCallback(session, req, res) {
     /** @type {NodeJS.Timeout|undefined} */
     let guard;
     await Promise.race([
-        finishWithCode(session, { code, state }).catch((err) => logError('callback exchange failed', err)),
+        finishWithCode(session, { code, state }, { requireState: true }).catch((err) => logError('callback exchange failed', err)),
         // A tunneled POST may spend up to 30 s in CONNECT alone (see
         // `openTunnel`), so the page has to outwait that before it reports a
         // failure the session does not share.
@@ -1057,12 +1057,18 @@ function completeInBackground(session, promise, target, keyStore) {
  * Complete an `oauth-code` session from a callback or a pasted value.
  * @param {any} session
  * @param {{code: string, state?: string}} input
+ * @param {{requireState?: boolean}} [options] true for the loopback callback,
+ *   where omitting `state` would defeat the CSRF binding
  */
-async function finishWithCode(session, input) {
+async function finishWithCode(session, input, { requireState = false } = {}) {
     if (session.status !== 'pending') return;
-    if (session.state && input.state && input.state !== session.state) {
+    // A missing state used to short-circuit this check entirely. Browser
+    // callbacks must carry the exact state; a user pasting a bare code is an
+    // explicit action and may omit it, but a *wrong* state is always rejected.
+    const stateMismatch = session.state && input.state !== session.state;
+    if (stateMismatch && (requireState || input.state !== undefined)) {
         session.status = 'error';
-        session.error = 'State mismatch — restart the login';
+        session.error = 'State missing or mismatched — paste the full callback URL or restart the login';
         return;
     }
     try {

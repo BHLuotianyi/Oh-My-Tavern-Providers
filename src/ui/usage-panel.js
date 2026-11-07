@@ -5,8 +5,10 @@
  * `{ windows: [{ label, usedPercent, remainingPercent, resetAt }] }`; this file
  * only renders it.
  */
-import { getRequestHeaders } from '../../../../../../script.js';
-import { API_BASE } from '../constants.js';
+import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
+
+const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
+import { API_BASE, withClientHeader } from '../constants.js';
 import { currentChatId, ensureUsageSession } from '../usage-session.js';
 import { tr, trf } from './dom.js';
 import { el, formatTokens, formatUsd } from './helpers.js';

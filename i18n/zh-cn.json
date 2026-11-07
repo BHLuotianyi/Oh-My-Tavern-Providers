@@ -1,4 +1,7 @@
 {
+    "omtp_invalid_url": "请输入不带查询参数的有效 http(s) 地址。",
+    "omtp_gateway_insecure_title": "关闭网关鉴权？",
+    "omtp_gateway_insecure_body": "关闭后，本机任意进程都可以使用本地网关以及 OMTP 已保存的 API Key。请仅在你完全信任这台机器时关闭。",
     "omtp_topbar_title": "OMTP 模型中心",
     "omtp_hub_title": "OMTP 模型中心",
     "omtp_switch_model": "切换模型",

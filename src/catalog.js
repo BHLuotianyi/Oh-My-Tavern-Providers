@@ -6,13 +6,16 @@
  * the bundled snapshot so native selection keeps working without the plugin.
  */
 
-import { getRequestHeaders } from '../../../../../script.js';
+import { getRequestHeaders as stRequestHeaders } from '../../../../../script.js';
+
+const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
 import { extension_settings } from '../../../../extensions.js';
 import {
     API_BASE,
     CATALOG_SCHEMA_VERSION,
     NATIVE_PROVIDER_IDS,
     PROFILE_PROVIDER_ID,
+    withClientHeader,
 } from './constants.js';
 import { getNativeAdapter } from './adapters/native.js';
 import { tr } from './ui/dom.js';

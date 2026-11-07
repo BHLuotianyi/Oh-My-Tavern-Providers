@@ -122,17 +122,43 @@ export class KeyStore {
      */
     async _loadOrCreateMasterKey() {
         const keyPath = omtpPath(this.root, MASTER_KEY_FILE);
+        let missing = false;
         try {
             const raw = (await fs.promises.readFile(keyPath, 'utf8')).trim();
             if (/^[0-9a-f]{64}$/i.test(raw)) {
                 this._masterKey = Buffer.from(raw, 'hex');
                 return this._masterKey;
             }
-            logError('master key invalid; regenerating (stored provider configs will need re-entry)', new Error('invalid master.key'));
+            // Never regenerate over an existing (but unreadable) key: that
+            // silently makes every stored credential undecryptable. Keep a
+            // copy so the user can restore it, then fail loudly.
+            try {
+                await fs.promises.copyFile(keyPath, `${keyPath}.corrupt-${Date.now()}`);
+            } catch (backupError) {
+                logError('could not back up the invalid master key', backupError);
+            }
+            throw new KeyStoreUnreadableError('OMTP master.key is invalid; the original was backed up. Restore it or re-enter provider keys.');
         } catch (error) {
+            if (error instanceof KeyStoreUnreadableError) throw error;
             if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') {
-                if (error instanceof KeyStoreUnreadableError) throw error;
+                logError('master key could not be read', error);
                 throw new KeyStoreUnreadableError();
+            }
+            missing = true;
+        }
+        if (missing) {
+            // A fresh install has neither file. If encrypted credentials are
+            // already present, a new key would orphan them.
+            try {
+                const existing = await fs.promises.readFile(omtpPath(this.root, PROVIDERS_FILE), 'utf8');
+                if (existing.includes(ENC_PREFIX)) {
+                    throw new KeyStoreUnreadableError('OMTP master.key is missing but encrypted credentials exist; restore the key from backup.');
+                }
+            } catch (error) {
+                if (error instanceof KeyStoreUnreadableError) throw error;
+                if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') {
+                    throw new KeyStoreUnreadableError();
+                }
             }
         }
         const key = crypto.randomBytes(32);

@@ -4,7 +4,7 @@
 import { Popup } from '../../../../../popup.js';
 import { setOnlineStatus } from '../../../../../../script.js';
 import * as engine from '../switch-engine.js';
-import { API_BASE, DEFAULT_HOTKEY, QUICK_SLOT_COUNT, SEARCH_DEBOUNCE_MS } from '../constants.js';
+import { API_BASE, DEFAULT_HOTKEY, QUICK_SLOT_COUNT, SEARCH_DEBOUNCE_MS, withClientHeader } from '../constants.js';
 import { UPDATE_POLL_MS } from '../update-check.js';
 import { supportsProviderNames } from '../provider-names.js';
 import * as loginPanel from './login-panel.js';
@@ -43,7 +43,7 @@ async function updateGatewayPill() {
     };
 
     try {
-        const res = await fetch(`${API_BASE}/status`, { signal: AbortSignal.timeout(2500) });
+        const res = await fetch(`${API_BASE}/status`, { headers: withClientHeader(), signal: AbortSignal.timeout(2500) });
         if (res.ok) {
             const data = await res.json();
             if (data.gateway?.running || data.gateway?.listening) {
@@ -70,7 +70,7 @@ async function updateGatewayPill() {
  */
 async function onGatewayPillClick() {
     try {
-        const res = await fetch(`${API_BASE}/status`);
+        const res = await fetch(`${API_BASE}/status`, { headers: withClientHeader() });
         if (res.ok) {
             const data = await res.json();
             if (data.gateway?.running || data.gateway?.listening) {
@@ -80,7 +80,7 @@ async function onGatewayPillClick() {
         }
         const restart = confirm(tr('omtp_gateway_restart_confirm', 'The local gateway is offline. Start/restart it?'));
         if (restart) {
-            await fetch(`${API_BASE}/gateway/restart`, { method: 'POST' });
+            await fetch(`${API_BASE}/gateway/restart`, { method: 'POST', headers: withClientHeader() });
             notify('info', tr('omtp_gateway_starting', 'Starting the gateway…'));
             setTimeout(updateGatewayPill, 1200);
         }

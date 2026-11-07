@@ -139,9 +139,12 @@ function buildThinking(effort, maxTokens) {
   if (!effort || effort === 'auto') return { thinking: null, maxTokens };
   const wanted = THINKING_BUDGETS[effort];
   if (!wanted) return { thinking: null, maxTokens };
-  let nextMax = maxTokens;
-  const budget = Math.min(wanted, Math.max(1024, maxTokens - 1));
-  if (budget >= nextMax) nextMax = budget + 1024;
+  // `max_tokens` is the visible answer length the caller asked for, but
+  // Anthropic counts thinking tokens against the same ceiling. Grow the
+  // ceiling by the whole budget; otherwise `budget = maxTokens - 1` leaves
+  // exactly one token for the actual reply.
+  const budget = Math.min(wanted, Math.max(1024, Math.floor(maxTokens * 0.8)));
+  const nextMax = maxTokens + budget;
   return { thinking: { type: 'enabled', budget_tokens: budget }, maxTokens: nextMax };
 }
 
