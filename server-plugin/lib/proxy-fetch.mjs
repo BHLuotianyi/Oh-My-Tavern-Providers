@@ -16,7 +16,6 @@ import https from 'node:https';
 import tls from 'node:tls';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
-import { Readable } from 'node:stream';
 
 import { log, logError } from './redact.mjs';
 
@@ -207,6 +206,48 @@ function decompressor(encoding) {
 }
 
 /**
+ * Convert a Node stream into a web ReadableStream without `Readable.toWeb`.
+ *
+ * Node 18's adapter closes its controller twice when a response body is
+ * cancelled before the socket closes (redirect handling does exactly that),
+ * surfacing as an uncaught `ERR_INVALID_STATE: Controller is already closed`.
+ * Pulling from the async iterator gives backpressure and exactly one close
+ * path on every supported Node version.
+ *
+ * @param {import('node:stream').Readable} nodeStream
+ * @returns {ReadableStream<Uint8Array>}
+ */
+function nodeStreamToWeb(nodeStream) {
+    // A no-op listener keeps a late socket error from becoming an uncaught
+    // exception; the iterator still rejects pull() when the stream fails.
+    nodeStream.on('error', () => {});
+    const iterator = nodeStream[Symbol.asyncIterator]();
+    let cancelled = false;
+    return new ReadableStream({
+        async pull(controller) {
+            try {
+                const { done, value } = await iterator.next();
+                // A pending pull can resolve after cancel(); touching the
+                // controller then is exactly the double-close Node 18 trips on.
+                if (cancelled) return;
+                if (done) controller.close();
+                else controller.enqueue(value instanceof Uint8Array ? value : Buffer.from(value));
+            } catch (error) {
+                if (!cancelled) controller.error(error);
+            }
+        },
+        async cancel() {
+            cancelled = true;
+            try {
+                if (typeof iterator.return === 'function') await iterator.return();
+            } catch {
+                // Socket already gone; nothing left to release.
+            }
+        },
+    });
+}
+
+/**
  * Perform one request through the proxy.
  *
  * @param {URL} target
@@ -273,10 +314,9 @@ async function tunnelRequest(target, proxy, init) {
     /** @type {ReadableStream|undefined} */
     let stream;
     if (decoder) {
-        const piped = response.pipe(decoder);
-        stream = /** @type {any} */ (Readable.toWeb(piped));
+        stream = nodeStreamToWeb(response.pipe(decoder));
     } else if (response.statusCode !== 204 && response.statusCode !== 304 && (init.method || 'GET') !== 'HEAD') {
-        stream = /** @type {any} */ (Readable.toWeb(response));
+        stream = nodeStreamToWeb(response);
     }
 
     const outHeaders = new Headers();
