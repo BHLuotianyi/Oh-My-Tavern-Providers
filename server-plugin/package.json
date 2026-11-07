@@ -1,7 +1,7 @@
 {
   "name": "omtp-gateway",
-  "version": "2.0.0",
-  "versionCode": 10,
+  "version": "2.0.0+nightly.20261106",
+  "versionCode": 12,
   "private": true,
   "type": "module",
   "engines": {
