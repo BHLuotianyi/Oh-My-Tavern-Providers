@@ -225,16 +225,16 @@ Node 内置的 `fetch` 不读取代理环境变量。插件启动时把全局 `f
 
 | 变量 | 作用 |
 |---|---|
-| `HTTPS_PROXY` / `https_proxy` | HTTPS 目标，经 HTTP `CONNECT` 隧道 |
+| `HTTPS_PROXY` / `https_proxy` | HTTPS 目标，经 HTTP `CONNECT` 或 SOCKS5 隧道 |
 | `HTTP_PROXY` / `http_proxy` | HTTP 目标 |
-| `ALL_PROXY` / `all_proxy` | 兜底代理，只支持 `http://` 与 `https://`，忽略 SOCKS |
+| `ALL_PROXY` / `all_proxy` | 兜底代理，支持 `http://`、`https://`、`socks5://`（`socks5h://`、`socks://` 同义），忽略 SOCKS4 |
 | `NO_PROXY` / `no_proxy` | 直连名单，支持 `*`、`*.example.com`、`.example.com`、`host:port` 与 IPv6 地址 |
 | `OMTP_DISABLE_PROXY=1` | 完全停用该实现 |
 
-没有设置这些环境变量时，插件读取操作系统的代理设置：Windows 注册表、macOS `scutil --proxy`、Linux 上 GNOME 的 `gsettings`。两者都没有时直连。Node 24 及以上且设置了 `NODE_USE_ENV_PROXY=1` 时，由 Node 自己处理代理，插件不再替换 `fetch`。
+没有可用的代理变量时，插件读取操作系统的代理设置：Windows 注册表、macOS `scutil --proxy`、Linux 上 GNOME 的 `gsettings`，结果缓存 10 秒，因此在 SillyTavern 启动后再打开 Clash 的“系统代理”也会生效。两者都没有时直连。Node 24 及以上且设置了 `NODE_USE_ENV_PROXY=1` 时，由 Node 自己处理代理，插件不再替换 `fetch`。
 
 - 回环与私有网段（`127.0.0.0/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）始终直连。
-- 隧道建立失败时改为直连，并记录一次日志。请求已经写入隧道，或上游已经响应之后的失败不会重发，避免一次补全被计费两次。
+- 隧道建立失败时改为直连，并记录一次日志；直连也失败时，错误信息同时给出代理的失败原因。请求已经写入隧道，或上游已经响应之后的失败不会重发，避免一次补全被计费两次。
 - 经隧道跟随重定向时，跳到其他源会去掉 `Authorization`、`Cookie`、`Proxy-Authorization`、`x-api-key`、`api-key`、`x-goog-api-key`。
 
 登录回调由单独的回环监听器接收，不经过代理。浏览器代理不绕过回环地址（如未设置 `--proxy-bypass-list="<-loopback>"`、使用 Proxifier 或某些安全软件的网页防护）、容器没有发布回调端口、浏览器在另一台机器上时，回调无法送达，面板会提示粘贴地址栏 URL。

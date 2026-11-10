@@ -135,14 +135,14 @@ test('NO_PROXY matches wildcard prefixes and bracketed IPv6 entries', () => {
     assert.equal(proxyFor(new URL('https://[2001:db8::4]/v1'), hostOnly)?.port, '7890');
 });
 
-test('proxyFor ignores proxy URLs that are not http or https', () => {
+test('proxyFor accepts http, https and socks5 proxies only', () => {
     const socks = { ALL_PROXY: 'socks5://user:pass@proxy.lan:1080' };
-    assert.equal(proxyFor(new URL('http://example.com/v1'), socks), null);
-    assert.equal(proxyFor(new URL('https://example.com/v1'), socks), null);
+    assert.equal(proxyFor(new URL('https://example.com/v1'), socks)?.protocol, 'socks5:');
+    assert.equal(proxyFor(new URL('https://example.com/v1'), { ALL_PROXY: 'socks4://proxy.lan:1080' }), null);
 
     const mixed = { ALL_PROXY: 'socks5://proxy.lan:1080', HTTP_PROXY: 'http://http.lan:3128' };
     assert.equal(proxyFor(new URL('http://example.com/v1'), mixed)?.hostname, 'http.lan');
-    assert.equal(proxyFor(new URL('https://example.com/v1'), mixed)?.hostname, 'http.lan');
+    assert.equal(proxyFor(new URL('https://example.com/v1'), mixed)?.hostname, 'proxy.lan');
 
     const httpAll = { ALL_PROXY: 'http://all.lan:8888' };
     assert.equal(proxyFor(new URL('https://example.com/v1'), httpAll)?.hostname, 'all.lan');
@@ -414,4 +414,85 @@ test('describeFetchFailure exposes the undici cause', () => {
     error.cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:7890'), { code: 'ECONNREFUSED' });
     assert.match(describeFetchFailure(error), /fetch failed \(ECONNREFUSED/);
     assert.equal(describeFetchFailure(new Error('boom')), 'boom');
+});
+
+test('createProxyFetch tunnels through a SOCKS5 proxy with credentials', async () => {
+    const origin = http.createServer((req, res) => res.end(`origin ${req.headers.host}`));
+    const originPort = await listen(origin);
+    const seen = [];
+    const socks = net.createServer((socket) => {
+        let stage = 0;
+        socket.on('data', (chunk) => {
+            if (stage === 0) {
+                seen.push(`methods:${[...chunk.subarray(2)].join(',')}`);
+                socket.write(Buffer.from([5, 2]));
+                stage = 1;
+            } else if (stage === 1) {
+                const ulen = chunk[1];
+                seen.push(`auth:${chunk.subarray(2, 2 + ulen)}:${chunk.subarray(3 + ulen)}`);
+                socket.write(Buffer.from([1, 0]));
+                stage = 2;
+            } else if (stage === 2) {
+                const host = chunk.subarray(5, 5 + chunk[4]).toString();
+                seen.push(`connect:${host}:${chunk.readUInt16BE(5 + chunk[4])}`);
+                const upstream = net.connect(originPort, '127.0.0.1', () => {
+                    socket.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]));
+                    upstream.pipe(socket).pipe(upstream);
+                });
+                upstream.on('error', () => socket.destroy());
+                stage = 3;
+            }
+        });
+    });
+    const socksPort = await listen(socks);
+    try {
+        const doFetch = createProxyFetch({
+            env: { ALL_PROXY: `socks5://u:p%40ss@127.0.0.1:${socksPort}` },
+            base: () => { throw new Error('must not connect directly'); },
+        });
+        const response = await doFetch('http://origin.test:8080/x');
+        assert.equal(await response.text(), 'origin origin.test:8080');
+        assert.deepEqual(seen, ['methods:0,2', 'auth:u:p@ss', 'connect:origin.test:8080']);
+    } finally {
+        await close(socks);
+        await close(origin);
+    }
+});
+
+test('installProxyFetch picks up a system proxy enabled after startup', async () => {
+    const original = globalThis.fetch;
+    const origin = http.createServer((req, res) => res.end('via proxy'));
+    const { proxy, port } = await startProxy(await listen(origin));
+    let clashOn = false;
+    let clock = 0;
+    try {
+        globalThis.fetch = async () => new Response('direct');
+        const installed = installProxyFetch({
+            env: {},
+            platform: 'darwin',
+            now: () => clock,
+            run: () => (clashOn ? `  HTTPEnable : 1\n  HTTPPort : ${port}\n  HTTPProxy : 127.0.0.1\n` : ''),
+        });
+        assert.equal(installed, false);
+        assert.equal(await (await fetch('http://origin.test/')).text(), 'direct');
+        clashOn = true;
+        assert.equal(await (await fetch('http://origin.test/')).text(), 'direct', 'cached until the TTL passes');
+        clock += 60_000;
+        assert.equal(await (await fetch('http://origin.test/')).text(), 'via proxy');
+    } finally {
+        globalThis.fetch = original;
+        await close(proxy);
+        await close(origin);
+    }
+});
+
+test('a direct failure after a failed proxy names the proxy error', async () => {
+    const doFetch = createProxyFetch({
+        env: { HTTP_PROXY: 'http://127.0.0.1:9' },
+        base: async () => {
+            throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } });
+        },
+    });
+    const error = await doFetch('http://origin.test/').catch((caught) => caught);
+    assert.match(describeFetchFailure(error), /UND_ERR_CONNECT_TIMEOUT; proxy http:\/\/127\.0\.0\.1:9: .*ECONNREFUSED/);
 });

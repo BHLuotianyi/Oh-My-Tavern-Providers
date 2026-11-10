@@ -225,16 +225,16 @@ Node's built-in `fetch` ignores proxy environment variables. On start the plugin
 
 | Variable | Effect |
 |---|---|
-| `HTTPS_PROXY` / `https_proxy` | HTTPS targets, through an HTTP `CONNECT` tunnel |
+| `HTTPS_PROXY` / `https_proxy` | HTTPS targets, through an HTTP `CONNECT` or SOCKS5 tunnel |
 | `HTTP_PROXY` / `http_proxy` | HTTP targets |
-| `ALL_PROXY` / `all_proxy` | Fallback proxy; `http://` and `https://` only, SOCKS is ignored |
+| `ALL_PROXY` / `all_proxy` | Fallback proxy; `http://`, `https://` and `socks5://` (also `socks5h://`, `socks://`); SOCKS4 is ignored |
 | `NO_PROXY` / `no_proxy` | Direct-connect list: `*`, `*.example.com`, `.example.com`, `host:port` and IPv6 literals |
 | `OMTP_DISABLE_PROXY=1` | Disables the implementation entirely |
 
-Without these variables the plugin reads the operating system's proxy settings: the Windows registry, `scutil --proxy` on macOS, GNOME's `gsettings` on Linux. With neither, requests connect directly. On Node 24 and later with `NODE_USE_ENV_PROXY=1`, Node handles the proxy itself and the plugin leaves `fetch` alone.
+Without a usable proxy variable the plugin reads the operating system's proxy settings: the Windows registry, `scutil --proxy` on macOS, GNOME's `gsettings` on Linux. The result is cached for 10 seconds, so turning on Clash's system proxy after SillyTavern started takes effect. With neither, requests connect directly. On Node 24 and later with `NODE_USE_ENV_PROXY=1`, Node handles the proxy itself and the plugin leaves `fetch` alone.
 
 - Loopback and private ranges (`127.0.0.0/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`) always connect directly.
-- If the tunnel cannot be opened, the request falls back to a direct connection and the failure is logged once. A failure after request bytes reached the tunnel, or after the origin answered, is never retried, so a completion is not billed twice.
+- If the tunnel cannot be opened, the request falls back to a direct connection and the failure is logged once; when the direct connection fails too, the error also carries the proxy's failure. A failure after request bytes reached the tunnel, or after the origin answered, is never retried, so a completion is not billed twice.
 - Redirects followed through the tunnel drop `Authorization`, `Cookie`, `Proxy-Authorization`, `x-api-key`, `api-key` and `x-goog-api-key` when they leave the origin.
 
 Sign-in callbacks are received by a separate loopback listener and never pass through the proxy. A browser proxy that does not bypass loopback (no `--proxy-bypass-list="<-loopback>"`, Proxifier, some security software web shields), a container without the callback port published, or a browser on another machine keeps the callback from arriving; the panel then asks for the address-bar URL to be pasted.

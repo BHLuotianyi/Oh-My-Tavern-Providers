@@ -1,17 +1,21 @@
 /**
  * Proxy support for outbound HTTP.
  *
- * Node's global `fetch` ignores `HTTPS_PROXY`/`HTTP_PROXY`, so behind a system
- * proxy every call dies as a bare `fetch failed`. This module wraps the global
- * fetch once, routing only the requests that need it through an HTTP CONNECT
- * tunnel, and falling back to the original fetch when the tunnel cannot be
- * established — a stale proxy variable must never break a machine whose VPN
- * works at the network layer (TUN/transparent hijack). Once request bytes have
- * been handed to the tunnel, a failure is rethrown instead: replaying the call
- * directly could bill a chat completion twice.
+ * Node's global `fetch` ignores `HTTPS_PROXY`/`HTTP_PROXY` and the OS proxy, so
+ * behind Clash/v2ray every call dies as a bare `fetch failed`. This module wraps
+ * the global fetch once, routing only the requests that need it through an HTTP
+ * CONNECT or SOCKS5 tunnel, and falling back to the original fetch when the
+ * tunnel cannot be established — a stale proxy variable must never break a
+ * machine whose VPN works at the network layer (TUN/transparent hijack). Once
+ * request bytes have been handed to the tunnel, a failure is rethrown instead:
+ * replaying the call directly could bill a chat completion twice.
+ *
+ * The OS proxy is re-read while the plugin runs (cached briefly), so turning on
+ * Clash's "system proxy" after SillyTavern started takes effect without a restart.
  */
 
 import http from 'node:http';
+import net from 'node:net';
 import https from 'node:https';
 import tls from 'node:tls';
 import zlib from 'node:zlib';
@@ -24,6 +28,16 @@ const wrapped = new WeakSet();
 
 /** Present on tunnel failures that happened after the request was written. */
 const REQUEST_SENT = Symbol('proxyFetch.requestSent');
+
+/** On a direct-connection error that followed a failed proxy attempt. */
+const PROXY_FAILURE = Symbol('proxyFetch.proxyFailure');
+
+/** Proxy schemes we can drive. */
+const SOCKS_PROTOCOLS = new Set(['socks:', 'socks5:', 'socks5h:']);
+const PROXY_PROTOCOLS = new Set(['http:', 'https:', ...SOCKS_PROTOCOLS]);
+
+/** How long a read of the OS proxy settings stays valid. */
+const SYSTEM_PROXY_TTL_MS = 10_000;
 
 /** @type {Set<number>} */
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
@@ -86,9 +100,9 @@ export function proxyFor(target, env = process.env) {
         if (!raw) continue;
         try {
             const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
-            // Only HTTP proxies can be driven with CONNECT; a SOCKS URL would
-            // otherwise burn a guaranteed failed attempt per host.
-            if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
+            // CONNECT (HTTP/HTTPS) and SOCKS5 are supported; anything else
+            // (SOCKS4) would burn a guaranteed failed attempt per host.
+            if (!PROXY_PROTOCOLS.has(url.protocol)) continue;
             if (!url.hostname) continue;
             return url;
         } catch {
@@ -122,6 +136,7 @@ function isLocalHost(host) {
  * @returns {Promise<import('node:net').Socket>}
  */
 function openTunnel(proxy, host, port, signal) {
+    if (SOCKS_PROTOCOLS.has(proxy.protocol)) return openSocksTunnel(proxy, host, port, signal);
     return new Promise((resolve, reject) => {
         const secureProxy = proxy.protocol === 'https:';
         const headers = { host: `${host}:${port}` };
@@ -149,6 +164,94 @@ function openTunnel(proxy, host, port, signal) {
         request.once('timeout', () => request.destroy(new Error('proxy CONNECT timed out')));
         request.once('error', reject);
         request.end();
+    });
+}
+
+/**
+ * Open a SOCKS5 tunnel (RFC 1928, username/password per RFC 1929). The target
+ * is always sent as a domain name so the proxy resolves it, which is what
+ * Clash's fake-IP DNS and rule matching expect.
+ *
+ * @param {URL} proxy
+ * @param {string} host
+ * @param {number} port
+ * @param {AbortSignal|undefined} signal
+ * @returns {Promise<import('node:net').Socket>}
+ */
+function openSocksTunnel(proxy, host, port, signal) {
+    return new Promise((resolve, reject) => {
+        const socket = net.connect(Number(proxy.port) || 1080, proxy.hostname);
+        let buffer = Buffer.alloc(0);
+        /** @type {((chunk: Buffer) => void)|null} */
+        let waiter = null;
+        let needed = 0;
+        const fail = (error) => {
+            cleanup();
+            socket.destroy();
+            reject(error);
+        };
+        const onAbort = () => fail(signal?.reason || new Error('aborted'));
+        const cleanup = () => {
+            socket.setTimeout(0);
+            socket.removeListener('data', onData);
+            socket.removeListener('error', fail);
+            socket.removeListener('close', onClose);
+            signal?.removeEventListener('abort', onAbort);
+        };
+        const onData = (chunk) => {
+            buffer = Buffer.concat([buffer, chunk]);
+            if (waiter && buffer.length >= needed) {
+                const take = waiter;
+                waiter = null;
+                const out = buffer.subarray(0, needed);
+                buffer = buffer.subarray(needed);
+                take(out);
+            }
+        };
+        const onClose = () => fail(new Error('SOCKS proxy closed the connection'));
+        /** @param {number} count */
+        const read = (count) => new Promise((done) => {
+            needed = count;
+            waiter = done;
+            onData(Buffer.alloc(0));
+        });
+        socket.on('data', onData);
+        socket.once('error', fail);
+        socket.once('close', onClose);
+        socket.setTimeout(30_000, () => fail(new Error('SOCKS proxy timed out')));
+        signal?.addEventListener('abort', onAbort, { once: true });
+
+        socket.once('connect', async () => {
+            try {
+                const user = proxy.username ? Buffer.from(decodeURIComponent(proxy.username)) : null;
+                const pass = Buffer.from(decodeURIComponent(proxy.password || ''));
+                socket.write(Buffer.from(user ? [5, 2, 0, 2] : [5, 1, 0]));
+                const [version, method] = await read(2);
+                if (version !== 5) throw new Error('not a SOCKS5 proxy');
+                if (method === 2 && user) {
+                    socket.write(Buffer.concat([Buffer.from([1, user.length]), user, Buffer.from([pass.length]), pass]));
+                    const [, status] = await read(2);
+                    if (status !== 0) throw new Error('SOCKS proxy rejected the credentials');
+                } else if (method !== 0) {
+                    throw new Error('SOCKS proxy requires an unsupported authentication method');
+                }
+                const name = Buffer.from(host);
+                socket.write(Buffer.concat([
+                    Buffer.from([5, 1, 0, 3, name.length]),
+                    name,
+                    Buffer.from([port >> 8, port & 0xff]),
+                ]));
+                const [, reply, , type] = await read(4);
+                if (reply !== 0) throw new Error(`SOCKS CONNECT ${host}:${port} -> code ${reply}`);
+                const addressLength = type === 1 ? 4 : type === 4 ? 16 : (await read(1))[0];
+                await read(addressLength + 2);
+                cleanup();
+                if (buffer.length) socket.unshift(buffer);
+                resolve(socket);
+            } catch (error) {
+                fail(error);
+            }
+        });
     });
 }
 
@@ -382,7 +485,8 @@ function toFetchResponse(response, method) {
 /**
  * Build a fetch implementation that honours proxy environment variables.
  *
- * @param {{env?: Record<string,string|undefined>, base?: typeof fetch}} [options]
+ * @param {{env?: Record<string,string|undefined> | (() => Record<string,string|undefined>), base?: typeof fetch}} [options]
+ *        `env` may be a function, re-evaluated per request.
  * @returns {typeof fetch}
  */
 export function createProxyFetch({ env = process.env, base = globalThis.fetch } = {}) {
@@ -399,7 +503,7 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch } 
             } catch {
                 target = null;
             }
-            const proxy = target ? proxyFor(target, env) : null;
+            const proxy = target ? proxyFor(target, typeof env === 'function' ? env() : env) : null;
             let response;
             if (!target || !proxy || !isReplayableBody(currentInit?.body) || current instanceof Request) {
                 response = await base(current, currentInit);
@@ -415,7 +519,15 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch } 
                         reported.add(proxy.href);
                         logError(`proxy ${proxy.host} failed; using a direct connection`, error);
                     }
-                    response = await base(current, currentInit);
+                    try {
+                        response = await base(current, currentInit);
+                    } catch (directError) {
+                        // Both paths failed; the proxy error is the actionable one.
+                        if (directError && typeof directError === 'object') {
+                            directError[PROXY_FAILURE] = `proxy ${proxy.protocol}//${proxy.host}: ${error?.message || error}`;
+                        }
+                        throw directError;
+                    }
                 }
             }
 
@@ -617,20 +729,25 @@ export function describeFetchFailure(error) {
     if (!/fetch failed/i.test(message)) return message;
     const cause = /** @type {any} */ (error)?.cause;
     const detail = [cause?.code, cause?.message].filter(Boolean).join(' ');
-    return detail ? `${message} (${detail})` : message;
+    const proxy = /** @type {any} */ (error)?.[PROXY_FAILURE];
+    const parts = [detail, proxy].filter(Boolean).join('; ');
+    return parts ? `${message} (${parts})` : message;
 }
 
 /**
  * Install the proxy-aware fetch as `globalThis.fetch` (idempotent).
  *
  * Adapters resolve `fetch` at call time (`ctx.fetchImpl || fetch`), so one
- * replacement covers the gateway, probes and the OAuth flows alike.
+ * replacement covers the gateway, probes and the OAuth flows alike. Proxy
+ * variables win; without a usable one the OS proxy is read, and re-read every
+ * few seconds, so toggling Clash's system proxy needs no restart.
  *
  * @param {{env?: Record<string,string|undefined>, force?: boolean, system?: boolean,
- *          platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string}} [options]
- * @returns {boolean} whether a proxy is configured
+ *          platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string,
+ *          now?: () => number}} [options]
+ * @returns {boolean} whether a proxy is configured right now
  */
-export function installProxyFetch({ env = process.env, force = false, system = true, platform, run } = {}) {
+export function installProxyFetch({ env = process.env, force = false, system = true, platform, run, now = Date.now } = {}) {
     // Node >= 24 can route its own fetch through the environment's proxy; on
     // older runtimes the variable is inert and we must install the wrapper.
     const nodeMajor = Number(String(process.versions.node || '0').split('.')[0]) || 0;
@@ -640,24 +757,33 @@ export function installProxyFetch({ env = process.env, force = false, system = t
     }
     const current = globalThis.fetch;
     if (!current || wrapped.has(current)) return false;
-    const envHasProxy = Boolean(
-        env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy || env.ALL_PROXY || env.all_proxy,
-    );
-    const systemProxy = system && !envHasProxy ? detectSystemProxy({ platform, run }) : {};
-    const effective = withSystemProxy(env, systemProxy);
-    const hasProxy = Boolean(
-        effective.HTTPS_PROXY || effective.https_proxy || effective.HTTP_PROXY || effective.http_proxy
-        || effective.ALL_PROXY || effective.all_proxy,
-    );
-    if (!hasProxy) {
-        log('no outbound proxy configured; requests connect directly');
-        return false;
-    }
-    const proxyFetch = createProxyFetch({ env: effective, base: current });
+
+    const probe = new URL('https://example.com');
+    let systemProxy = {};
+    let readAt = -Infinity;
+    let announced;
+    const resolveEnv = () => {
+        // `env` is read live: SillyTavern's requestProxy sets `all_proxy` at runtime.
+        let effective = env;
+        let source = 'environment';
+        if (system && !proxyFor(probe, env)) {
+            if (now() - readAt >= SYSTEM_PROXY_TTL_MS) {
+                systemProxy = detectSystemProxy({ platform, run });
+                readAt = now();
+            }
+            effective = withSystemProxy(env, systemProxy);
+            source = 'system';
+        }
+        const proxy = proxyFor(probe, effective);
+        const label = proxy ? `${source} proxy ${proxy.protocol}//${proxy.host}` : '';
+        if (label !== announced) {
+            announced = label;
+            log(proxy ? `outbound requests use the ${label}` : 'no outbound proxy configured; requests connect directly');
+        }
+        return effective;
+    };
+    const proxyFetch = createProxyFetch({ env: resolveEnv, base: current });
     wrapped.add(proxyFetch);
     globalThis.fetch = proxyFetch;
-    const proxy = proxyFor(new URL('https://example.com'), effective);
-    const source = envHasProxy ? 'environment' : 'system';
-    log(`outbound requests use the ${source} proxy (${proxy?.host || 'n/a'})`);
-    return true;
+    return Boolean(proxyFor(probe, resolveEnv()));
 }
