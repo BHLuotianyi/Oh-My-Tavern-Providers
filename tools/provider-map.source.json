@@ -66,6 +66,16 @@
       "gatewayAdapter": null,
       "unsupportedReason": "agent-protocol"
     },
+    "devin-cli": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "agent-protocol"
+    },
+    "devin-windsurf": {
+      "stAdapter": null,
+      "gatewayAdapter": null,
+      "unsupportedReason": "agent-protocol"
+    },
     "electronhub": {
       "stAdapter": "openai:electronhub",
       "gatewayAdapter": "openai"
@@ -196,6 +206,11 @@
       "stAdapter": null,
       "gatewayAdapter": null,
       "unsupportedReason": "oauth-required"
+    },
+    "otari": {
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "baseUrl": "https://api.otari.ai/api/v1"
     },
     "openrouter": {
       "stAdapter": "openai:openrouter",

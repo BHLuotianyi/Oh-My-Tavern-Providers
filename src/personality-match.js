@@ -35,6 +35,8 @@ function modelSegment(model) {
  * Candidates are checked in order: the model segment, then the display label.
  * A version suffix is tolerated (`muse-wonder-1-0` → `muse-wonder`) but only
  * when the remainder is purely numeric, so `grok-4-7` never matches `grok-4`.
+ * AA scores some models on their preview (`mistral-large-4-preview`), which
+ * then also covers the released model of the same name.
  *
  * @param {{model?: string, modelLabel?: string}|null} entry
  * @param {Iterable<string>} keys Known record keys.
@@ -58,7 +60,11 @@ export function matchPersonalityKey(entry, keys) {
     for (const candidate of candidates) {
         for (const key of known) {
             if (!key) continue;
-            if (candidate.startsWith(`${key}-`) && /^[0-9]+(-[0-9]+)*$/.test(candidate.slice(key.length + 1))) {
+            const base = key.endsWith('-preview') ? key.slice(0, -'-preview'.length) : key;
+            if (candidate === base) {
+                return key;
+            }
+            if (candidate.startsWith(`${base}-`) && /^[0-9]+(-[0-9]+)*$/.test(candidate.slice(base.length + 1))) {
                 return key;
             }
         }

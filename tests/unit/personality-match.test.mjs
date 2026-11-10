@@ -49,6 +49,14 @@ test('matchPersonalityKey drops a purely numeric version suffix', () => {
     );
 });
 
+test('matchPersonalityKey lets a scored preview cover the released model', () => {
+    const keys = new Set([...KEYS, 'mistral-large-4-preview']);
+    assert.equal(matchPersonalityKey({ model: 'mistral/mistral-large-4', modelLabel: 'Mistral Large 4' }, keys), 'mistral-large-4-preview');
+    assert.equal(matchPersonalityKey({ model: 'openrouter/mistralai/mistral-large-4-0', modelLabel: 'Mistral Large 4' }, keys), 'mistral-large-4-preview');
+    // A different model sharing the prefix still does not match.
+    assert.equal(matchPersonalityKey({ model: 'mistral/mistral-large-4-medium', modelLabel: 'Mistral Large 4 Medium' }, keys), null);
+});
+
 test('matchPersonalityKey returns null for unknown or missing models', () => {
     assert.equal(matchPersonalityKey(null, KEYS), null);
     assert.equal(matchPersonalityKey({ model: 'local/nonexistent' }, KEYS), null);
