@@ -77,7 +77,8 @@ npm run personality:verify  # only check the index derivation
 
 ## Catalog and personality data
 
-- **Catalog**: `tools/build-catalog.mjs` reads `packages/catalog/src/models.json` and `compat/rules.json` from an OMP checkout and combines them with `tools/provider-map.source.json` (which maps providers to SillyTavern native sources and gateway adapters) and `tools/native-adapter-keys.json` to produce both catalogs. Only chat models are kept.
+- **Catalog**: `tools/build-catalog.mjs` reads `packages/catalog/src/models.json` (compact format, decoded by `server-plugin/lib/omp-models-format.mjs`) and `compat/rules.json` from an OMP checkout and combines them with `tools/provider-map.source.json` (which maps providers to SillyTavern native sources and gateway adapters) and `tools/native-adapter-keys.json` to produce both catalogs. Only chat models are kept.
+- **Client versions**: `server-plugin/lib/client-versions.mjs` holds every impersonated client version (Claude Code, Gemini CLI, Antigravity, Kimi CLI). They follow OMP and are bumped together with the catalog: a stale version makes Anthropic reject new models ("version X or newer is required") and Antigravity hide them.
 - When the number of providers or models changes, update `CATALOG_EXPECTATIONS` in `server-plugin/lib/catalog-normalize.mjs`, or `npm run validate` fails.
 - **Personality scores**: `tools/fetch-personality.mjs` parses the AA-PersonalityBench page into `catalog/personality.json`, caching the page in `.cache/`. AA publishes the eight index values for some models only; for the rest they are derived from the published trait scores following AA's method, and every run prints published-versus-derived differences.
 

@@ -1,6 +1,7 @@
 import { KEYLESS_PROVIDERS } from './provider-config.mjs';
 import { providerEnvPrefix } from './oauth-clients.mjs';
 import { normalizeRequestHeaders } from './request-headers.mjs';
+import { decodeOmpModels } from './omp-models-format.mjs';
 
 const BASE_URL_FALLBACKS = {
     azure: 'https://YOUR_RESOURCE.openai.azure.com',
@@ -230,7 +231,8 @@ function normalizeProvider(providerId, rule, rawModels, context) {
     };
 }
 
-export function normalizeCatalog(models, rules, providerMap, { generatedAt = new Date().toISOString() } = {}) {
+export function normalizeCatalog(compactOrPlainModels, rules, providerMap, { generatedAt = new Date().toISOString() } = {}) {
+    const models = decodeOmpModels(compactOrPlainModels);
     if (!models || typeof models !== 'object' || Array.isArray(models)) {
         throw new Error('models.json must be an object keyed by provider id');
     }
@@ -269,7 +271,7 @@ export function normalizeCatalog(models, rules, providerMap, { generatedAt = new
     };
 }
 
-export const CATALOG_EXPECTATIONS = Object.freeze({ providers: 99, minModels: 5700 });
+export const CATALOG_EXPECTATIONS = Object.freeze({ providers: 104, minModels: 5700 });
 
 export function validateCatalog(catalog, { expectedProviders = CATALOG_EXPECTATIONS.providers, minModels = CATALOG_EXPECTATIONS.minModels, adapterKeys } = {}) {
     const errors = [];

@@ -77,7 +77,8 @@ npm run personality:verify  # 只检查人格指数的推导
 
 ## 目录与人格数据
 
-- **目录**：`tools/build-catalog.mjs` 读取 OMP 仓库中的 `packages/catalog/src/models.json` 与 `compat/rules.json`，结合 `tools/provider-map.source.json`（服务商到 SillyTavern 原生来源与网关适配器的映射）和 `tools/native-adapter-keys.json`，生成两份目录。只保留聊天模型。
+- **目录**：`tools/build-catalog.mjs` 读取 OMP 仓库中的 `packages/catalog/src/models.json`（紧凑格式，由 `server-plugin/lib/omp-models-format.mjs` 解码）与 `compat/rules.json`，结合 `tools/provider-map.source.json`（服务商到 SillyTavern 原生来源与网关适配器的映射）和 `tools/native-adapter-keys.json`，生成两份目录。只保留聊天模型。
+- **客户端版本**：`server-plugin/lib/client-versions.mjs` 集中存放冒充的客户端版本（Claude Code、Gemini CLI、Antigravity、Kimi CLI），以 OMP 为准，与目录一起更新。版本过旧时 Anthropic 会拒绝新模型（"version X or newer is required"），Antigravity 会隐藏新模型。
 - 服务商数量或模型数变化时，同步修改 `server-plugin/lib/catalog-normalize.mjs` 中的 `CATALOG_EXPECTATIONS`，否则 `npm run validate` 失败。
 - **人格评分**：`tools/fetch-personality.mjs` 从 AA-PersonalityBench 页面解析数据，写入 `catalog/personality.json`；页面缓存在 `.cache/`。AA 只为部分模型公布八项指数，其余模型由公开的特质分按其方法推导，每次运行都会打印公布值与推导值的差异。
 
