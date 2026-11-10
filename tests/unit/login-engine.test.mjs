@@ -383,6 +383,63 @@ test('callback reports the real exchange result and stays retryable', async () =
     }
 });
 
+test('a stateless policy completes through the loopback callback', async () => {
+    const port = 51_000 + Math.floor(Math.random() * 8_000);
+    const stored = {};
+    const started = await startLogin('openrouter', { ...openrouterPolicy, callback: { hostname: '127.0.0.1', port, path: '/callback' } }, {
+        keyStore: { async setProviderConfig(target, patch) { stored[target] = patch; } },
+        doFetch: async () => new Response(JSON.stringify({ key: 'sk-or-123' }), { status: 200 }),
+    });
+    try {
+        // OpenRouter redirects with `?code=` only; there is no state to echo.
+        const response = await fetch(`http://127.0.0.1:${port}/callback?code=or-code`);
+        await response.text();
+        assert.equal(response.status, 200);
+        assert.equal(getSession(started.id).status, 'done');
+        assert.ok(stored.openrouter?.apiKey);
+    } finally {
+        cancelLogin(started.id);
+    }
+});
+
+test('foreign and duplicate callbacks cannot spoil a pending sign-in', async () => {
+    const port = 51_000 + Math.floor(Math.random() * 8_000);
+    let exchanges = 0;
+    /** @type {(value?: unknown) => void} */
+    let release = () => {};
+    const gate = new Promise((resolve) => { release = resolve; });
+    const doFetch = async () => {
+        exchanges += 1;
+        await gate;
+        if (exchanges > 1) return new Response('{"error":"invalid_grant"}', { status: 400 });
+        return new Response(JSON.stringify({ access_token: 'access', refresh_token: 'refresh', expires_in: 3600 }), { status: 200 });
+    };
+    const started = await startLogin('anthropic', { ...anthropicPolicy, callback: { hostname: '127.0.0.1', port, path: '/callback' } }, {
+        keyStore: { async setProviderConfig() {} },
+        doFetch,
+    });
+    try {
+        const state = new URL(started.url).searchParams.get('state');
+        // Any page can aim at the loopback port; without the state it is not ours.
+        const foreign = await fetch(`http://127.0.0.1:${port}/callback?error=access_denied&state=forged`);
+        await foreign.text();
+        assert.equal(foreign.status, 400);
+        assert.equal(getSession(started.id).status, 'pending');
+
+        const callbackUrl = `http://127.0.0.1:${port}/callback?code=auth-code&state=${state}`;
+        const first = fetch(callbackUrl);
+        const second = fetch(callbackUrl);
+        setTimeout(release, 50);
+        const pages = await Promise.all([first, second]);
+        await Promise.all(pages.map((page) => page.text()));
+        assert.deepEqual(pages.map((page) => page.status), [200, 200]);
+        assert.equal(exchanges, 1);
+        assert.equal(getSession(started.id).status, 'done');
+    } finally {
+        cancelLogin(started.id);
+    }
+});
+
 test('sweep aborts a background device poll', async () => {
     const doFetch = async (url) => {
         if (String(url).endsWith('/usercode')) {

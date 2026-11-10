@@ -68,6 +68,7 @@ const CALLBACK_TEXT = {
         done: 'Login complete. You can close this tab and return to SillyTavern.',
         failed: 'Login failed. You can close this tab and start again from SillyTavern.',
         missing: 'The provider did not return an authorization code.',
+        mismatch: 'This callback does not belong to the current sign-in; SillyTavern is still waiting for it.',
         manual: 'If SillyTavern did not switch to signed in by itself, copy the address below, paste it into the input box in SillyTavern and click Submit.',
         copy: 'Copy',
         copied: 'Copied',
@@ -77,6 +78,7 @@ const CALLBACK_TEXT = {
         done: '登录成功，可以关闭此页面并返回 SillyTavern。',
         failed: '登录失败，可以关闭此页面并在 SillyTavern 中重试。',
         missing: '服务商没有返回授权码。',
+        mismatch: '此回调不属于当前登录请求，SillyTavern 仍在等待登录完成。',
         manual: '如果此时酒馆页面没有自动成功，请复制以下内容到输入框并点击提交。',
         copy: '复制',
         copied: '已复制',
@@ -117,7 +119,7 @@ function escapeHtml(value) {
 
 /**
  * Minimal standalone page for the callback.
- * @param {'done'|'failed'|'missing'} outcome
+ * @param {'done'|'failed'|'missing'|'mismatch'} outcome
  * @param {string} locale
  * @param {string} [requestUrl] full callback URL, for the manual paste fallback
  */
@@ -673,7 +675,9 @@ function composeInstructions(instructions, note) {
  * @returns {Promise<{id:string, kind:string, url:string, redirectUri:string, manual:boolean, instructions:string}>}
  */
 async function startOauthCode(providerId, login, { keyStore, env, doFetch, locale }) {
-    const state = createState();
+    // Policies without a state parameter (OpenRouter) get none back on the
+    // callback; expecting one there would reject every browser redirect.
+    const state = login.state === 'none' ? '' : createState();
     const pkce = login.pkce ? createPkcePair() : { verifier: '', challenge: '' };
     const options = resolveCallbackOptions(login.callback || {}, env);
     const session = remember({
@@ -855,6 +859,15 @@ async function handleCallback(session, req, res) {
         res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' })
             .end(callbackPage(outcome, locale, callbackUrl));
     };
+    // A callback that does not carry this session's state is not the
+    // provider's redirect for it (another page, a stale tab): answer without
+    // touching the session or releasing the port, or any page could abort an
+    // in-progress sign-in with `?error=…`.
+    if (session.state && state !== session.state) {
+        res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' })
+            .end(callbackPage('mismatch', locale, callbackUrl));
+        return;
+    }
     if (error) {
         session.status = 'error';
         session.error = url.searchParams.get('error_description') || error;
@@ -1061,6 +1074,10 @@ function completeInBackground(session, promise, target, keyStore) {
  *   where omitting `state` would defeat the CSRF binding
  */
 async function finishWithCode(session, input, { requireState = false } = {}) {
+    // A second callback hit (reload, prefetch) or a paste while the exchange
+    // runs must share it: redeeming the same code twice fails upstream and
+    // used to overwrite a stored login with an error.
+    if (session.exchanging) return session.exchanging;
     if (session.status !== 'pending') return;
     // A missing state used to short-circuit this check entirely. Browser
     // callbacks must carry the exact state; a user pasting a bare code is an
@@ -1071,34 +1088,39 @@ async function finishWithCode(session, input, { requireState = false } = {}) {
         session.error = 'State missing or mismatched — paste the full callback URL or restart the login';
         return;
     }
-    try {
-        const { credential, raw } = await exchangeCode(session.login, {
-            code: input.code,
-            verifier: session.verifier,
-            redirectUri: session.redirectUri,
-            provider: session.providerId,
-            result: session.login.result || '',
-        }, session.doFetch, session.env);
-        // Hooks enrich (recover identity, mint a durable key) after the exchange
-        // and before storing, so the key store only ever holds a usable one.
-        const enriched = await applyAfterExchange(session.login.afterExchange, credential, {
-            provider: session.providerId,
-            phase: 'login',
-            raw,
-            fetch: session.doFetch,
-            env: session.env,
-        });
-        await session.keyStore.setProviderConfig(credentialTarget(session.login, session.providerId), {
-            apiKey: credentialToStore(enriched),
-        });
-        session.credential = enriched;
-        session.status = 'done';
-    } catch (error) {
-        session.status = 'error';
-        session.error = String(error?.message || error);
-    }
+    session.exchanging = (async () => {
+        try {
+            const { credential, raw } = await exchangeCode(session.login, {
+                code: input.code,
+                verifier: session.verifier,
+                redirectUri: session.redirectUri,
+                provider: session.providerId,
+                result: session.login.result || '',
+            }, session.doFetch, session.env);
+            // Hooks enrich (recover identity, mint a durable key) after the exchange
+            // and before storing, so the key store only ever holds a usable one.
+            const enriched = await applyAfterExchange(session.login.afterExchange, credential, {
+                provider: session.providerId,
+                phase: 'login',
+                raw,
+                fetch: session.doFetch,
+                env: session.env,
+            });
+            await session.keyStore.setProviderConfig(credentialTarget(session.login, session.providerId), {
+                apiKey: credentialToStore(enriched),
+            });
+            session.credential = enriched;
+            session.status = 'done';
+        } catch (error) {
+            session.status = 'error';
+            session.error = String(error?.message || error);
+        } finally {
+            session.exchanging = null;
+        }
+    })();
     // The listener is closed by the caller: cancelling here would destroy the
     // connection the callback page is still being written to.
+    return session.exchanging;
 }
 
 /**
