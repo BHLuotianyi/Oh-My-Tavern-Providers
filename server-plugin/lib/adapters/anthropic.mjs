@@ -18,9 +18,9 @@ import {
   usageFrame,
 } from './openai.mjs';
 import { openAIChunk } from '../sse.mjs';
+import { claudeCliUserAgent } from '../client-versions.mjs';
 
 export const id = 'anthropic';
-export const DEFAULT_CLAUDE_CODE_VERSION = '2.1.280';
 export const CLAUDE_CODE_SYSTEM_INSTRUCTION = "You are Claude Code, Anthropic's official CLI for Claude.";
 export const CLAUDE_CODE_BETAS = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27';
 
@@ -304,7 +304,7 @@ function anthropicHeaders(ctx, extra = {}) {
     'anthropic-version': extra.anthropicVersion || ANTHROPIC_VERSION,
     ...(isClaudeCode(ctx)
       ? {
-          'User-Agent': `claude-cli/${extra.claudeCodeVersion || DEFAULT_CLAUDE_CODE_VERSION} (external, cli)`,
+          'User-Agent': claudeCliUserAgent(),
           'anthropic-beta': extra.anthropicBeta || CLAUDE_CODE_BETAS,
           ...(ctx.apiKey ? { Authorization: `Bearer ${ctx.apiKey.replace(/^oauth:/, '').trim()}` } : {}),
         }

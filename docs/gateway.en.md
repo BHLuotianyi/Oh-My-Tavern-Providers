@@ -269,6 +269,7 @@ Back up `master.key` together with `providers.json`: without the master key, enc
 | `OMTP_ALLOWED_HOSTS` | Comma-separated hosts added to that allow list |
 | `OMTP_OMP_CATALOG_ROOTS` | Extra OMP directories allowed for import, separated by the system path delimiter |
 | `OMTP_<PROVIDER>_CLIENT_ID`, `OMTP_<PROVIDER>_CLIENT_SECRET` | Override OAuth client credentials |
+| `PI_AI_CLAUDE_CODE_VERSION`, `PI_AI_GEMINI_CLI_VERSION`, `PI_AI_ANTIGRAVITY_VERSION`, `PI_AI_ANTIGRAVITY_CL` | Override the client versions reported to providers (defaults in `lib/client-versions.mjs`). Raise the Claude Code version temporarily when Anthropic rejects it as too old |
 | Key variables declared by the catalog (such as `OPENAI_API_KEY`) | Third credential source |
 
 ## Security boundaries

@@ -28,6 +28,7 @@
  * `packages/ai/src/registry/oauth/{anthropic,openai-codex,google-gemini-cli,google-antigravity,zai,gitlab-duo,factory-droid,muse-code}.ts`.
  */
 import { log } from './redact.mjs';
+import { antigravityUserAgent, claudeCodeVersion, geminiCliUserAgent } from './client-versions.mjs';
 
 /**
  * Upstream error bodies can echo tokens, and request URLs often carry a
@@ -58,13 +59,10 @@ class AfterExchangeError extends Error {}
 /** Bootstrap endpoint Claude Code reports the signed-in account/org on. */
 const ANTHROPIC_BOOTSTRAP_URL = 'https://api.anthropic.com/api/claude_cli/bootstrap';
 const ANTHROPIC_BOOTSTRAP_MODEL = 'claude-opus-4-8';
-/** Pinned Claude Code CLI version used in the bootstrap User-Agent. */
-const DEFAULT_CLAUDE_CODE_VERSION = '2.1.280';
 
 /** Cloud Code Assist host for Gemini CLI accounts. */
 const GEMINI_CODE_ASSIST_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
 const GEMINI_DEFAULT_MODEL = 'gemini-3.1-pro-preview';
-const GEMINI_CLI_VERSION = '0.46.0';
 const GEMINI_POLL_INTERVAL_MS = 5_000;
 const GEMINI_POLL_MAX_ATTEMPTS = 24;
 const TIER_FREE = 'free-tier';
@@ -76,7 +74,6 @@ const ANTIGRAVITY_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
 const ANTIGRAVITY_FREE_TIER = 'free-tier';
 const ANTIGRAVITY_ONBOARD_TIMEOUT_MS = 30_000;
 const ANTIGRAVITY_ONBOARD_POLL_MS = 1_000;
-const ANTIGRAVITY_DEFAULT_VERSION = '2.19.1';
 
 const ZAI_DEFAULT_BIZ_BASE = 'https://api.z.ai';
 const ZAI_DEFAULT_BUSINESS_LOGIN_URL = 'https://api.z.ai/api/auth/z/login';
@@ -252,7 +249,7 @@ function formatGoogleValidationRequiredMessage(validationUrl, nextAction, email)
  */
 async function fetchAnthropicBootstrapIdentity(token, context) {
     const url = `${ANTHROPIC_BOOTSTRAP_URL}?entrypoint=cli&model=${encodeURIComponent(ANTHROPIC_BOOTSTRAP_MODEL)}`;
-    const version = envValue(context.env, 'PI_AI_CLAUDE_CODE_VERSION') || DEFAULT_CLAUDE_CODE_VERSION;
+    const version = claudeCodeVersion(context.env || {});
     const response = await context.fetch(url, {
         method: 'GET',
         headers: {
@@ -371,33 +368,6 @@ async function openaiCodexProfile(credential, context) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Gemini CLI identifies itself to unlock higher rate limits; the platform and
- * arch are host facts, the version/format mirror the official client.
- * @param {Record<string,string|undefined>} env
- * @returns {string}
- */
-function geminiCliUserAgent(env) {
-    const version = envValue(env, 'PI_AI_GEMINI_CLI_VERSION') || GEMINI_CLI_VERSION;
-    const platform = process.platform === 'win32' ? 'win32' : process.platform;
-    const arch = process.arch === 'x64' ? 'x64' : process.arch;
-    return `GeminiCLI/${version}/${GEMINI_DEFAULT_MODEL} (${platform}; ${arch}; terminal)`;
-}
-
-/**
- * Antigravity's control plane is gated on the client version; os/arch/cl are
- * pinned to the reference client the constants were captured from.
- * @param {Record<string,string|undefined>} env
- * @returns {string}
- */
-function antigravityUserAgent(env) {
-    const version = envValue(env, 'PI_AI_ANTIGRAVITY_VERSION') || ANTIGRAVITY_DEFAULT_VERSION;
-    const cl = envValue(env, 'PI_AI_ANTIGRAVITY_CL') || '963137146';
-    const os = envValue(env, 'PI_AI_ANTIGRAVITY_OS') || 'darwin';
-    const arch = envValue(env, 'PI_AI_ANTIGRAVITY_ARCH') || 'arm64';
-    return `antigravity/hub/${version} (aidev_client; os_type=${os}; arch=${arch}; cl=${cl})`;
-}
-
-/**
  * The default tier is the first `isDefault` entry, else legacy.
  * @param {any} allowedTiers
  */
@@ -459,7 +429,7 @@ async function discoverGeminiProject(accessToken, context) {
     const headers = {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
-        'User-Agent': geminiCliUserAgent(env),
+        'User-Agent': geminiCliUserAgent(GEMINI_DEFAULT_MODEL, env),
         'Client-Metadata': 'ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI',
     };
     const projectRequired = 'This account requires setting the GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_PROJECT_ID environment variable. '

@@ -10,9 +10,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { KIMI_CLI_VERSION } from '../client-versions.mjs';
 
-/** Sanitised against Kimi's CLI version at the time of porting. */
-const CLI_VERSION = '18.12.6';
 const DEVICE_ID_FILE = 'kimi-device-id';
 
 /** @type {Map<string, string>} */
@@ -59,9 +58,9 @@ function header(value) {
 export function headersForHook(name, root) {
     if (name !== 'kimi-fingerprint') return {};
     return {
-        'User-Agent': `KimiCLI/${CLI_VERSION}`,
+        'User-Agent': `KimiCLI/${KIMI_CLI_VERSION}`,
         'X-Msh-Platform': 'kimi_cli',
-        'X-Msh-Version': CLI_VERSION,
+        'X-Msh-Version': KIMI_CLI_VERSION,
         'X-Msh-Device-Name': header(os.hostname()),
         'X-Msh-Device-Model': header(os.machine?.() || 'unknown'),
         'X-Msh-Os-Version': header(os.version()),

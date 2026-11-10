@@ -269,6 +269,7 @@ Node 内置的 `fetch` 不读取代理环境变量。插件启动时把全局 `f
 | `OMTP_ALLOWED_HOSTS` | 逗号分隔，追加到 Host 白名单 |
 | `OMTP_OMP_CATALOG_ROOTS` | 追加允许导入的 OMP 目录，以系统路径分隔符分隔 |
 | `OMTP_<服务商>_CLIENT_ID`、`OMTP_<服务商>_CLIENT_SECRET` | 覆盖 OAuth 客户端凭据 |
+| `PI_AI_CLAUDE_CODE_VERSION`、`PI_AI_GEMINI_CLI_VERSION`、`PI_AI_ANTIGRAVITY_VERSION`、`PI_AI_ANTIGRAVITY_CL` | 覆盖向服务商报告的客户端版本（默认值见 `lib/client-versions.mjs`）。Anthropic 拒绝过旧的 Claude Code 版本时可临时调高 |
 | 目录声明的密钥变量（如 `OPENAI_API_KEY`） | 第三级凭据来源 |
 
 ## 安全边界

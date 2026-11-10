@@ -15,6 +15,7 @@
  *   }
  */
 import { parseStructuredCredential } from './oauth.mjs';
+import { antigravityUserAgent, claudeCliUserAgent } from './client-versions.mjs';
 
 const REQUEST_TIMEOUT_MS = 12_000;
 const CACHE_TTL_MS = 60_000;
@@ -172,7 +173,7 @@ async function anthropicUsage(id, resolved, doFetch) {
         accept: 'application/json',
         'content-type': 'application/json',
         'anthropic-beta': 'oauth-2025-04-20',
-        'User-Agent': 'claude-cli/2.0.0 (external, cli)',
+        'User-Agent': claudeCliUserAgent(),
     };
     const response = await getJson(doFetch, 'https://api.anthropic.com/api/oauth/usage', headers);
     if (!response.ok) return httpFailure(response);
@@ -225,7 +226,7 @@ async function antigravityUsage(id, resolved, doFetch) {
     const headers = {
         Authorization: `Bearer ${token}`,
         Accept: '*/*',
-        'User-Agent': 'antigravity/hub/2.19.1 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)',
+        'User-Agent': antigravityUserAgent(),
     };
     const response = await postJson(doFetch, `${base}/v1internal:retrieveUserQuotaSummary`, { project }, headers);
     if (!response.ok) return httpFailure(response);

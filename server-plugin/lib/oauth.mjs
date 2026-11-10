@@ -9,10 +9,10 @@
  */
 import { logError } from './redact.mjs';
 import { resolveOAuthClient, policyValue } from './oauth-clients.mjs';
+import { CLAUDE_CODE_SDK_VERSION } from './client-versions.mjs';
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const ANTHROPIC_TOKEN_URL = 'https://api.anthropic.com/v1/oauth/token';
-const CLAUDE_CODE_SDK_VERSION = '0.112.1';
 const REFRESH_SKEW_MS = 300_000;
 
 /**

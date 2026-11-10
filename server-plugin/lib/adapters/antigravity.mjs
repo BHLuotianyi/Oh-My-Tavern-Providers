@@ -7,8 +7,8 @@
  *     sandbox failover) and `https://cloudcode-pa.googleapis.com` (Gemini CLI).
  *   - Wire path: `POST /v1internal:streamGenerateContent?alt=sse`.
  *   - Discovery: `POST /v1internal:fetchAvailableModels`.
- *   - User-Agent: `antigravity/hub/<version> (aidev_client; os_type=darwin; arch=arm64; cl=963137146)`
- *     or `GeminiCLI/0.46.0/<model> (<platform>; <arch>; terminal)`.
+ *   - User-Agent: `antigravity/hub/<version> (aidev_client; os_type=darwin; arch=arm64; cl=<cl>)`
+ *     or `GeminiCLI/<version>/<model> (<platform>; <arch>; terminal)`; see `client-versions.mjs`.
  *   - Claude models on Antigravity send `anthropic-beta: interleaved-thinking-2025-05-14`.
  *     Antigravity tool requests default `toolConfig.functionCallingConfig.mode` to
  *     "VALIDATED"; a non-auto `tool_choice` replaces it.
@@ -31,28 +31,18 @@ import {
 } from './openai.mjs';
 import { createGoogleStreamHandler, translateGoogleCompletion } from './google.mjs';
 import { parseStructuredCredential } from '../oauth.mjs';
+import { antigravityUserAgent, geminiCliUserAgent } from '../client-versions.mjs';
 
 export const id = 'antigravity';
 
 const ANTIGRAVITY_PRIMARY_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
 const ANTIGRAVITY_SANDBOX_ENDPOINT = 'https://daily-cloudcode-pa.sandbox.googleapis.com';
 const GEMINI_CLI_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
-export const DEFAULT_ANTIGRAVITY_VERSION = '2.19.1';
 
 /** Bypass value Cloud Code Assist accepts in place of a Gemini thought signature. */
 const SKIP_THOUGHT_SIGNATURE = 'skip_thought_signature_validator';
 
 const DISCOVERY_DENYLIST = new Set(['chat_20706', 'chat_23310', 'gemini-2.5-pro']);
-
-function getAntigravityUserAgent(version = DEFAULT_ANTIGRAVITY_VERSION) {
-  const ver = process.env.PI_AI_ANTIGRAVITY_VERSION || version;
-  return `antigravity/hub/${ver} (aidev_client; os_type=darwin; arch=arm64; cl=963137146)`;
-}
-
-function getGeminiCliUserAgent(modelId = 'gemini-3.1-pro-preview') {
-  const ver = process.env.PI_AI_GEMINI_CLI_VERSION || '0.46.0';
-  return `GeminiCLI/${ver}/${modelId} (${process.platform}; ${process.arch}; terminal)`;
-}
 
 function extractAuth(ctx) {
   const structured = ctx?.credential || parseStructuredCredential(ctx?.apiKey);
@@ -74,10 +64,10 @@ function buildAntigravityHeaders(ctx, isClaude = false) {
     Accept: 'text/event-stream',
     ...(isGeminiCli
       ? {
-          'User-Agent': getGeminiCliUserAgent(ctx?.model),
+          'User-Agent': geminiCliUserAgent(ctx?.model || 'gemini-3.1-pro-preview'),
           'Client-Metadata': 'ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI',
         }
-      : { 'User-Agent': getAntigravityUserAgent() }),
+      : { 'User-Agent': antigravityUserAgent() }),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (!isGeminiCli && isClaude) headers['anthropic-beta'] = 'interleaved-thinking-2025-05-14';
