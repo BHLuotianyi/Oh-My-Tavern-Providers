@@ -19,6 +19,7 @@ import {
 } from './openai.mjs';
 import { openAIChunk } from '../sse.mjs';
 import { claudeCliUserAgent } from '../client-versions.mjs';
+import { createBillingHeader, serializeWithAttestation } from '../claude-code-billing.mjs';
 
 export const id = 'anthropic';
 export const CLAUDE_CODE_SYSTEM_INSTRUCTION = "You are Claude Code, Anthropic's official CLI for Claude.";
@@ -326,11 +327,22 @@ function buildPayload(req, ctx, extra) {
   const { thinking, maxTokens } = buildThinking(supportsThinking ? req?.reasoning_effort : 'auto', requestedMax);
 
   const payload = { model: ctx.model, max_tokens: maxTokens, messages };
-  let finalSystem = system;
   if (isClaudeCode(ctx)) {
-    finalSystem = finalSystem ? `${CLAUDE_CODE_SYSTEM_INSTRUCTION}\n\n${finalSystem}` : CLAUDE_CODE_SYSTEM_INSTRUCTION;
+    // Claude Code's layout: billing attestation, identity, then the caller's
+    // prompt as separate blocks. Folding the prompt into one string makes
+    // Anthropic answer 429 "Error" for subscription credentials.
+    const firstUser = messages.find((message) => message.role === 'user');
+    const firstText = Array.isArray(firstUser?.content)
+      ? firstUser.content.find((block) => block?.type === 'text')?.text || ''
+      : String(firstUser?.content || '');
+    payload.system = [
+      { type: 'text', text: createBillingHeader(firstText) },
+      { type: 'text', text: CLAUDE_CODE_SYSTEM_INSTRUCTION, cache_control: { type: 'ephemeral' } },
+      ...(system ? [{ type: 'text', text: system }] : []),
+    ];
+  } else if (system) {
+    payload.system = system;
   }
-  if (finalSystem) payload.system = finalSystem;
   if (req?.temperature != null) payload.temperature = Number(req.temperature);
   if (req?.top_p != null) payload.top_p = Number(req.top_p);
   if (req?.stop != null) payload.stop_sequences = Array.isArray(req.stop) ? req.stop : [req.stop];
@@ -368,6 +380,7 @@ export async function chat(req, ctx) {
     url: messagesUrl(ctx.baseUrl),
     headers: { 'Content-Type': 'application/json', ...anthropicHeaders(ctx, extra) },
     payload,
+    serialize: serializeWithAttestation,
     label: 'Anthropic',
     stream: payload.stream,
     streamHandler: () => createStreamHandler(ctx.model),

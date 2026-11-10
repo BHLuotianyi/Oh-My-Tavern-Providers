@@ -202,6 +202,7 @@ export async function passthroughJson(upstream) {
  * @param {() => any} [options.streamHandler] Factory for the SSE translator.
  * @param {(json: any) => any} options.translate Builds the completion payload.
  * @param {any} options.ctx Resolved provider context (`fetchImpl`, `signal`).
+ * @param {(payload: any) => string|Uint8Array} [options.serialize] Request body encoder (default JSON).
  */
 export async function runJsonAdapter({
   url,
@@ -213,6 +214,7 @@ export async function runJsonAdapter({
   streamHandler,
   translate,
   ctx,
+  serialize = JSON.stringify,
 }) {
   const doFetch = ctx?.fetchImpl || fetch;
   let upstream;
@@ -220,7 +222,7 @@ export async function runJsonAdapter({
     upstream = await doFetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload),
+      body: serialize(payload),
       signal: ctx?.signal,
     });
   } catch (error) {

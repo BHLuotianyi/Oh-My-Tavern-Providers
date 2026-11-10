@@ -4,6 +4,7 @@ import http from 'node:http';
 import openai from '../../server-plugin/lib/adapters/openai.mjs';
 import anthropic from '../../server-plugin/lib/adapters/anthropic.mjs';
 import antigravity from '../../server-plugin/lib/adapters/antigravity.mjs';
+import { xxh64 } from '../../server-plugin/lib/claude-code-billing.mjs';
 
 async function withServer(handler, run) {
   const server = http.createServer(handler);
@@ -82,10 +83,12 @@ test('openai adapter listModels returns models list', async () => {
 test('anthropic adapter applies Claude Code fingerprint and system prompt', async () => {
   let capturedHeaders;
   let capturedBody;
+  let rawBody = '';
   await withServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
     capturedHeaders = req.headers;
+    rawBody = body;
     capturedBody = JSON.parse(body);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
@@ -97,7 +100,7 @@ test('anthropic adapter applies Claude Code fingerprint and system prompt', asyn
     }));
   }, async (baseUrl) => {
     const response = await anthropic.chat(
-      { model: 'claude-3-7-sonnet', messages: [{ role: 'user', content: 'hello' }] },
+      { model: 'claude-3-7-sonnet', messages: [{ role: 'system', content: 'Roleplay rules' }, { role: 'user', content: 'hello there, assistant' }] },
       {
         provider: 'anthropic',
         model: 'claude-3-7-sonnet',
@@ -110,7 +113,16 @@ test('anthropic adapter applies Claude Code fingerprint and system prompt', asyn
     assert.match(capturedHeaders['user-agent'], /claude-cli/);
     assert.match(capturedHeaders['anthropic-beta'], /claude-code-20250219/);
     assert.equal(capturedHeaders.authorization, 'Bearer sk-ant-acc-oauth-token');
-    assert.match(capturedBody.system, /You are Claude Code/);
+    // Claude Code layout: billing attestation, identity, caller prompt. A single
+    // folded string gets subscription requests rejected with 429 "Error".
+    const [billing, identity, caller] = capturedBody.system;
+    assert.match(billing.text, /^x-anthropic-billing-header: cc_version=\d+\.\d+\.\d+\.[0-9a-f]{3}; cc_entrypoint=cli; cch=[0-9a-f]{5};$/);
+    assert.match(identity.text, /^You are Claude Code/);
+    assert.equal(caller.text, 'Roleplay rules');
+    // cch is XXH64 of the body with the placeholder in place.
+    const cch = /cch=([0-9a-f]{5})/.exec(billing.text)[1];
+    const unpatched = Buffer.from(rawBody.replace(`cch=${cch}`, 'cch=00000'));
+    assert.equal((xxh64(unpatched, 0x4d659218e32a3268n) & 0xfffffn).toString(16).padStart(5, '0'), cch);
   });
 });
 
