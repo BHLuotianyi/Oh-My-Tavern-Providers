@@ -375,6 +375,38 @@ function tokenRequestBody(login, params, redirectUri, env = process.env) {
 }
 
 /**
+ * Render a token-endpoint error field. RFC 6749 endpoints send strings
+ * (`error`, `error_description`); Anthropic answers rate limits and other API
+ * failures with `{error: {type, message}}`, which must not become
+ * "[object Object]".
+ * @param {unknown} value
+ * @returns {string}
+ */
+function describeErrorValue(value) {
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (!value || typeof value !== 'object') return '';
+    const code = describeErrorValue(value.code ?? value.type ?? value.error);
+    const message = describeErrorValue(value.message ?? value.error_description ?? value.description);
+    if (code && message && code !== message) return `${code}: ${message}`;
+    return code || message || JSON.stringify(value);
+}
+
+/**
+ * @param {number} status
+ * @param {any} json parsed body, or null
+ * @param {string} text raw body
+ */
+function describeTokenError(status, json, text) {
+    const error = describeErrorValue(json?.error);
+    const description = describeErrorValue(json?.error_description);
+    let detail;
+    if (error && description && error !== description) detail = `${error}: ${description}`;
+    else detail = error || description || describeErrorValue(json?.message) || text.trim().slice(0, 200);
+    return detail ? `HTTP ${status} ${detail}` : `HTTP ${status}`;
+}
+
+/**
  * POST to a token endpoint.
  * @param {string} url
  * @param {Record<string, string>} body
@@ -407,8 +439,7 @@ async function postToken(url, body, mode, headers, doFetch) {
         json = null;
     }
     if (!response.ok) {
-        const message = json?.error_description || json?.error || text.slice(0, 200) || `HTTP ${response.status}`;
-        throw new Error(`Token exchange failed: ${message}`);
+        throw new Error(`Token exchange failed: ${describeTokenError(response.status, json, text)}`);
     }
     return json ?? {};
 }

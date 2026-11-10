@@ -342,6 +342,29 @@ test('oauth-code exchange sends the locally resolved client id', async () => {
     }
 });
 
+test('token endpoint errors are reported as text, nested or flat', async () => {
+    const bodies = [
+        // Anthropic API error envelope (rate limits, overload).
+        [429, { type: 'error', error: { type: 'rate_limit_error', message: 'Rate limited. Please try again later.' } },
+            'Token exchange failed: HTTP 429 rate_limit_error: Rate limited. Please try again later.'],
+        // RFC 6749 shape.
+        [400, { error: 'invalid_grant', error_description: "Invalid 'code' in request." },
+            "Token exchange failed: HTTP 400 invalid_grant: Invalid 'code' in request."],
+    ];
+    for (const [status, body, expected] of bodies) {
+        const started = await startLogin('anthropic', { ...anthropicPolicy, callback: { port: 0, path: '/callback', hostname: '127.0.0.1', manualOnly: true } }, {
+            keyStore: { async setProviderConfig() {} },
+            doFetch: async () => new Response(JSON.stringify(body), { status }),
+        });
+        try {
+            await submitCode(started.id, 'auth-code').catch(() => {});
+            assert.equal(getSession(started.id).error, expected);
+        } finally {
+            cancelLogin(started.id);
+        }
+    }
+});
+
 test('callback reports the real exchange result and stays retryable', async () => {
     const port = 51_000 + Math.floor(Math.random() * 8_000);
     let attempts = 0;
