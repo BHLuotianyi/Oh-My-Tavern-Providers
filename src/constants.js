@@ -16,8 +16,8 @@ export const SETTINGS_NAMESPACE = 'omtp';
  * written. Both are written by `tools/version.mjs` for the nightly and release
  * channels only; `tests/unit/version.test.mjs` keeps all copies in sync.
  */
-export const EXTENSION_VERSION = '2.1.0';
-export const EXTENSION_VERSION_CODE = 11;
+export const EXTENSION_VERSION = '2.1.1';
+export const EXTENSION_VERSION_CODE = 12;
 
 /** Base path of the optional server plugin routes. */
 export const API_BASE = '/api/plugins/omtp';
