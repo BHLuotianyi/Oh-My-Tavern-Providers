@@ -249,8 +249,9 @@ function missingClientIdMessage(login) {
 }
 
 /**
- * Turn a pasted value into an authorization code. Accepts a bare code, a full
- * redirect URL, or `code=…&state=…`.
+ * Turn a pasted value into an authorization code. Accepts a bare code, the
+ * `code#state` string Anthropic's manual page shows, a full redirect URL, or
+ * `code=…&state=…`.
  * @param {string} raw
  * @returns {{code: string, state?: string}}
  */
@@ -282,6 +283,8 @@ export function parseAuthorizationInput(raw) {
         const stateMatch = /(?:^|[?&])state=([^&]+)/.exec(text);
         return { code: decodeURIComponent(match[1]), state: stateMatch ? decodeURIComponent(stateMatch[1]) : undefined };
     }
+    const hash = text.indexOf('#');
+    if (hash > 0) return { code: text.slice(0, hash), state: text.slice(hash + 1) || undefined };
     return { code: text };
 }
 
@@ -348,8 +351,10 @@ export function mapCredential(credential, token, { provider = '', now = Date.now
  * @param {object} login
  * @param {Record<string, string>} params
  * @param {string} redirectUri
+ * @param {Record<string, string|undefined>} [env]
+ * @param {string} [state] the session's verified state, for `{state}` templates
  */
-function tokenRequestBody(login, params, redirectUri, env = process.env) {
+function tokenRequestBody(login, params, redirectUri, env = process.env, state = '') {
     const standard = login.token?.standard !== false;
     /** @type {Record<string, string>} */
     const body = {};
@@ -366,7 +371,7 @@ function tokenRequestBody(login, params, redirectUri, env = process.env) {
         client_id: policyValue(login.clientId, env),
         code: params.code || '',
         code_verifier: params.code_verifier || '',
-        state: params.state || '',
+        state,
     };
     for (const [key, value] of Object.entries(login.token?.params || {})) {
         body[key] = fillTemplate(String(value), vars);
@@ -448,13 +453,13 @@ async function postToken(url, body, mode, headers, doFetch) {
  * Exchange an authorization code.
  *
  * @param {object} login
- * @param {{code: string, verifier?: string, redirectUri: string, provider?: string}} options
+ * @param {{code: string, state?: string, verifier?: string, redirectUri: string, provider?: string}} options
  * @returns {Promise<{credential: object, raw: unknown}>} structured credential and the token response body
  */
-async function exchangeCode(login, { code, verifier, redirectUri, provider = '', result = '' }, doFetch = fetch, env = process.env) {
+async function exchangeCode(login, { code, state = '', verifier, redirectUri, provider = '', result = '' }, doFetch = fetch, env = process.env) {
     const params = { code, grant_type: 'authorization_code' };
     if (login.pkce && verifier) params.code_verifier = verifier;
-    const body = tokenRequestBody(login, params, redirectUri, env);
+    const body = tokenRequestBody(login, params, redirectUri, env, state);
     const token = await postToken(policyValue(login.token?.url), body, login.token?.body || 'json', login.token?.headers || {}, doFetch);
     return { credential: mapCredential(login.credential, token, { provider, result }), raw: token };
 }
@@ -1123,6 +1128,10 @@ async function finishWithCode(session, input, { requireState = false } = {}) {
         try {
             const { credential, raw } = await exchangeCode(session.login, {
                 code: input.code,
+                // The session's own state: finishWithCode already rejected a
+                // mismatch, and a bare pasted code carries none. Anthropic
+                // rejects an empty `state` with "Invalid request format".
+                state: session.state || '',
                 verifier: session.verifier,
                 redirectUri: session.redirectUri,
                 provider: session.providerId,

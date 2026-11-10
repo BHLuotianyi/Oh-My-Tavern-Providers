@@ -95,6 +95,8 @@ test('parseAuthorizationInput accepts codes, redirect URLs and query fragments',
         { code: 'xyz', state: 'st' },
     );
     assert.deepEqual(parseAuthorizationInput('code=xyz&state=st'), { code: 'xyz', state: 'st' });
+    // Anthropic's manual page shows `code#state`.
+    assert.deepEqual(parseAuthorizationInput('xyz#st'), { code: 'xyz', state: 'st' });
     assert.throws(() => parseAuthorizationInput('   '));
     assert.throws(() => parseAuthorizationInput('http://localhost/callback?state=only'));
 });
@@ -359,6 +361,29 @@ test('token endpoint errors are reported as text, nested or flat', async () => {
         try {
             await submitCode(started.id, 'auth-code').catch(() => {});
             assert.equal(getSession(started.id).error, expected);
+        } finally {
+            cancelLogin(started.id);
+        }
+    }
+});
+
+test('the session state reaches a {state} token parameter for every paste form', async () => {
+    for (const paste of [() => 'auth-code', (state) => `auth-code#${state}`, (state) => `http://127.0.0.1/callback?code=auth-code&state=${state}`]) {
+        const bodies = [];
+        const started = await startLogin('anthropic', { ...anthropicPolicy, callback: { port: 0, path: '/callback', hostname: '127.0.0.1', manualOnly: true } }, {
+            keyStore: { async setProviderConfig() {} },
+            doFetch: async (url, init) => {
+                bodies.push(JSON.parse(init.body));
+                return new Response(JSON.stringify({ access_token: 'access', expires_in: 3600 }), { status: 200 });
+            },
+        });
+        try {
+            const state = new URL(started.url).searchParams.get('state');
+            assert.ok(state);
+            await submitCode(started.id, paste(state));
+            assert.equal(getSession(started.id).status, 'done');
+            assert.equal(bodies[0].state, state);
+            assert.equal(bodies[0].code, 'auth-code');
         } finally {
             cancelLogin(started.id);
         }
