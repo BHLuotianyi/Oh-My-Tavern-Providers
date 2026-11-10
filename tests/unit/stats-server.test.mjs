@@ -21,7 +21,12 @@ function listen(server) {
     });
 }
 
-const closeServer = (server) => new Promise((resolve) => server.close(() => resolve(undefined)));
+// Node 18's `close()` waits for idle keep-alive sockets (5 s each) unless
+// they are dropped explicitly.
+const closeServer = (server) => new Promise((resolve) => {
+    server.close(() => resolve(undefined));
+    server.closeAllConnections?.();
+});
 
 async function freePort() {
     const server = http.createServer();
