@@ -151,7 +151,7 @@ Node 内置 `fetch` 不读取代理环境变量，因此服务端插件启动时
 | `NO_PROXY` / `no_proxy` | 直连名单：支持 `*`、`*.example.com`、`.example.com`、`host:port` 与 IPv6 字面量 |
 | `OMTP_DISABLE_PROXY=1` | 完全关闭该包装 |
 
-回环与私有网段（`127.0.0.0/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）始终直连。隧道建立失败时回退直连；请求已经写入隧道后的失败不会重放，避免重复计费的补全请求。
+回环与私有网段（`127.0.0.0/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）始终直连。隧道建立失败时回退直连；请求已经写入隧道或上游已经响应后的失败不会重放，避免重复计费的补全请求。经隧道跟随重定向时，跳转到其他源会去掉 `Authorization`、`Cookie`、`Proxy-Authorization`、`x-api-key`、`api-key`、`x-goog-api-key`。
 
 登录回调由独立的回环监听器接收，不经过这个代理包装。`localhost` 的 redirect URI 会同时绑定 `127.0.0.1` 与 `::1`，只尝试单一家族地址的客户端也能连上。但如果浏览器代理未绕过回环（`--proxy-bypass-list="<-loopback>"`、Proxifier、部分杀毒软件的网页防护），或容器未发布回调端口、浏览器在另一台机器上，授权码就无法送达；此时面板会给出说明，并要求把地址栏 URL 粘贴回来。
 
@@ -160,7 +160,8 @@ Node 内置 `fetch` 不读取代理环境变量，因此服务端插件启动时
 
 - `/api/plugins/omtp/*` 全部路由要求 `x-omtp-client: omtp-web` 请求头，并校验 `Origin` 与 `Sec-Fetch-Site`。OMTP 前端自动携带；第三方脚本直接调用时必须自行添加，否则返回 403 `untrusted_client`。
 - 可选加固：`OMTP_STRICT_HOST=1` 开启 Host 白名单（默认允许 localhost / 127.0.0.1 / ::1），并用 `OMTP_ALLOWED_HOSTS=host1,host2` 补充反向代理使用的域名。
-- `POST /config` 将 `requireAuth` 置为 false 时，请求体必须带 `confirmInsecure: true`（设置面板会在用户确认后发送）。
+- `POST /config` 将 `requireAuth` 置为 false 时，请求体必须带 `confirmInsecure: true`（设置面板会在用户确认后发送）。关闭鉴权后，网关的 `/v1/*` 只接受 Host 为 `localhost`、`127.x`、`::1` 的请求，其余返回 403 `host_not_allowed`，防止 DNS rebinding 网页调用网关。
+- 登录回调只处理携带本次会话 `state` 的请求（`state: none` 的策略除外）；其他请求返回 400 且不影响会话与监听端口。同一授权码的重复回调共享同一次换取。
 - `POST /providers/:id/config` 的 `baseUrl` 只接受不带查询串、不内嵌账号密码的 http(s) URL；`buildProviderConfig` 会再次校验，非法的已存值回退到内置默认端点。
 - 目录刷新与 OMP 导入写入的层只允许覆盖模型列表、名称、价格等展示数据；`baseUrl`、`gatewayAdapter`、`authLogin`、请求头始终来自内置目录。刷新拒绝跨主机重定向；OMP 导入路径限定 `~/oh-my-pi`、`~/.omp` 或 `OMTP_OMP_CATALOG_ROOTS`。
 - `master.key` 内容异常时会被备份为 `master.key.corrupt-<时间戳>` 并抛出 `KeyStoreUnreadableError`，不会静默重建。

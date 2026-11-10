@@ -118,9 +118,10 @@ Clicking `🔄` next to a provider (or opening one, which probes in the backgrou
 }
 ```
 
-- **When written**: only after a successful, non-empty probe. A failed refresh never clears the previous list on disk. Changing or deleting a key, logging out, or importing OMP credentials removes that provider's entry.
+- **When written**: only after a successful, non-empty probe. A failed refresh never clears the previous list on disk. Changing or deleting a key, changing or deleting a provider config, logging out, or importing OMP credentials removes that provider's entry; a probe still running across such a change does not write its result.
 - **Startup**: `createState()` seeds the in-memory cache via `loadLiveModels(root)` from `server-plugin/lib/live-models-store.mjs` with the entries still inside the 5-minute freshness window, so a quick SillyTavern restart reuses them without an upstream request. Anything older is dropped while reading.
 - **Freshness**: results younger than 5 minutes (`LIVE_MODELS_TTL`) answer without probing. Anything older is re-probed. **There is no fallback**: a failed probe returns `ok: false` with the error instead of the expired list, so a model the provider no longer serves is never offered; `?refresh=true` likewise reports the real result or error.
+- **Client cache**: `src/catalog.js` ages a list from the server's probe time `at` (a server-cached answer does not get another 5 minutes) and drops a provider's list after a failed probe, a key save/delete, a sign-out or a completed sign-in, so the hub falls back to the bundled catalog models.
 - **Capacity & resilience**: at most 128 providers (`LIVE_MODELS_MAX_PROVIDERS`, least recently probed are trimmed), entries past the freshness window are dropped on read and write, and a missing, corrupt, or foreign-version file starts as an empty cache.
 - **Privacy**: only model ids and metadata are stored, never credentials. The logic lives in `server-plugin/lib/live-models-store.mjs` and is covered by `tests/unit/live-models-store.test.mjs`.
 
