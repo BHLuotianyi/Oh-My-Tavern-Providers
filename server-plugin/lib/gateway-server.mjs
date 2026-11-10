@@ -18,6 +18,7 @@ import { log, logError } from './redact.mjs';
 import { getAdapter } from './adapters/index.mjs';
 import { createUsageTap, tokensFromOpenAIUsage } from './stats.mjs';
 import { acquireGatewayPort } from './gateway-ports.mjs';
+import { isLoopbackHost } from './catalog-safety.mjs';
 
 const GATEWAY_VERSION = (() => {
     try {
@@ -271,6 +272,13 @@ export class GatewayServer {
     _authMiddleware() {
         return (req, res, next) => {
             if (!this.requireAuth) {
+                // Without a token the Host header is the only thing telling a
+                // local client from a DNS-rebound web page that now resolves
+                // to 127.0.0.1 and can read the responses.
+                if (!isLoopbackHostHeader(req.headers.host)) {
+                    res.status(403).json(openAIErrorEnvelope('Host not allowed for an unauthenticated gateway', 'permission_error', 'host_not_allowed'));
+                    return;
+                }
                 next();
                 return;
             }
@@ -437,6 +445,19 @@ export class GatewayServer {
                 res.end();
             }
         }
+    }
+}
+
+/**
+ * @param {unknown} host raw `Host` header
+ * @returns {boolean}
+ */
+function isLoopbackHostHeader(host) {
+    if (typeof host !== 'string' || !host) return false;
+    try {
+        return isLoopbackHost(new URL(`http://${host}`).hostname);
+    } catch {
+        return false;
     }
 }
 
