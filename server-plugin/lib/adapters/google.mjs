@@ -212,14 +212,17 @@ export function translateGoogleCompletion(json, model) {
 
   const usage = json?.usageMetadata || {};
   const promptTokens = Number(usage.promptTokenCount) || 0;
-  const completionTokens = Number(usage.candidatesTokenCount) || 0;
+  // `candidatesTokenCount` excludes thinking; OpenAI's `completion_tokens`
+  // includes it, with reasoning reported as a subset in the details.
+  const reasoningTokens = Number(usage.thoughtsTokenCount) || 0;
+  const completionTokens = (Number(usage.candidatesTokenCount) || 0) + reasoningTokens;
   const totalTokens = Number(usage.totalTokenCount) || promptTokens + completionTokens;
   // Gemini reports cache hits and thinking separately; keep both for accounting.
   const openAI = openAIUsage({
     prompt: promptTokens,
     completion: completionTokens,
     cached: Number(usage.cachedContentTokenCount) || 0,
-    reasoning: Number(usage.thoughtsTokenCount) || 0,
+    reasoning: reasoningTokens,
     total: totalTokens,
   });
 
@@ -249,11 +252,12 @@ export function createGoogleStreamHandler(model) {
     () => openAIChunk({}, mapGoogleFinish(finishReason, sawTool)),
     () => {
       if (!usage) return null;
+      const reasoning = Number(usage.thoughtsTokenCount) || 0;
       return usageFrame(openAIUsage({
         prompt: Number(usage.promptTokenCount) || 0,
-        completion: Number(usage.candidatesTokenCount) || 0,
+        completion: (Number(usage.candidatesTokenCount) || 0) + reasoning,
         cached: Number(usage.cachedContentTokenCount) || 0,
-        reasoning: Number(usage.thoughtsTokenCount) || 0,
+        reasoning,
         total: Number(usage.totalTokenCount) || 0,
       }), model);
     },

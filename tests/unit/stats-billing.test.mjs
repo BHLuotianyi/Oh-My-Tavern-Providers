@@ -7,10 +7,13 @@ import { estimateCost, UsageStats } from '../../server-plugin/lib/stats.mjs';
 
 const price = { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 };
 
-test('reasoning tokens are billed at the output rate', () => {
+test('reasoning inside the completion is billed once', () => {
+    // OpenAI semantics: the 500k completion already contains 300k reasoning.
     const cost = estimateCost({ input: 0, cachedInput: 0, cacheWrite: 0, output: 500_000, reasoning: 300_000 }, price);
-    // 0.5M * 8 + 0.3M * 8 per million = 6.4
-    assert.equal(cost, 6.4);
+    assert.equal(cost, 4);
+    // A distinct reasoning rate applies to the reasoning share only.
+    const split = estimateCost({ input: 0, cachedInput: 0, cacheWrite: 0, output: 500_000, reasoning: 300_000 }, { ...price, reasoning: 10 });
+    assert.equal(split, 0.2 * 8 + 0.3 * 10);
 });
 
 test('a zero cache price means "unknown" and falls back to the input rate', () => {

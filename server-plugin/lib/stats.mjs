@@ -371,7 +371,9 @@ export class UsageStats {
  *
  * The catalog writes a numeric 0 when it has no cache price, so `??` alone
  * would treat cache reads/writes as free. Zero means "unknown": fall back to
- * the input rate. Reasoning tokens are billed at the output rate.
+ * the input rate. `output` follows OpenAI's `completion_tokens` and already
+ * contains `reasoning`, so only the visible remainder is billed at the output
+ * rate and the reasoning part at the reasoning rate (output rate when unset).
  *
  * @param {{input:number, cachedInput:number, cacheWrite:number, output:number, reasoning?:number}} tokens
  * @param {{input?:number, output?:number, cacheRead?:number, cacheWrite?:number, reasoning?:number}|null} price
@@ -389,11 +391,13 @@ export function estimateCost(tokens, price) {
     const cacheReadRate = rateOr(price.cacheRead, inputRate);
     const cacheWriteRate = rateOr(price.cacheWrite, inputRate);
     const reasoningRate = rateOr(price.reasoning, outputRate);
+    const reasoning = Number(tokens.reasoning) || 0;
+    const visibleOutput = Math.max(0, (Number(tokens.output) || 0) - reasoning);
     return perMillion(tokens.input, inputRate)
         + perMillion(tokens.cachedInput, cacheReadRate)
         + perMillion(tokens.cacheWrite, cacheWriteRate)
-        + perMillion(tokens.output, outputRate)
-        + perMillion(tokens.reasoning, reasoningRate);
+        + perMillion(visibleOutput, outputRate)
+        + perMillion(reasoning, reasoningRate);
 }
 
 /**

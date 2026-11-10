@@ -32,6 +32,8 @@ test('gemini cache hits and thoughts survive the adapter', () => {
     assert.equal(completion.usage.prompt_tokens, 5000);
     assert.equal(completion.usage.prompt_tokens_details.cached_tokens, 4096);
     assert.equal(completion.usage.completion_tokens_details.reasoning_tokens, 80);
+    // OpenAI semantics: thinking is part of the completion, not on top of it.
+    assert.equal(completion.usage.completion_tokens, 120);
 });
 
 test('gemini streaming usage frame carries cache hits', async () => {
