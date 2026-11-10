@@ -1,137 +1,134 @@
-[English](./developer.en.md) | [简体中文](./developer.md) | [Back to README](../README.en.md)
+English | [简体中文](./developer.md) | [Back to README](../README.en.md)
 
-# Developer API, Selectors & Build Guide
+# Developer API
 
-This guide covers the `globalThis.OMTP` runtime API, selector grammar, offline catalog build scripts, and local mock debugging for third-party SillyTavern extension authors and contributors.
+This document is for people writing SillyTavern extensions or scripts that call OMTP. To work on OMTP itself, see [Contributing](../CONTRIBUTING.en.md).
 
----
+## `globalThis.OMTP`
 
-## 1. Runtime API (`globalThis.OMTP`)
+While the extension is enabled, OMTP installs `OMTP` on the global object. When the extension is disabled and `globalThis.OMTP` is still the object OMTP installed, it is removed and any previous value is restored.
 
-While enabled, OMTP installs `globalThis.OMTP` (and restores or deletes it on teardown if still owned by this module):
-
-| Member | Signature / Type | Description |
+| Member | Signature | Description |
 |---|---|---|
-| `version` | `string` | Extension version (same value as `manifest.json`) |
-| `open(options?)` | `Function` | Opens the hub modal (accepts `{ tab: 'all' \| 'favorites' \| 'recent' \| 'profiles' \| 'providers' \| 'usage' \| 'about' }`) |
-| `close()` | `Function` | Closes the hub modal |
-| `toggle()` | `Function` | Toggles the hub modal |
-| `getCurrentSelection()` | `() => EntryRef \| null` | Returns the active `EntryRef` (`{ kind, provider, model }`), **not** a full catalog entry object |
-| `switchTo(selectorOrRef, { persist = true })` | `async (string\|object, object?) => EntryRef` | Resolves a selector string or `EntryRef` and switches to it (`persist: false` switches session-only); returns the `EntryRef`, plus a `warning` field when a fuzzy selector matched several models and one was picked |
-| `registerProviderAdapter(adapter)` | `(object) => object` | Registers a custom SillyTavern native adapter at runtime (requires `adapter.key`) and emits `omtp:catalog-changed` |
-| `registerCatalogProvider(provider)` | `(object) => object` | Merges a provider overlay into the active catalog, rebuilds entries, and emits `omtp:catalog-changed` |
-| `on(event, handler)` | `(string, Function) => () => void` | Subscribes to an OMTP event and returns an unsubscribe function |
-| `off(event, handler)` | `(string, Function) => void` | Unsubscribes an event handler |
-| `events` | `{ SELECTION_CHANGED, CATALOG_CHANGED }` | Event constants (`'omtp:selection-changed'`, `'omtp:catalog-changed'`) |
-| `roles` | `object` | Reserved namespace for future role integrations |
+| `version` | `string` | Extension version, same as `manifest.json` |
+| `open` | `(options?) => void` | Open the panel. `options.tab` may be `all`, `favorites`, `recent`, `profiles`, `providers`, `usage`, `about` |
+| `close` | `() => void` | Close the panel |
+| `toggle` | `() => void` | Toggle the panel |
+| `getCurrentSelection` | `() => EntryRef \| null` | The current model |
+| `switchTo` | `(selectorOrRef, { persist = true }?) => Promise<EntryRef>` | Switch the model, see below |
+| `registerProviderAdapter` | `(adapter) => object` | Register an adapter for a SillyTavern native source |
+| `registerCatalogProvider` | `(overlay) => catalog` | Merge providers into the active catalog; returns the merged catalog |
+| `on` | `(event, handler) => () => void` | Subscribe; returns an unsubscribe function |
+| `off` | `(event, handler) => void` | Unsubscribe |
+| `events` | `{ SELECTION_CHANGED, CATALOG_CHANGED }` | Event names |
+| `roles` | `{}` | Reserved, currently unused |
 
-### Example
+### EntryRef
 
-```javascript
-// 1. Switch model and persist as default
-await OMTP.switchTo('anthropic/claude-opus-5-5:high');
-
-// 2. Session-only switch (equivalent to /switch)
-await OMTP.switchTo('@1', { persist: false });
-await OMTP.switchTo('@fav');
-
-// 3. Read current selection reference
-const ref = OMTP.getCurrentSelection();
-// => { kind: 'st', provider: 'anthropic', model: 'claude-opus-5-5' }
-
-// 4. Listen for selection changes (reasoning level is applied before the event fires)
-const unsubscribe = OMTP.on(OMTP.events.SELECTION_CHANGED, ({ ref, entry, gateway, reason }) => {
-    console.log(`[OMTP] switched to ${ref.provider}/${ref.model} (gateway=${gateway}, reason=${reason})`);
-});
-```
-
----
-
-## 2. Selector Grammar (`resolveSelector`)
-
-Selectors are accepted by `OMTP.switchTo()`, `/model`, and `/switch` (the hub search box performs substring/fuzzy filtering directly and does not parse `@` tokens):
-
-| Pattern | Resolution Rule | Examples |
-|---|---|---|
-| `provider/model` | Splits on the **first** `/`; the model ID itself may contain additional `/` characters | `anthropic/claude-opus-5-5`<br/>`openrouter/deepseek/deepseek-v4.1-flash-1017` |
-| `@1` .. `@9` | Quick slot 1–9 (returns an error if the slot is empty or its target model is unavailable) | `@1`, `@3` |
-| `@fav` / `@favorites` | First entry in the favorites list that is currently available (`available !== false`) | `@fav` |
-| `@recent` / `@recents` | First entry in the recent-models list that is currently available | `@recent` |
-| `:level` suffix | Appends `:auto`, `:min`, `:low`, `:medium`, `:high`, or `:max` to any selector | `claude-opus-5-5:high`<br/>`@1:medium` |
-| Bare model ID / query | Exact `key` or exact `model` ID first, then ranked by favorites > recents > substring offset | `gemini-4-argon` |
-
----
-
-## 3. Catalog Build & AA-PersonalityBench Scripts
-
-The bundled catalog contains **99 providers and 5,770 chat models** (`kind: 'chat'` only) plus **41 models** in the AA-PersonalityBench snapshot.
-
-```bash
-# 1. Rebuild both catalog copies from an oh-my-pi checkout (defaults to ~/oh-my-pi)
-npm run catalog -- --omp-root /path/to/oh-my-pi
-
-# 2. Validate both catalog copies, counts, 44 native adapter keys, and byte equality
-npm run validate
-
-# 3. Re-scrape and write catalog/personality.json (cached under .cache/)
-npm run personality
-
-# 4. Verify derived personality index percentiles against published values
-npm run personality:verify
-```
-
-> **Why are there two identical `omtp-catalog.json` files?**
-> `catalog/omtp-catalog.json` is fetched by the browser extension, while `server-plugin/catalog/omtp-catalog.json` ships inside `server-plugin/` so the plugin remains self-contained when copied to `SillyTavern/plugins/omtp/`. `tools/build-catalog.mjs` writes both, and `tools/validate-catalog.mjs` enforces byte equality.
-
----
-
-## 4. Unit Tests & Zero-Cost Mock Debugging
-
-```bash
-# Run unit tests via Node's built-in test runner
-npm test
-
-# Start the local mock OpenAI server on http://127.0.0.1:4199/v1
-npm run mock
-```
-
-**Testing the gateway end-to-end without real API keys**:
-1. Run `npm run mock` (serves model `echo`, replying `pong` when the prompt contains `ping`, both streaming and non-streaming).
-2. Open the OMTP Hub → **Sign-in** tab → click **Add custom provider** at the bottom:
-   - **ID**: `mock`
-   - **Adapter**: `openai`
-   - **Base URL**: `http://127.0.0.1:4199/v1`
-   - **Models JSON**: `echo`
-   - **API key**: any non-empty string (e.g. `x`)
-3. Select `mock/echo` in the **All** tab and send a message. For the full manual checklist, see [`tests/e2e/README.md`](../tests/e2e/README.md).
-
-## 5. Live Model List Cache
-
-Clicking `🔄` next to a provider (or opening one, which probes in the background) calls `GET /api/plugins/omtp/providers/:id/models`. On success the server plugin persists the result to `data/omtp/live-models.json` (`0600`); the file contains no credentials:
-
-```json
-{
-  "version": 1,
-  "providers": {
-    "<providerId>": { "at": 1793942451762, "models": [{ "id": "gpt-x", "name": "GPT X" }] }
-  }
-}
-```
-
-- **When written**: only after a successful, non-empty probe. A failed refresh never clears the previous list on disk. Changing or deleting a key, changing or deleting a provider config, logging out, or importing OMP credentials removes that provider's entry; a probe still running across such a change does not write its result.
-- **Startup**: `createState()` seeds the in-memory cache via `loadLiveModels(root)` from `server-plugin/lib/live-models-store.mjs` with the entries still inside the 5-minute freshness window, so a quick SillyTavern restart reuses them without an upstream request. Anything older is dropped while reading.
-- **Freshness**: results younger than 5 minutes (`LIVE_MODELS_TTL`) answer without probing. Anything older is re-probed. **There is no fallback**: a failed probe returns `ok: false` with the error instead of the expired list, so a model the provider no longer serves is never offered; `?refresh=true` likewise reports the real result or error.
-- **Client cache**: `src/catalog.js` ages a list from the server's probe time `at` (a server-cached answer does not get another 5 minutes) and drops a provider's list after a failed probe, a key save/delete, a sign-out or a completed sign-in, so the hub falls back to the bundled catalog models.
-- **Capacity & resilience**: at most 128 providers (`LIVE_MODELS_MAX_PROVIDERS`, least recently probed are trimmed), entries past the freshness window are dropped on read and write, and a missing, corrupt, or foreign-version file starts as an empty cache.
-- **Privacy**: only model ids and metadata are stored, never credentials. The logic lives in `server-plugin/lib/live-models-store.mjs` and is covered by `tests/unit/live-models-store.test.mjs`.
-
-
-## Appendix: calling the plugin HTTP API directly
-
-Server routes live under `/api/plugins/omtp/*`. Besides the host authentication headers, every request must carry `x-omtp-client: omtp-web`, otherwise the plugin returns 403:
+A reference to a model:
 
 ```js
-const res = await fetch('/api/plugins/omtp/status', {
-  headers: { ...getRequestHeaders(), 'x-omtp-client': 'omtp-web' },
+{ kind: 'st', provider: 'anthropic', model: 'claude-opus-5-5' }
+```
+
+| `kind` | Meaning |
+|---|---|
+| `st` | Called through a SillyTavern native source (the Native and Translated badges) |
+| `omp` | Called through the OMTP gateway |
+| `profile` | A SillyTavern connection profile; `model` is the profile name |
+
+Its string form is `kind/provider/model`, such as `st/anthropic/claude-opus-5-5`. The `kind` of a model changes with its connection path, so compare references by `provider` and `model`.
+
+### switchTo
+
+```js
+// Switch and save as the default (same as /model)
+await OMTP.switchTo('anthropic/claude-opus-5-5:high');
+
+// Switch for this session only (same as /switch)
+await OMTP.switchTo('@1', { persist: false });
+
+// An EntryRef, or its string form
+await OMTP.switchTo({ kind: 'omp', provider: 'mock', model: 'echo' });
+await OMTP.switchTo('omp/mock/echo');
+```
+
+- The argument may be a [selector](#selector-grammar), an EntryRef, an object with a `ref` field, or a `kind/provider/model` string.
+- Returns the EntryRef that was used. When a selector matched several models fuzzily, the result carries a `warning` naming the one chosen.
+- Throws when the model is unknown or unavailable (missing credentials, gateway not running, provider unsupported).
+
+### Events
+
+```js
+const off = OMTP.on(OMTP.events.SELECTION_CHANGED, ({ ref, entry, gateway, reason }) => {
+    console.log(`${ref.provider}/${ref.model}`, gateway ? 'via gateway' : 'native', reason);
+});
+// when no longer needed
+off();
+```
+
+| Event | Name | Payload |
+|---|---|---|
+| `SELECTION_CHANGED` | `omtp:selection-changed` | `{ ref, entry, gateway, reason }`. `gateway` tells whether the gateway is used; `reason` names the trigger (such as `public-api`) |
+| `CATALOG_CHANGED` | `omtp:catalog-changed` | `{ source }`, such as `runtime` or `adapter` |
+
+Events are dispatched through SillyTavern's `eventSource`. By the time `SELECTION_CHANGED` fires, the reasoning effort has already been written to SillyTavern's settings.
+
+### registerCatalogProvider
+
+Accepts a single provider, a provider map or a whole catalog and merges it into the active catalog by provider id: new field values win, models merge by `id`. The merge only lives in the current page and is gone after a reload.
+
+```js
+OMTP.registerCatalogProvider({
+    id: 'my-provider',
+    label: 'My Provider',
+    models: [{ id: 'my-model', name: 'My Model', kind: 'chat' }],
 });
 ```
+
+For the gateway to forward a new provider, add it under **Sign-in → Add custom provider** or call `POST /providers/:id/config`; `registerCatalogProvider` only affects the client's model list.
+
+### registerProviderAdapter
+
+Registers an object describing a SillyTavern native source; it needs a unique `key`. Its fields match the parameters of `createAdapter` in `src/adapters/native.js` (`label`, `mainApi`, `source`, `modelControl`, `modelField`, `supportsModel` and so on). Registration fires `CATALOG_CHANGED`.
+
+## Selector grammar
+
+Selectors are used by `OMTP.switchTo()`, `/model` and `/switch`. The panel's search box only filters by keyword and does not parse selectors.
+
+| Form | Rule | Example |
+|---|---|---|
+| `provider/model` | Split at the first `/`; the first part must be a known provider id (case-insensitive), otherwise the whole string is treated as a keyword. The model id may contain further `/` | `anthropic/claude-opus-5-5`, `openrouter/deepseek/deepseek-v4.1-flash-1017` |
+| `@1` … `@9` | Quick slot. An empty slot or unavailable model is an error | `@3` |
+| `@fav`, `@favorites` | First usable favorite | `@fav` |
+| `@recent`, `@recents` | First usable recent model | `@recent` |
+| `:level` suffix | Reasoning effort: `auto`, `min`, `low`, `medium`, `high`, `max`. Not split off when the whole string is itself a model id containing a colon | `@1:medium` |
+| Anything else | First an exact entry key or model id; otherwise a fuzzy match ranked as: exact `provider/model` → exact model id → favorites → recents → other substring matches | `gemini-4-argon` |
+
+With several fuzzy matches the first one is used and the result's `warning` says so.
+
+## Calling the plugin API from scripts
+
+The full route list is in the [server plugin reference](./gateway.en.md#management-api). From code running in the SillyTavern page, add `x-omtp-client` to SillyTavern's request headers:
+
+```js
+const { getRequestHeaders } = SillyTavern.getContext();
+
+const res = await fetch('/api/plugins/omtp/providers', {
+    headers: { ...getRequestHeaders(), 'x-omtp-client': 'omtp-web' },
+});
+const { providers } = await res.json();
+```
+
+Without that header the plugin answers 403 `untrusted_client`.
+
+The gateway sends no CORS headers, so browser pages cannot call it directly; code in the page should use the gateway through SillyTavern's Custom OpenAI connection. Other programs on the same machine pass the gateway token (file `data/omtp/gateway-token`, or `GET /api/plugins/omtp/gateway/token`):
+
+```bash
+TOKEN=$(cat SillyTavern/data/omtp/gateway-token)
+curl -s http://127.0.0.1:4100/v1/chat/completions \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"model":"mock/echo","messages":[{"role":"user","content":"ping"}]}'
+```
+
+The gateway's actual port is the one reported by `GET /api/plugins/omtp/status`.

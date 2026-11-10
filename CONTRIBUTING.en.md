@@ -1,227 +1,115 @@
-[English](./CONTRIBUTING.en.md) | [简体中文](./CONTRIBUTING.md)
+English | [简体中文](./CONTRIBUTING.md)
 
-# Contributing to OMTP Model Hub
+# Contributing
 
-Thank you for contributing to **OMTP Model Hub (Oh-My-Tavern-Providers)**!
-This guide documents the architecture boundaries, development workflow, quality guardrails, and pull request requirements for both the **SillyTavern client extension (`src/` + `index.js`)** and the **optional server plugin (`server-plugin/`)**.
+This guide describes how OMTP is structured, the invariants it must keep, and how to submit changes.
 
----
+## Structure
 
-## Scope & Architecture Boundaries
+OMTP consists of two parts that are deployed separately:
 
-- **Purpose**: OMTP provides a unified model hub modal and an optional local protocol-translation gateway for SillyTavern 1.12.7+.
-- **Two Standalone Layers**:
-  - **Client Extension (`src/`, `index.js`, `style.css`, `settings.html`, `i18n/`)**: Runs in the browser, importing SillyTavern host modules (`script.js`, `extensions.js`, `popup.js`, `events.js`, etc.) via relative ES module specifiers with zero build/bundler step.
-  - **Server Plugin (`server-plugin/`)**: Copied standalone into `SillyTavern/plugins/omtp/`. **`server-plugin/` must never import files from `src/` or the repository root**; shared constants or catalog files must remain self-contained inside `server-plugin/`.
-- **Zero External Binaries**: Never spawn or require the `omp` binary or a Python environment at runtime. Everything is implemented in pure JavaScript / Node.js.
+- **Client extension**: `index.js`, `src/`, `settings.html`, `style.css`, `i18n/`, `catalog/`. Runs in the browser and imports SillyTavern modules (`script.js`, `extensions.js`, `popup.js` and others) by relative path. There is no build step.
+- **Server plugin**: `server-plugin/`. Users copy it to `SillyTavern/plugins/omtp/`, where it runs in SillyTavern's Node process.
 
----
-
-## Documentation Map
-
-When your changes affect user-facing behavior, routes, or APIs, update the corresponding documentation in lockstep:
-
-| Document | Audience & Purpose |
-|---|---|
-| [`README.md`](./README.md) / [`README.en.md`](./README.en.md) | User overview, highlights, 30-second install, 3-minute quick tour, key features, and FAQ |
-| [`CONTRIBUTING.md`](./CONTRIBUTING.md) / [`CONTRIBUTING.en.md`](./CONTRIBUTING.en.md) | Module boundaries, coding conventions, guardrails, and PR workflow |
-| [`docs/gateway.md`](./docs/gateway.md) / [`docs/gateway.en.md`](./docs/gateway.en.md) | Gateway listener & auth, all 24 plugin HTTP routes, 9 protocol adapters, 21 providers / 16 quota adapters, `data/omtp/` specs |
-| [`docs/developer.md`](./docs/developer.md) / [`docs/developer.en.md`](./docs/developer.en.md) | `globalThis.OMTP` surface, selector grammar, catalog & personality build scripts, local mock server |
-| [`tests/e2e/README.md`](./tests/e2e/README.md) | Manual end-to-end verification checklist inside a live SillyTavern instance |
-
----
-
-## Development Environment & Scripts
-
-- **Node.js**: `>= 18.0.0` (Node.js 20+ / 22+ recommended for running unit tests via built-in `node --test` and `node:sqlite`)
-- **SillyTavern**: `>= 1.12.7` (compatible through `1.19.0+`)
-- **Dependencies**: Zero third-party npm dependencies are required to run the client extension or the unit test suite; `server-plugin/` reuses SillyTavern's bundled `express` at runtime.
-
-### Common Commands
-
-```bash
-# 1. Run the full unit test suite (Node built-in test runner)
-npm test
-
-# 2. Validate both bundled catalog copies (counts, 44 native adapter keys, byte equality)
-npm run validate
-
-# 3. Rebuild both catalog copies from a local oh-my-pi checkout (defaults to ~/oh-my-pi)
-npm run catalog -- --omp-root /path/to/oh-my-pi
-
-# 4. Verify or re-scrape the AA-PersonalityBench snapshot (catalog/personality.json)
-npm run personality:verify
-npm run personality
-
-# 5. Start the local mock OpenAI server on http://127.0.0.1:4199/v1
-npm run mock
-```
-
----
-
-## Project Layout
+Nothing at runtime calls the `omp` program or needs Python. Reading credentials from a local OMP tries `node:sqlite`, then the `sqlite3` command, then `python3`; without any of them that one feature is unavailable and everything else keeps working.
 
 ```text
-Oh-My-Tavern-Providers/
-├── index.js                      # Client extension entry point (calls hub.init())
-├── settings.html                 # Extension settings drawer markup (element IDs are the binding contract)
-├── style.css                     # Styles for the hub modal, sign-in, usage, quick picker, and settings
-├── i18n/
-│   ├── en.json                   # English locale (key set must match zh-cn.json 1:1)
-│   └── zh-cn.json                # Simplified Chinese locale
-├── catalog/
-│   ├── omtp-catalog.json         # Client catalog (byte-identical to server-plugin/catalog/omtp-catalog.json)
-│   └── personality.json          # AA-PersonalityBench 8-axis snapshot (41 models)
-├── src/                          # Client core & UI modules (ES Modules)
-│   ├── constants.js              # Route constants, mainstream providers (52), lab providers (33), event names
-│   ├── store.js                  # extension_settings.omtp persistence, EntryRef validation & getEntryKey
-│   ├── catalog.js                # Catalog loader, multi-layer merge, native/gateway routing, live model cache
-│   ├── selector.js               # Pure selector lexer, parser, and ranker (NO SillyTavern imports allowed)
-│   ├── switch-engine.js          # Switch engine: native writes, Custom snapshot/restore, switch lock, chat header
-│   ├── public-api.js             # globalThis.OMTP installer and teardown
-│   ├── slash-commands.js         # /omtp, /model, /switch, /effort, /usage slash commands
-│   ├── personality.js            # 8-axis radar SVG renderer and OMTP roleplay score calculation
-│   ├── personality-match.js      # Pure model ID -> personality key matcher
-│   ├── provider-names.js         # Localized Chinese provider names and region qualifiers
-│   ├── provider-links.js         # Provider API-key console URLs
-│   ├── update-check.js           # GitHub metadata/commit-history update detection (pure, unit-tested)
-│   ├── errors.js                 # Switch/selector error codes (translated in the UI layer)
-│   ├── reasoning.js              # Reasoning effort capability helpers
-│   ├── usage-session.js          # Per-chat token accounting session baseline
-│   ├── events.js                 # Host event bridge and cleanup
-│   ├── adapters/
-│   │   └── native.js             # 44 SillyTavern native adapter definitions (frozen objects)
-│   └── ui/
-│       ├── helpers.js            # Shared UI helpers (el, isPlainObject, notify, formatTokens, formatUsd)
-│       ├── dom.js                # i18n tr/trf, top-bar & API-drawer button injection, global hotkeys
-│       ├── hub.js                # Hub facade (init/teardown lifecycle, event wiring, public re-exports)
-│       ├── hub-state.js          # Shared mutable state singleton across hub-* modules
-│       ├── hub-utils.js          # Entry/ref keys, favorite/recent/slot helpers
-│       ├── hub-catalog.js        # Hub catalog loader, provider bucketing, mainstream/scored filters
-│       ├── hub-sidebar.js        # Left provider column, search filtering, live-model refresh
-│       ├── hub-list.js           # Center model list, grouped search results, tab views
-│       ├── hub-details.js        # Right details pane, personality radar, reasoning & action buttons
-│       ├── hub-quick.js          # Top 1–9 quick slot bar, row flash, footer counters
-│       ├── hub-actions.js        # Use model, chat/character binding toggles, provider settings jump
-│       ├── hub-modal.js          # Modal DOM builder, gateway/update pills, keyboard navigation & focus trap
-│       ├── update-pill.js        # Bottom-left version/update status (GitHub releases/commits)
-│       ├── login-panel.js        # Sign-in tab (OAuth PKCE / device code / custom hooks / API key entry)
-│       ├── usage-panel.js        # Quota bars and per-chat / all-time token statistics table
-│       ├── usage-chip.js         # Top-bar token & estimated cost badge
-│       ├── about-panel.js        # About tab (versions, gateway URL, credits, license)
-│       ├── quick-picker.js       # Compact keyboard picker for bare `/switch`
-│       ├── settings.js           # Extension settings drawer, custom provider popup, local OMP import popup
-│       ├── bindings.js           # Auto-apply chat & character bindings state machine
-│       └── extra-body.js         # Per-entry extra-body JSON editor and generation payload merge hook
-├── server-plugin/                # Optional SillyTavern server plugin (copied to plugins/omtp/)
-│   ├── index.mjs                 # Plugin entry: registers 24 /api/plugins/omtp routes, manages gateway & stats
-│   ├── catalog/omtp-catalog.json # Bundled server catalog copy (byte-identical to catalog/omtp-catalog.json)
-│   └── lib/
-│       ├── config.mjs            # data/omtp root, config.json I/O, atomic writes, gateway token check
-│       ├── gateway-server.mjs    # Standalone OpenAI-compatible gateway (127.0.0.1:4100–4110) & usage tap
-│       ├── gateway-ports.mjs     # Gateway port acquisition/reuse (cross-instance token check)
-│       ├── key-store.mjs         # AES-256-GCM KeyStore (providers.json + master.key) & 3-tier key resolution
-│       ├── provider-config.mjs   # Provider context builder, supported adapter checks, probe descriptors
-│       ├── catalog-service.mjs   # Layered server catalog (bundled -> cached -> imported -> custom)
-│       ├── catalog-normalize.mjs # OMP catalog normalizer & validateCatalog
-│       ├── login-engine.mjs      # OAuth PKCE loopback listener, callback policy, device-code poller, custom hooks
-│       ├── after-exchange.mjs    # Post-exchange hooks (Z.ai key minting, Google project id, Anthropic identity)
-│       ├── oauth.mjs             # Structured OAuth credential parser and token refresh
-│       ├── oauth-clients.mjs     # Local OAuth client credential resolver (env -> oauth-clients.json)
-│       ├── import-omp.mjs        # Local oh-my-pi catalog & agent.db SQLite credential importer
-│       ├── usage.mjs             # 21 providers across 16 quota adapters with 60s caching
-│       ├── stats.mjs             # Token & cache/reasoning cost calculator and persistent ledger
-│       ├── stats-server.mjs      # /omtp stats local dashboard HTTP server (default port 3847)
-│       ├── sse.mjs               # OpenAI SSE parser and frame builders
-│       ├── redact.mjs            # Console logging helpers
-│       ├── proxy-fetch.mjs       # Environment-proxy-aware fetch wrapper (HTTP CONNECT tunnel + direct fallback)
-│       ├── custom-logins/        # openai-codex-device, kilo, and kimi-fingerprint hooks
-│       └── adapters/             # 9 protocol adapters (openai, anthropic, google, google-vertex, antigravity, responses, azure-responses, bedrock, ollama)
-├── tools/                        # Maintenance scripts (build-catalog, validate-catalog, fetch-personality)
-└── tests/                        # Unit tests (tests/unit/*.test.mjs) and mock upstream (tests/fixtures/)
+index.js                 extension entry, forwards to src/ui/hub.js
+settings.html            settings panel template; element ids are used by src/ui/settings.js
+i18n/                    UI strings (en, zh-cn)
+catalog/                 catalog and personality snapshot used by the client
+src/
+  catalog.js             catalog loading and merging, connection path, live model cache
+  switch-engine.js       writing SillyTavern settings, entering and leaving gateway mode
+  selector.js            selector parsing and ranking
+  store.js               extension settings and EntryRef
+  public-api.js          globalThis.OMTP
+  slash-commands.js      slash commands
+  update-check.js        update decision
+  adapters/native.js     descriptions of SillyTavern's native sources
+  ui/                    panel, sign-in, usage, settings, bindings and other UI modules
+server-plugin/
+  index.mjs              plugin entry and management API
+  catalog/               the plugin's own catalog copy
+  lib/
+    gateway-server.mjs   gateway
+    adapters/            upstream protocol adapters
+    key-store.mjs        encrypted key store and credential resolution
+    login-engine.mjs     OAuth and device-code sign-in
+    catalog-service.mjs  server-side catalog layering
+    usage.mjs            quota queries
+    stats.mjs            usage statistics and cost
+    proxy-fetch.mjs      outbound proxy
+tools/                   catalog build and validation, personality data, version scripts
+tests/unit/              unit tests
+tests/fixtures/          local mock provider
+docs/                    documentation
 ```
 
----
+## Development setup
 
-## Quality Guardrails
+- Node.js 18 or later. No `npm install` is needed: the client and the tests use Node built-ins only, and the plugin uses the `express` that ships with SillyTavern.
+- To debug in a real SillyTavern, clone (or link) the repository into `public/scripts/extensions/third-party/omtp-model-hub/` and copy `server-plugin/` to `plugins/omtp/`. After changing plugin code, copy it again and restart SillyTavern.
 
-Before opening a pull request, verify that these invariants hold:
+```bash
+npm test                    # unit tests
+npm run validate            # catalog validation
+npm run mock                # local mock provider, see docs/testing.en.md
+npm run catalog -- --omp-root /path/to/oh-my-pi   # regenerate the catalog
+npm run personality         # refresh the personality snapshot
+npm run personality:verify  # only check the index derivation
+```
 
-1. **Host-Free Pure Modules**:
-   - `src/selector.js`, `src/personality-match.js` and `src/update-check.js` must remain completely free of SillyTavern host imports so they can be imported directly in Node.js unit tests.
-2. **Byte-Identical Catalog Copies**:
-   - `catalog/omtp-catalog.json` and `server-plugin/catalog/omtp-catalog.json` must remain byte-for-byte identical. Always run `npm run validate` after touching catalog tooling.
-3. **Lockstep Locale Files**:
-   - `i18n/en.json` and `i18n/zh-cn.json` must have identical key sets and ordering. Keep dynamic key families (`omtp_pb_*`, `omtp_source_*`, `omtp_stats_col_*`) intact.
-4. **Security & KeyStore Safety**:
-   - Never commit **user credentials**: API keys, OAuth access/refresh tokens, or machine-specific file paths.
-   - Installed-app OAuth `client_id` / `client_secret` values are public identifiers (RFC 8252 §8.1); whether the catalog embeds them is governed by `LOCAL_ONLY_CLIENTS` in `catalog-normalize.mjs`. Justify any change in the PR, and never ship a user token.
-   - `KeyStore` must throw `KeyStoreUnreadableError` (mapped to HTTP `409`) when ciphertext cannot be decrypted—never overwrite an unreadable `providers.json`.
-   - Gateway Bearer token comparison must use constant-time `tokensEqual`.
-5. **Non-Destructive Switch & Teardown Order**:
-   - Preserve the control-write + `waitFor` ordering in `switch-engine.js`, the `savedCustom` snapshot before entering gateway mode, and the `restorePreviousSelection -> cleanupHubSurfaces -> resetHubState` teardown sequence in `hub.js`.
+## Invariants
 
----
+1. **Standalone plugin**: `server-plugin/` must not import files from the repository root or `src/`; constants and catalogs needed on both sides are kept in two copies. The `../../src/…` imports in `server-plugin/index.mjs` refer to SillyTavern's own modules.
+2. **Host-free modules**: `src/constants.js`, `src/selector.js`, `src/personality-match.js`, `src/update-check.js`, `src/profile-fields.js` and `src/reasoning.js` must not import SillyTavern modules; unit tests load them directly in Node.
+3. **Identical catalogs**: `catalog/omtp-catalog.json` and `server-plugin/catalog/omtp-catalog.json` must be byte-identical. `npm run catalog` writes both, `npm run validate` checks them.
+4. **Matching string keys**: `i18n/en.json` and `i18n/zh-cn.json` have the same keys. Add new strings to both. Keys such as `omtp_pb_*`, `omtp_source_*`, `omtp_stats_col_*` and `omtp_tab_*` are built in code; do not delete them because a search finds no literal use.
+5. **Consistent versions**: the four version files are written by `tools/version.mjs`; do not edit them by hand. See [Versions and releases](./docs/releasing.en.md).
+6. **Credentials**:
+   - No real API keys, tokens or personal paths in code, catalogs or test data.
+   - OAuth client values in the catalog are public identifiers; whether they ship is decided by `LOCAL_ONLY_CLIENTS` in `server-plugin/lib/catalog-normalize.mjs`. Explain any change to it in the PR.
+   - `key-store.mjs` must throw `KeyStoreUnreadableError` (409 from the management API) on data it cannot decrypt, and must never overwrite the user's `providers.json` or regenerate `master.key`.
+   - Gateway tokens are compared in constant time with `tokensEqual`.
+7. **Switch and restore order**: the order in which `switch-engine.js` writes SillyTavern controls and waits for them, saving the Custom OpenAI settings before entering gateway mode, and the `restorePreviousSelection → cleanupHubSurfaces → resetHubState` order on teardown in `src/ui/hub.js` must not change.
+8. **Usage accounting**: adapters report `completion_tokens` including reasoning tokens, with the reasoning count in `completion_tokens_details.reasoning_tokens`. Cost estimation depends on it; see the [server plugin reference](./docs/gateway.en.md#usage-statistics-and-cost).
 
-## Code Style & Testing Policy
+## Catalog and personality data
 
-- **Code Style**:
-  - ES Modules (`.js` in `src/`, `.mjs` in `server-plugin/`, `tools/`, `tests/`).
-  - **4-space indentation**, single quotes, semicolons, concise JSDoc comments.
-  - Omit comments that merely restate the code; document non-obvious invariants, protocol quirks, and SillyTavern host behaviors.
-- **Testing**:
-  - Run `npm test`, `npm run validate`, and `node --check` on all touched files.
-  - Write focused behavioral tests that catch real regressions (protocol translation, key resolution, selector edge cases); avoid brittle source-text or mock-echo tests.
+- **Catalog**: `tools/build-catalog.mjs` reads `packages/catalog/src/models.json` and `compat/rules.json` from an OMP checkout and combines them with `tools/provider-map.source.json` (which maps providers to SillyTavern native sources and gateway adapters) and `tools/native-adapter-keys.json` to produce both catalogs. Only chat models are kept.
+- When the number of providers or models changes, update `CATALOG_EXPECTATIONS` in `server-plugin/lib/catalog-normalize.mjs`, or `npm run validate` fails.
+- **Personality scores**: `tools/fetch-personality.mjs` parses the AA-PersonalityBench page into `catalog/personality.json`, caching the page in `.cache/`. AA publishes the eight index values for some models only; for the rest they are derived from the published trait scores following AA's method, and every run prints published-versus-derived differences.
 
----
+## Code style
 
-## Versioning & Releases
+- ES modules: `.js` for the client, `.mjs` for the plugin and tools.
+- Four-space indentation, single quotes, semicolons.
+- Short JSDoc on exported functions.
+- Comments explain why (intent, edge cases, host quirks), not what the code says.
 
-Versions are **standard semver**: `MAJOR.MINOR.FIX` is the human-owned release line, and an optional `-alpha.N` / `-beta.N` prerelease tag is **set by hand only** (alpha is rarely used). `main` always carries the bare release line; build metadata is appended only to published builds, and semver ignores it for precedence:
+## Tests
 
-| Channel | Readable version | Where it lives | Trigger |
-|---|---|---|---|
-| Main | `<line>`, e.g. `2.0.0` | `main` | Your own commits; nothing writes there automatically |
-| Nightly | `<line>+nightly.<YYYYMMDD>`, e.g. `2.0.0-beta.1+nightly.20261103` | `nightly` branch, `nightly-YYYYMMDD` tag and artifact | Daily at **05:30 (UTC+8)**, when the previous day had at least one passing push to `main` |
-| Release | `<line>`, e.g. `2.0.0` | Git tag and GitHub Release | A manually pushed tag |
+Before submitting, run `npm test` and `npm run validate`, and `node --check` on changed `.js` / `.mjs` files.
 
-- `<line>` is the current version without `+build` (including any manually set `-alpha.N` / `-beta.N`); `YYYYMMDD` is always **UTC+8**.
-- Automation never commits to `main`. The version files there change only when you set a new release line, so the commit history stays human-authored — no bot commit after a push.
-- `versionCode` is monotonic **within a channel**: `main` increments its own version files, nightly increments the highest code visible on the `nightly` branch, and the two counters are independent. A stable Release may therefore carry a smaller number than a newer nightly build; `src/update-check.js` only uses the code to break ties inside the selected channel (semver decides first).
-- `tests/unit/version.test.mjs` enforces that `manifest.json`, `package.json`, `server-plugin/package.json` and `src/constants.js` all agree.
-- The update check reads only the version numbers in the selected channel's `manifest.json`: nightly builds default to the `nightly` branch, everything else defaults to `main`, and the **Update check** section in the settings panel switches between them. GitHub Releases and commit history are not consulted.
+Tests should catch real problems: business rules, protocol translation edge cases, encrypted storage, fixed bugs. Do not write tests that only inspect source text, echo a mock, or assert that something does not throw. Tests must be deterministic, independent and free of network access.
 
-Workflows:
+Manual checks and the mock provider are described in [Testing](./docs/testing.en.md).
 
-| File | Purpose |
+## Documentation
+
+| Change | Update |
 |---|---|
-| `.github/workflows/checks.yml` | Runs `npm test` and `npm run validate` on every push to `main`; it never writes files |
-| `.github/workflows/nightly.yml` | At 05:30 (UTC+8) builds a nightly from the last passing push of the previous day: updates the `nightly` branch, a `nightly-YYYYMMDD` tag and a workflow artifact — **never a Release** |
-| `.github/workflows/release.yml` | On a `v*` tag: re-runs the checks, verifies the tag matches the version files, then creates the GitHub Release with a source zip |
+| User-visible features or settings | `docs/user-guide*.md`, the README if needed |
+| Plugin API, data files, environment variables, security behavior | `docs/gateway*.md` |
+| `globalThis.OMTP` or selectors | `docs/developer*.md` |
+| Versioning or release process | `docs/releasing*.md` |
 
-Version tool: `tools/version.mjs` (`npm run version:nightly -- --date 20261102`, `npm run version:manual -- 2.0.0-beta.1`, `npm run version:check-tag -- v2.0.0`).
+Change the Chinese and English documents together. Describe current behavior in plain terms, without marketing language. Avoid numbers that go stale (provider or route counts); when one is needed, say where it comes from.
 
-### Publishing a release by hand
+## Pull requests
 
-1. Confirm the code to ship is on `main` and the latest **Checks** run is green (`Actions → Checks`).
-2. Update `main` locally and set the version to ship (a stable release by default; add `-beta.N` for a prerelease):
-   ```bash
-   git pull --ff-only
-   npm run version:manual -- 2.0.0
-   ```
-   This writes `2.0.0` into all four version files and increments `versionCode`.
-3. Commit and push:
-   ```bash
-   git add manifest.json package.json server-plugin/package.json src/constants.js
-   git commit -m "chore(release): 2.0.0"
-   git push origin main
-   ```
-4. Once the **Checks** run is green, tag and push (the tag must match `<line>` or the prerelease-free base):
-   ```bash
-   git tag v2.0.0
-   git push origin v2.0.0
-   ```
-5. The **Release** workflow re-runs `npm test` and `npm run validate`, verifies the tag against the version files, then creates the GitHub Release with `omtp-v2.0.0.zip`. A failed check means no Release.
-6. Later commits keep `2.0.0` on the same release line; the nightly branch keeps reporting `2.0.0+nightly.<date>`.
-
-> To ship the current `main` snapshot without changing the version, just tag that commit as `v<line>` or `v<MAJOR.MINOR.FIX>`.
+1. Fork the repository and branch from `main`, e.g. `fix/gateway-port` or `feat/provider-foo`.
+2. Make the change and pass the checks above.
+3. Verify UI changes in SillyTavern and attach screenshots or recordings to the PR.
+4. Fill in the PR template. Commit messages follow Conventional Commits (`fix(scope): …`, `feat(scope): …`, `docs: …`).

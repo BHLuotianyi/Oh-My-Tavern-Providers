@@ -3,12 +3,12 @@
 
 ## 变更类型 / Type of Change
 
-- [ ] 🐛 Bug 修复 / Bug Fix
-- [ ] ✨ 新功能或服务商适配 / New Feature or Provider Adapter
-- [ ] 📦 目录或人格快照更新 / Catalog or Personality Snapshot Update
-- [ ] ♻️ 代码重构或简化（行为不变） / Refactoring or Simplification (behavior-preserving)
-- [ ] 📝 文档或翻译更新 / Documentation or i18n Update
-- [ ] 🔧 其他（请说明） / Other (please describe):
+- [ ] Bug 修复 / Bug fix
+- [ ] 新功能或服务商适配 / New feature or provider adapter
+- [ ] 目录或人格快照更新 / Catalog or personality snapshot update
+- [ ] 重构或简化（行为不变） / Refactoring (behavior-preserving)
+- [ ] 文档或翻译 / Documentation or i18n
+- [ ] 其他（请说明） / Other (please describe):
 
 ## 关联 Issue / Related Issues
 <!--- 例如：Fixes #12 或 Relates to #34 / e.g., Fixes #12 or Relates to #34 -->
@@ -26,7 +26,7 @@
 
 - [ ] 我已阅读并遵循 [CONTRIBUTING.md](../CONTRIBUTING.md) 中的架构边界与质量护栏 / I have read and followed [CONTRIBUTING.en.md](../CONTRIBUTING.en.md)
 - [ ] 我已运行 `npm test` 且全部单元测试通过 / `npm test` passes locally
-- [ ] 我已运行 `npm run validate` 确认双副本目录校验通过 / `npm run validate` passes locally
+- [ ] 我已运行 `npm run validate` 且通过 / `npm run validate` passes locally
 - [ ] 若修改了 `i18n/`，我确认 `en.json` 与 `zh-cn.json` 的键集合完全一致 / `i18n/en.json` and `i18n/zh-cn.json` remain in 1:1 sync
 - [ ] 我确认 `server-plugin/` 未直接导入 `src/` 或仓库根目录下的文件 / `server-plugin/` remains standalone
 - [ ] 我确认未提交任何真实 API Key、OAuth 密钥、Token 或本机绝对路径 / No secrets, tokens, or personal paths were committed

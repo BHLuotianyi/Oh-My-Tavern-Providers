@@ -61,7 +61,7 @@ async function refreshCredential(providerId, credential, doFetch, root = '', log
     if (!clientId || (spec.needsSecret && !clientSecret)) {
         throw new Error(
             `OAuth client credentials for ${providerId} are not configured; `
-            + 'add them to data/omtp/oauth-clients.json (see README) or the matching environment variables.',
+            + 'add them to data/omtp/oauth-clients.json or the matching environment variables (see docs/gateway.md).',
         );
     }
     let response;
