@@ -366,9 +366,18 @@ async function hydrateLiveModels(root) {
     }
 }
 
+/**
+ * Bumped whenever a provider's credentials or config change, so a probe that
+ * started before the change cannot store a list fetched with the old ones.
+ * @type {Map<string, number>}
+ */
+const liveModelsGeneration = new Map();
+
 /** Drop one provider's cached models, in memory and on disk. */
 async function forgetLiveModels(providerId) {
-    liveModelsCache.delete(String(providerId));
+    const id = String(providerId);
+    liveModelsGeneration.set(id, (liveModelsGeneration.get(id) || 0) + 1);
+    liveModelsCache.delete(id);
     await persistLiveModels();
 }
 
@@ -472,6 +481,7 @@ async function probeProviderModels(current, providerId, { refresh = false } = {}
         authKind: status.authKind,
         adapter: status.adapter,
     });
+    const generation = liveModelsGeneration.get(providerId) || 0;
     const resolved = await resolveProviderCredentials(current.keyStore, provider);
     const adapter = await getAdapter(resolved.adapter);
     const probe = await probeProvider(resolved, adapter, provider, { keyStore: current.keyStore });
@@ -480,6 +490,11 @@ async function probeProviderModels(current, providerId, { refresh = false } = {}
         // an older list is still on disk, so the caller never picks a model the
         // provider no longer serves.
         return { ok: false, error: probe.error, models: [] };
+    }
+    // Credentials or config changed mid-probe: this list answers for the old
+    // ones, so neither cache nor return it as current.
+    if ((liveModelsGeneration.get(providerId) || 0) !== generation) {
+        return { ok: false, error: 'Provider settings changed during the probe; refresh again', models: [] };
     }
     clearAuthFailure(providerId);
     const models = probe.models || [];
@@ -628,6 +643,9 @@ function registerProviderRoutes(router) {
         }
         if (Object.keys(patch).length === 0) throw new HttpError(400, 'No config fields supplied', 'invalid_config');
         await current.keyStore.setProviderConfig(providerId, patch);
+        // A new endpoint, adapter or header set invalidates the old probe.
+        clearAuthFailure(providerId);
+        await forgetLiveModels(providerId);
         current.catalogService.invalidate();
         const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
         res.json({ ok: true, provider: status });
@@ -637,6 +655,8 @@ function registerProviderRoutes(router) {
         const current = requireState();
         const providerId = String(req.params.id || '');
         const removed = await current.keyStore.deleteProviderConfig(providerId);
+        clearAuthFailure(providerId);
+        await forgetLiveModels(providerId);
         current.catalogService.invalidate();
         res.json({ ok: true, removed, id: providerId });
     }));

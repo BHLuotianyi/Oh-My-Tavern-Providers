@@ -401,11 +401,23 @@ export function hasProviderCredentials(providerId, stAdapter = null, provider = 
     return false;
 }
 
+/** Same freshness window as the server's `LIVE_MODELS_TTL`. */
+const LIVE_MODELS_TTL = 300_000;
+
+/**
+ * Drop a provider's live model list, e.g. after its credentials changed.
+ * @param {string} providerId
+ */
+export function forgetLiveModels(providerId) {
+    if (liveModelsCache.delete(String(providerId))) invalidateNativeCache();
+}
+
 /**
  * Ask the server for a provider's live model list.
  *
- * Never throws and never clears previously cached models: a failed probe keeps
- * the catalog list on screen and reports why it failed.
+ * Never throws. Mirrors the server's policy: a failed probe drops the
+ * previously fetched list, so the hub falls back to the catalog models instead
+ * of offering ones the provider may no longer serve.
  *
  * @param {string} providerId
  * @param {boolean} [force] bypass the local cache
@@ -413,7 +425,7 @@ export function hasProviderCredentials(providerId, stAdapter = null, provider = 
  */
 export async function fetchLiveModelsForProvider(providerId, force = false) {
     const cached = liveModelsCache.get(providerId);
-    if (!force && cached && Date.now() - cached.at < 300_000) {
+    if (!force && cached && Date.now() - cached.at < LIVE_MODELS_TTL) {
         return { models: cached.models, error: null, needsCredentials: false, source: 'server' };
     }
 
@@ -425,7 +437,10 @@ export async function fetchLiveModelsForProvider(providerId, force = false) {
         if (res.ok) {
             const data = await res.json();
             if (data.ok && Array.isArray(data.models) && data.models.length > 0) {
-                liveModelsCache.set(providerId, { models: data.models, at: Date.now() });
+                // The server may answer from its own cache: age the list from
+                // the probe time, not from now, so it expires on schedule.
+                const at = Number.isFinite(data.at) ? Math.min(data.at, Date.now()) : Date.now();
+                liveModelsCache.set(providerId, { models: data.models, at });
                 invalidateNativeCache();
                 return { models: data.models, error: null, needsCredentials: false, source: 'server' };
             }
@@ -438,6 +453,7 @@ export async function fetchLiveModelsForProvider(providerId, force = false) {
         error = err?.message ? String(err.message) : String(err);
     }
 
+    forgetLiveModels(providerId);
     return { models: null, error, needsCredentials, source: null };
 }
 

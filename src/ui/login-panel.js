@@ -27,6 +27,7 @@ function safeAuthorizeUrl(value) {
 import { API_BASE, withClientHeader } from '../constants.js';
 import { apiKeyUrlFor } from '../provider-links.js';
 import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
+import { forgetLiveModels } from '../catalog.js';
 import { getSettings } from '../store.js';
 import { tr, trf } from './dom.js';
 import { el } from './helpers.js';
@@ -240,6 +241,7 @@ function renderRow(provider) {
             out.disabled = true;
             try {
                 await api(`/providers/${encodeURIComponent(id)}/logout`, { method: 'POST' });
+                forgetLiveModels(id);
                 onChanged?.();
                 await refresh();
             } catch (error) {
@@ -353,6 +355,7 @@ function renderKeyEntry(provider, row) {
                 body: JSON.stringify({ key }),
             });
             input.value = '';
+            forgetLiveModels(id);
             onChanged?.();
             await refresh();
         } catch (error) {
@@ -563,6 +566,7 @@ function pollSession(providerId, started, panel, popup = null, actions = null) {
 
 function finishLogin(providerId, panel, status, popup = null) {
     stopPolling(providerId);
+    forgetLiveModels(providerId);
     panel.replaceChildren(el('div', 'omtp-login-success', trf('omtp_login_success', 'Signed in${0}', status.account ? ` · ${status.account}` : '')));
     onChanged?.();
     setTimeout(() => refresh(), 400);

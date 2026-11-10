@@ -19,7 +19,7 @@ import {
     GATEWAY_ADAPTERS,
     withClientHeader,
 } from '../constants.js';
-import { getCatalogInfo, loadCatalog } from '../catalog.js';
+import { forgetLiveModels, getCatalogInfo, loadCatalog } from '../catalog.js';
 import { getSettings, updateSettings } from '../store.js';
 import { restoreSelection } from '../switch-engine.js';
 import { UPDATE_CHANNELS, resolveUpdateChannel } from '../update-check.js';
@@ -539,6 +539,9 @@ async function submitCustomProvider({ idInput, labelInput, adapterSelect, baseUr
     } catch (error) {
         errorLine.textContent = errorMessage(error);
         return false;
+    } finally {
+        // The config may already have changed even when the key save failed.
+        forgetLiveModels(id);
     }
     notify('success', trf('omtp_provider_added', 'Provider ${0} added', config.label));
     await refreshProviders();
@@ -791,6 +794,7 @@ async function deleteProviderKeys() {
         try {
             await apiFetch(`/providers/${encodeURIComponent(provider.id)}/key`, { method: 'DELETE' });
             removed += 1;
+            forgetLiveModels(provider.id);
         } catch (error) {
             console.warn(`[omtp] could not delete key for ${provider.id}`, error);
             failed.push(String(provider.id));
