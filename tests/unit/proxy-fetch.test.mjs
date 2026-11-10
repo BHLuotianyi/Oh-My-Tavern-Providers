@@ -183,6 +183,55 @@ test('decoded responses drop stale content-length and transfer-encoding', async 
     }
 });
 
+test('a socket reset mid-body fails the decoded body instead of hanging', { timeout: 5000 }, async () => {
+    const gz = zlib.gzipSync(Buffer.alloc(64 * 1024, 'a'));
+    const origin = http.createServer((req, res) => {
+        const gzip = req.url === '/gzip';
+        res.writeHead(200, { 'content-type': 'text/plain', ...(gzip ? { 'content-encoding': 'gzip' } : {}) });
+        // A prefix that decompresses fine; only the reset can end the body.
+        res.write(gzip ? gz.subarray(0, gz.length - 10) : Buffer.alloc(64 * 1024, 'a'));
+        setTimeout(() => res.socket.destroy(), 20);
+    });
+    const originPort = await listen(origin);
+    const { proxy, port } = await startProxy(originPort);
+    try {
+        const doFetch = createProxyFetch({ env: { HTTP_PROXY: `http://127.0.0.1:${port}` } });
+        for (const path of ['/plain', '/gzip']) {
+            const response = await doFetch(`http://origin.test${path}`);
+            await assert.rejects(response.text());
+        }
+    } finally {
+        await close(proxy);
+        await close(origin);
+    }
+});
+
+test('null-body statuses and HEAD with a content-encoding are delivered once, without a body', async () => {
+    const hits = [];
+    const origin = http.createServer((req, res) => {
+        hits.push(`${req.method} ${req.url}`);
+        res.writeHead(req.url === '/204' ? 204 : 200, { 'content-encoding': 'gzip', 'x-origin': 'yes' });
+        res.end();
+    });
+    const originPort = await listen(origin);
+    const { proxy, port } = await startProxy(originPort);
+    try {
+        const doFetch = createProxyFetch({ env: { HTTP_PROXY: `http://127.0.0.1:${port}` } });
+        const noContent = await doFetch('http://origin.test/204', { method: 'POST', body: '{}' });
+        assert.equal(noContent.status, 204);
+        assert.equal(noContent.headers.get('x-origin'), 'yes');
+        assert.equal(await noContent.text(), '');
+        const head = await doFetch('http://origin.test/head', { method: 'HEAD' });
+        assert.equal(head.status, 200);
+        assert.equal(await head.text(), '');
+        // A failed Response construction used to fall back to a direct replay.
+        assert.deepEqual(hits, ['POST /204', 'HEAD /head']);
+    } finally {
+        await close(proxy);
+        await close(origin);
+    }
+});
+
 test('redirects are followed, rewriting methods and re-entering the proxy decision', async () => {
     let loopHits = 0;
     const origin = http.createServer((req, res) => {
@@ -213,6 +262,21 @@ test('redirects are followed, rewriting methods and re-entering the proxy decisi
             if (req.url === '/to-direct') {
                 res.writeHead(302, { location: `http://127.0.0.1:${origin.address().port}/echo` });
                 res.end();
+                return;
+            }
+            if (req.url === '/keep-auth') {
+                res.writeHead(307, { location: '/echo-auth' });
+                res.end();
+                return;
+            }
+            if (req.url === '/cross-auth') {
+                res.writeHead(307, { location: `http://127.0.0.1:${origin.address().port}/echo-auth` });
+                res.end();
+                return;
+            }
+            if (req.url === '/echo-auth') {
+                res.writeHead(200, { 'content-type': 'application/json' });
+                res.end(JSON.stringify({ authorization: req.headers.authorization || '', apiKey: req.headers['x-api-key'] || '', other: req.headers['x-other'] || '' }));
                 return;
             }
             if (req.url === '/loop') {
@@ -254,6 +318,13 @@ test('redirects are followed, rewriting methods and re-entering the proxy decisi
         const viaDirect = await doFetch('http://origin.test/to-direct');
         assert.deepEqual(await viaDirect.json(), { method: 'GET', body: '' });
         assert.deepEqual(direct, [`http://127.0.0.1:${originPort}/echo`]);
+
+        // Credentials stay on their origin; unrelated headers still follow.
+        const secrets = { headers: { Authorization: 'Bearer secret', 'X-Api-Key': 'key', 'X-Other': 'kept' } };
+        const sameOrigin = await doFetch('http://origin.test/keep-auth', secrets);
+        assert.deepEqual(await sameOrigin.json(), { authorization: 'Bearer secret', apiKey: 'key', other: 'kept' });
+        const crossOrigin = await doFetch('http://origin.test/cross-auth', secrets);
+        assert.deepEqual(await crossOrigin.json(), { authorization: '', apiKey: '', other: 'kept' });
 
         const manual = await doFetch('http://origin.test/to-get', { redirect: 'manual' });
         assert.equal(manual.status, 302);

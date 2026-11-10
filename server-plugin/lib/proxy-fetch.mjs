@@ -214,14 +214,19 @@ function decompressor(encoding) {
  * Pulling from the async iterator gives backpressure and exactly one close
  * path on every supported Node version.
  *
- * @param {import('node:stream').Readable} nodeStream
+ * @param {import('node:stream').Readable} source
+ * @param {import('node:stream').Transform} [decoder] decompresses the source on the way out
  * @returns {ReadableStream<Uint8Array>}
  */
-function nodeStreamToWeb(nodeStream) {
-    // A no-op listener keeps a late socket error from becoming an uncaught
-    // exception; the iterator still rejects pull() when the stream fails.
-    nodeStream.on('error', () => {});
-    const iterator = nodeStream[Symbol.asyncIterator]();
+function nodeStreamToWeb(source, decoder) {
+    const body = decoder ? source.pipe(decoder) : source;
+    // `pipe` does not forward source failures, so a reset socket would leave
+    // the decoder pending forever; destroy it with the error instead.
+    if (decoder) source.on('error', (error) => decoder.destroy(error));
+    // Keeps a late socket error from becoming an uncaught exception while no
+    // pull is waiting; a pending pull still rejects through the iterator.
+    body.on('error', () => {});
+    const iterator = body[Symbol.asyncIterator]();
     let cancelled = false;
     return new ReadableStream({
         async pull(controller) {
@@ -230,16 +235,24 @@ function nodeStreamToWeb(nodeStream) {
                 // A pending pull can resolve after cancel(); touching the
                 // controller then is exactly the double-close Node 18 trips on.
                 if (cancelled) return;
-                if (done) controller.close();
-                else controller.enqueue(value instanceof Uint8Array ? value : Buffer.from(value));
+                if (done) {
+                    controller.close();
+                    return;
+                }
+                controller.enqueue(value);
             } catch (error) {
-                if (!cancelled) controller.error(error);
+                if (cancelled) return;
+                cancelled = true;
+                source.destroy();
+                controller.error(error);
             }
         },
         async cancel() {
             cancelled = true;
+            // Releasing the socket matters when the decoder is the piped stream.
+            source.destroy();
             try {
-                if (typeof iterator.return === 'function') await iterator.return();
+                await iterator.return();
             } catch {
                 // Socket already gone; nothing left to release.
             }
@@ -309,15 +322,41 @@ async function tunnelRequest(target, proxy, init) {
         request.end();
     });
 
-    const encoding = response.headers['content-encoding'];
-    const decoder = decompressor(encoding);
-    /** @type {ReadableStream|undefined} */
-    let stream;
-    if (decoder) {
-        stream = nodeStreamToWeb(response.pipe(decoder));
-    } else if (response.statusCode !== 204 && response.statusCode !== 304 && (init.method || 'GET') !== 'HEAD') {
-        stream = nodeStreamToWeb(response);
+    try {
+        return toFetchResponse(response, init.method || 'GET');
+    } catch (error) {
+        // The origin has answered, so the request was delivered: a direct
+        // replay could run a POST twice.
+        response.destroy();
+        if (error && typeof error === 'object') error[REQUEST_SENT] = true;
+        throw error;
     }
+}
+
+/** Headers that carry credentials and must not follow a cross-origin redirect. */
+const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'x-api-key', 'api-key', 'x-goog-api-key'];
+
+/** Statuses whose response must not carry a body (Fetch "null body status"). */
+const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304]);
+
+/**
+ * Wrap a Node response as a fetch `Response`, decoding the body when needed.
+ *
+ * @param {import('node:http').IncomingMessage} response
+ * @param {string} method
+ * @returns {Response}
+ */
+function toFetchResponse(response, method) {
+    const status = response.statusCode || 200;
+    // HEAD and null-body statuses may still advertise a Content-Encoding; an
+    // empty body must not reach a decoder (it fails with Z_BUF_ERROR) nor the
+    // Response constructor (it rejects any body for these statuses).
+    const hasBody = !NULL_BODY_STATUS.has(status) && method.toUpperCase() !== 'HEAD';
+    const decoder = hasBody ? decompressor(response.headers['content-encoding']) : null;
+    /** @type {ReadableStream|null} */
+    let stream = null;
+    if (hasBody) stream = nodeStreamToWeb(response, decoder || undefined);
+    else response.resume();
 
     const outHeaders = new Headers();
     for (const [key, value] of Object.entries(response.headers)) {
@@ -333,8 +372,8 @@ async function tunnelRequest(target, proxy, init) {
         }
     }
 
-    return new Response(stream ?? null, {
-        status: response.statusCode || 200,
+    return new Response(stream, {
+        status,
         statusText: response.statusMessage || '',
         headers: outHeaders,
     });
@@ -411,13 +450,21 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch } 
             const downgrade = response.status === 303
                 || ((response.status === 301 || response.status === 302) && method === 'POST');
             currentInit = { ...currentInit, method: downgrade && method !== 'HEAD' ? 'GET' : method };
-            if (downgrade) {
-                delete currentInit.body;
+            const crossOrigin = next.origin !== target.origin;
+            if (downgrade || crossOrigin) {
                 const headers = headerObject(currentInit.headers);
-                delete headers['content-length'];
-                delete headers['content-type'];
-                delete headers['transfer-encoding'];
-                delete headers['content-encoding'];
+                if (downgrade) {
+                    delete currentInit.body;
+                    delete headers['content-length'];
+                    delete headers['content-type'];
+                    delete headers['transfer-encoding'];
+                    delete headers['content-encoding'];
+                }
+                // Like fetch, never hand credentials to another origin; API
+                // keys travel in their own headers here, so they go too.
+                if (crossOrigin) {
+                    for (const name of CREDENTIAL_HEADERS) delete headers[name];
+                }
                 currentInit.headers = headers;
             }
             current = next.href;
