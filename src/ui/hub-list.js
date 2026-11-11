@@ -32,7 +32,7 @@ import {
 } from './hub-utils.js';
 import { filteredEntries, getCurrentRef, providerLabel } from './hub-catalog.js';
 import { PROFILE_PROVIDER_ID } from '../constants.js';
-import { renderDetails, renderProviderHeader, toggleFavorite } from './hub-details.js';
+import { openDetailsPane, renderDetails, renderProviderHeader, toggleFavorite } from './hub-details.js';
 import { refreshHub } from './hub-quick.js';
 
 /**
@@ -519,7 +519,10 @@ function renderRow(entry, index) {
     if (entry.unsupportedReason) {
         row.title = entry.unsupportedReason;
     }
-    row.addEventListener('click', () => selectEntry(entry));
+    row.addEventListener('click', () => {
+        selectEntry(entry);
+        openDetailsPane();
+    });
     return row;
 }
 

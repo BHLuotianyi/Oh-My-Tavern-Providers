@@ -5,6 +5,25 @@
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content">
+            <div id="omtp-companion-section" class="omtp-settings-section" hidden>
+                <h4 data-i18n="omtp_settings_companion">Companion (TauriTavern)</h4>
+                <div class="omtp-settings-row">
+                    <span class="omtp-muted" data-i18n="omtp_companion_hint">TauriTavern cannot run server plugins. Run "node server-plugin/standalone.mjs" from the extension folder on a computer with Node.js 18+, then enter the address and token it prints. Gateway models, sign-in and usage work through it.</span>
+                </div>
+                <div class="omtp-settings-row">
+                    <label for="omtp-companion-url" data-i18n="omtp_companion_url">Companion address</label>
+                    <input id="omtp-companion-url" type="url" placeholder="http://127.0.0.1:4099" />
+                </div>
+                <div class="omtp-settings-row">
+                    <label for="omtp-companion-token" data-i18n="omtp_companion_token">Companion token</label>
+                    <input id="omtp-companion-token" type="password" autocomplete="off" />
+                </div>
+                <div class="omtp-settings-row">
+                    <button id="omtp-companion-connect" type="button" class="menu_button" data-i18n="omtp_companion_connect">Connect</button>
+                    <span id="omtp-companion-status" class="omtp-muted"></span>
+                </div>
+            </div>
+
             <div class="omtp-settings-section">
                 <h4 data-i18n="omtp_settings_gateway">Gateway</h4>
                 <div class="omtp-settings-row">

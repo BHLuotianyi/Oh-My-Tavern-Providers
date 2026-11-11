@@ -8,17 +8,16 @@
 
 import { getRequestHeaders as stRequestHeaders } from '../../../../../script.js';
 
-const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
+const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
 import { extension_settings } from '../../../../extensions.js';
 import {
-    API_BASE,
     CATALOG_SCHEMA_VERSION,
     NATIVE_PROVIDER_IDS,
     PROFILE_PROVIDER_ID,
-    withClientHeader,
 } from './constants.js';
 import { getNativeAdapter } from './adapters/native.js';
-import { tr } from './ui/dom.js';
+import { apiBase, apiHeaders, hasServerBackend } from './backend.js';
+import { gatewayUnavailableText, tr } from './ui/dom.js';
 
 const EMPTY_CATALOG = Object.freeze({
     schemaVersion: CATALOG_SCHEMA_VERSION,
@@ -103,7 +102,7 @@ export async function loadBundledCatalog() {
 
 async function fetchServerCatalog() {
     try {
-        const response = await fetch(`${API_BASE}/catalog`, {
+        const response = await fetch(`${apiBase()}/catalog`, {
             headers: getRequestHeaders(),
         });
         if (!response.ok) {
@@ -433,7 +432,7 @@ export async function fetchLiveModelsForProvider(providerId, force = false) {
     let needsCredentials = false;
     try {
         const headers = getRequestHeaders ? getRequestHeaders({ omitContentType: true }) : {};
-        const res = await fetch(`${API_BASE}/providers/${encodeURIComponent(providerId)}/models?refresh=${force ? 'true' : 'false'}`, { headers });
+        const res = await fetch(`${apiBase()}/providers/${encodeURIComponent(providerId)}/models?refresh=${force ? 'true' : 'false'}`, { headers });
         if (res.ok) {
             const data = await res.json();
             if (data.ok && Array.isArray(data.models) && data.models.length > 0) {
@@ -635,7 +634,9 @@ function entryForModel(provider, providerId, route, model, isLive) {
             source: 'OMTP',
             nativeAdapter: null,
             gatewayAdapter,
-            unsupportedReason: gatewayCreds ? null : tr('omtp_no_credentials', 'No credentials / not signed in'),
+            unsupportedReason: gatewayCreds
+                ? null
+                : (hasServerBackend() ? tr('omtp_no_credentials', 'No credentials / not signed in') : gatewayUnavailableText()),
             available: gatewayCreds,
         };
     }

@@ -8,7 +8,7 @@
  */
 import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
 
-const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
+const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
 
 /**
  * Authorize URLs come from the server (and ultimately from a catalog policy).
@@ -24,7 +24,7 @@ function safeAuthorizeUrl(value) {
         return '';
     }
 }
-import { API_BASE, withClientHeader } from '../constants.js';
+import { apiBase, apiHeaders, isTauriTavern } from '../backend.js';
 import { apiKeyUrlFor } from '../provider-links.js';
 import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
 import { forgetLiveModels } from '../catalog.js';
@@ -69,7 +69,7 @@ async function api(path, init = {}) {
     if (init.body && !headers['Content-Type']) {
         headers['Content-Type'] = 'application/json';
     }
-    const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+    const response = await fetch(`${apiBase()}${path}`, { ...init, headers });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
         throw new Error(data?.error?.message || data?.message || `HTTP ${response.status}`);
@@ -379,8 +379,13 @@ function setRowButtonsDisabled(actions, disabled) {
  * Open the placeholder tab synchronously: a popup created after `await` is
  * blocked. The authorize URL only exists once the server answers, so the
  * placeholder tab is navigated instead of opening a fresh one.
+ * TauriTavern hands `window.open` to the system browser and has no popup
+ * blocker, so there the URL is opened once known (see openAuthorizeUrl).
  */
 function openLoginPopup() {
+    if (isTauriTavern()) {
+        return null;
+    }
     try {
         const popup = window.open('about:blank', '_blank');
         if (popup) {
@@ -389,6 +394,20 @@ function openLoginPopup() {
         return popup;
     } catch {
         return null;
+    }
+}
+
+/**
+ * @param {Window|null} popup placeholder from openLoginPopup()
+ * @param {string} authorizeUrl
+ */
+function openAuthorizeUrl(popup, authorizeUrl) {
+    if (!authorizeUrl) return;
+    try {
+        if (popup) popup.location.href = authorizeUrl;
+        else if (isTauriTavern()) window.open(authorizeUrl, '_blank');
+    } catch {
+        // The browser can still refuse; the link in the flow stays visible.
     }
 }
 
@@ -406,13 +425,7 @@ async function startLogin(provider, row, actions) {
             body: JSON.stringify({ locale: navigator.language || '' }),
         });
         const authorizeUrl = safeAuthorizeUrl(started.url);
-        if (popup && authorizeUrl) {
-            try {
-                popup.location.href = authorizeUrl;
-            } catch {
-                // The browser can still refuse; the link below stays visible.
-            }
-        }
+        openAuthorizeUrl(popup, authorizeUrl);
         renderLoginFlow(id, started, panel, popup, actions);
         pollSession(id, started, panel, popup, actions);
     } catch (error) {

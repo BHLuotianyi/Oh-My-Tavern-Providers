@@ -225,6 +225,8 @@ export const DEFAULT_SETTINGS = deepFreeze({
     gatewayUrl: DEFAULT_GATEWAY_URL,
     gatewayToken: '',
     catalogUrl: '',
+    // TauriTavern only: where the standalone companion serves the plugin routes.
+    companion: { url: '', token: '' },
     favorites: [],
     recents: [],
     quickSlots: Array.from({ length: QUICK_SLOT_COUNT }, () => null),

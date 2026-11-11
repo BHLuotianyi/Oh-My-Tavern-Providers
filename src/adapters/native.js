@@ -17,14 +17,35 @@ function documentObject() {
     return typeof globalThis.document === 'object' ? globalThis.document : null;
 }
 
-function selectSupports(selector, id) {
+function hasOption(selector, value) {
+    const select = documentObject()?.querySelector(selector);
+    return Boolean(select?.options) && Array.from(select.options).some((option) => option.value === value);
+}
+
+/**
+ * Whether ST still offers a main API. TauriTavern removes every `#main_api`
+ * option except `openai`, so text completion, NovelAI and Horde cannot be
+ * selected there. Without the control (no DOM yet) the switch checks again.
+ */
+function mainApiSelectable(mainApi) {
+    const doc = documentObject();
+    if (!doc?.querySelector('#main_api')) {
+        return true;
+    }
+    return hasOption('#main_api', mainApi);
+}
+
+function selectSupports(selector, id, source = null) {
     const doc = documentObject();
     if (!doc || !selector) {
         return false;
     }
     const control = doc.querySelector(selector);
     if (!control) {
-        return false;
+        // TauriTavern's optional panel runtime parks the forms of inactive chat
+        // sources outside the document. The source is still selectable, and the
+        // switch verifies the model once the form is back.
+        return Boolean(source) && hasOption('#chat_completion_source', source);
     }
     const tag = typeof control.tagName === 'string' ? control.tagName.toUpperCase() : '';
     if (tag === 'INPUT' || tag === 'TEXTAREA') {
@@ -67,6 +88,8 @@ function createAdapter(config) {
         readOnlyReason = null,
         supportsModel = null,
     } = config;
+    const supportsInControl = supportsModel
+        ?? ((id) => selectSupports(modelControl, id, mainApi === 'openai' ? source : null));
 
     return Object.freeze({
         key,
@@ -81,7 +104,7 @@ function createAdapter(config) {
         settingsBlock,
         readOnlyReason,
         getModel: readSettings(mainApi === 'novel' ? 'novel' : mainApi, modelField),
-        supportsModel: supportsModel ?? ((id) => selectSupports(modelControl, id)),
+        supportsModel: (id) => mainApiSelectable(mainApi) && supportsInControl(id),
     });
 }
 

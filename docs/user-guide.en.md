@@ -35,6 +35,8 @@ Filters above the list:
 
 The bottom-left corner shows the version and update status; see [Update check](#update-check).
 
+On narrow screens (760px wide or less, such as a phone in portrait) the panel fills the screen: providers form one horizontally scrolling row, tapping a model opens its details over the list, and **Back to list** returns. The search box is not focused on open, so the keyboard stays down.
+
 ## Connection paths
 
 Each model carries a badge that tells how OMTP makes SillyTavern call it:
@@ -82,7 +84,7 @@ The refresh button next to a provider calls its model listing endpoint; models f
 - Models you use are added to **Recent** automatically.
 - There are nine quick slots at the top of the panel:
   - Click **Save to quick bar** in the details, then a slot; or press `Alt+Shift+digit` to put the model in use into that slot.
-  - Right-click a slot to clear it.
+  - Right-click a slot (long-press on touch screens) to clear it.
   - Press `Alt+1` … `Alt+9` anywhere in SillyTavern to switch to a slot's model.
 
 ## Bindings
@@ -124,7 +126,7 @@ Profiles store connection settings only; chats, characters and prompts are untou
 ## Usage and statistics
 
 - **Usage** tab: for signed-in subscription providers it shows quota windows (such as 5-hour and weekly) as used percentages, reset times or account balance; above 70% the bar turns to a warning color, above 90% to an alert color. Quota data is cached for 60 seconds and can be refreshed by hand. Below it are token totals for this session and overall.
-- **Token chip**: next to the OMTP button in the API drawer toolbar, showing the current chat's tokens and estimated cost; click it to open the usage page.
+- **Token chip**: next to the OMTP button in the API drawer toolbar, showing the current chat's tokens and estimated cost; click it to open the usage page. Hidden on narrow screens; the usage page has the same numbers.
 - **Statistics page**: `/omtp stats` starts a local page (port 3847 by default) and opens it in a new tab, with daily usage and cost by model and by chat. It listens on the local machine only and shuts down after 30 minutes without visits.
 
 Statistics only cover requests that pass through the gateway. Costs are estimates from catalog prices: output tokens include reasoning tokens; without a cache price, cache reads and writes are charged at the input price; models discovered live without a catalog price use the provider's default model price (or the median of its priced models).
@@ -160,6 +162,7 @@ Find **OMTP Model Hub** in SillyTavern's **Extensions** settings:
 
 | Section | Setting | Notes |
 |---|---|---|
+| Companion (TauriTavern only) | Address, token, Connect | The address and token `server-plugin/standalone.mjs` prints at startup; see the [README](../README.en.md#tauritavern) |
 | Gateway | Gateway URL | Address the client uses for the gateway, `http://127.0.0.1:4100/v1` by default |
 | | Start gateway with SillyTavern | When off, the gateway does not start automatically |
 | | Require gateway token | Turning it off asks for confirmation. Without a token the gateway only accepts requests whose Host is a loopback address |

@@ -8,8 +8,8 @@
  */
 import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
 
-const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
-import { API_BASE, withClientHeader } from '../constants.js';
+const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
+import { apiBase, apiHeaders } from '../backend.js';
 import { currentChatId, ensureUsageSession } from '../usage-session.js';
 import { tr, trf } from './dom.js';
 import { formatTokens, formatUsd } from './helpers.js';
@@ -38,7 +38,7 @@ export async function refreshUsageChip({ force = false, chatId } = {}) {
     const activeChat = typeof chatId === 'string' ? chatId : currentChatId();
     const query = activeChat ? `chat=${encodeURIComponent(activeChat)}` : `since=${encodeURIComponent(since)}`;
     try {
-        const response = await fetch(`${API_BASE}/stats?${query}`, {
+        const response = await fetch(`${apiBase()}/stats?${query}`, {
             headers: getRequestHeaders(),
         });
         if (!response.ok) {

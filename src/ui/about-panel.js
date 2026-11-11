@@ -6,7 +6,7 @@
  * version. Nothing is hard-coded except the licence, which is a property of the
  * source tree rather than of the running process.
  */
-import { API_BASE, withClientHeader } from '../constants.js';
+import { apiBase, apiHeaders } from '../backend.js';
 import { tr, trf } from './dom.js';
 import { el } from './helpers.js';
 
@@ -94,7 +94,7 @@ async function loadFacts() {
         console.warn('[omtp] could not read the extension manifest', error);
     }
     try {
-        const response = await fetch(`${API_BASE}/status`, { headers: withClientHeader(), signal: AbortSignal.timeout(3000) });
+        const response = await fetch(`${apiBase()}/status`, { headers: apiHeaders(), signal: AbortSignal.timeout(3000) });
         if (response.ok) facts.status = await response.json();
     } catch (error) {
         console.warn('[omtp] could not read gateway status', error);
@@ -106,7 +106,7 @@ function gatewayValue(status) {
     const gateway = status?.gateway || null;
     if (!gateway) return tr('omtp_about_gateway_stopped', 'Not running');
     if (gateway.running || gateway.listening) {
-        return trf('omtp_about_gateway_running', 'Running at ${0}', gateway.url || API_BASE);
+        return trf('omtp_about_gateway_running', 'Running at ${0}', gateway.url || apiBase());
     }
     return gateway.lastError
         ? trf('omtp_about_gateway_failed', 'Stopped (${0})', gateway.lastError)

@@ -17,7 +17,7 @@
 
 - [ ] 客户端扩展核心 (`src/*.js`, `src/adapters/native.js`)
 - [ ] 客户端 UI 与样式 (`src/ui/*.js`, `style.css`, `settings.html`, `i18n/*.json`)
-- [ ] 服务端网关与密钥库 (`server-plugin/index.mjs`, `server-plugin/lib/*.mjs`)
+- [ ] 服务端网关与密钥库 (`server-plugin/index.mjs`, `server-plugin/standalone.mjs`, `server-plugin/lib/*.mjs`)
 - [ ] 协议转换或额度适配器 (`server-plugin/lib/adapters/*`, `usage.mjs`, `custom-logins/*`)
 - [ ] 模型目录或构建脚本 (`catalog/*`, `server-plugin/catalog/*`, `tools/*.mjs`)
 - [ ] 测试与文档 (`tests/**`, `README*.md`, `docs/**`)

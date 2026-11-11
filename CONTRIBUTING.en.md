@@ -9,7 +9,7 @@ This guide describes how OMTP is structured, the invariants it must keep, and ho
 OMTP consists of two parts that are deployed separately:
 
 - **Client extension**: `index.js`, `src/`, `settings.html`, `style.css`, `i18n/`, `catalog/`. Runs in the browser and imports SillyTavern modules (`script.js`, `extensions.js`, `popup.js` and others) by relative path. There is no build step.
-- **Server plugin**: `server-plugin/`. Users copy it to `SillyTavern/plugins/omtp/`, where it runs in SillyTavern's Node process.
+- **Server plugin**: `server-plugin/`. Users copy it to `SillyTavern/plugins/omtp/`, where it runs in SillyTavern's Node process. The same code also runs on its own as `node server-plugin/standalone.mjs` (the companion) for TauriTavern, which cannot run server plugins. The client picks the management API address in `src/backend.js`.
 
 Nothing at runtime calls the `omp` program or needs Python. Reading credentials from a local OMP tries `node:sqlite`, then the `sqlite3` command, then `python3`; without any of them that one feature is unavailable and everything else keeps working.
 
@@ -19,6 +19,7 @@ settings.html            settings panel template; element ids are used by src/ui
 i18n/                    UI strings (en, zh-cn)
 catalog/                 catalog and personality snapshot used by the client
 src/
+  backend.js             management API address: server plugin or companion
   catalog.js             catalog loading and merging, connection path, live model cache
   switch-engine.js       writing SillyTavern settings, entering and leaving gateway mode
   selector.js            selector parsing and ranking
@@ -29,9 +30,12 @@ src/
   adapters/native.js     descriptions of SillyTavern's native sources
   ui/                    panel, sign-in, usage, settings, bindings and other UI modules
 server-plugin/
-  index.mjs              plugin entry and management API
+  index.mjs              SillyTavern plugin entry: supplies Express and the SillyTavern secret reader
+  standalone.mjs         companion entry (TauriTavern): own router, CORS and token check
   catalog/               the plugin's own catalog copy
   lib/
+    plugin.mjs           management API, gateway and store wiring, host-independent
+    mini-express.mjs     the Express subset the companion uses
     gateway-server.mjs   gateway
     adapters/            upstream protocol adapters
     key-store.mjs        encrypted key store and credential resolution
@@ -62,7 +66,7 @@ npm run personality:verify  # only check the index derivation
 
 ## Invariants
 
-1. **Standalone plugin**: `server-plugin/` must not import files from the repository root or `src/`; constants and catalogs needed on both sides are kept in two copies. The `../../src/…` imports in `server-plugin/index.mjs` refer to SillyTavern's own modules.
+1. **Standalone plugin**: `server-plugin/` must not import files from the repository root or `src/`; constants and catalogs needed on both sides are kept in two copies. The `../../src/…` imports in `server-plugin/index.mjs` refer to SillyTavern's own modules; they belong in `index.mjs` only, because `lib/` also runs in the companion.
 2. **Host-free modules**: `src/constants.js`, `src/selector.js`, `src/personality-match.js`, `src/update-check.js`, `src/profile-fields.js` and `src/reasoning.js` must not import SillyTavern modules; unit tests load them directly in Node.
 3. **Identical catalogs**: `catalog/omtp-catalog.json` and `server-plugin/catalog/omtp-catalog.json` must be byte-identical. `npm run catalog` writes both, `npm run validate` checks them.
 4. **Matching string keys**: `i18n/en.json` and `i18n/zh-cn.json` have the same keys. Add new strings to both. Keys such as `omtp_pb_*`, `omtp_source_*`, `omtp_stats_col_*` and `omtp_tab_*` are built in code; do not delete them because a search finds no literal use.

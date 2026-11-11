@@ -340,6 +340,18 @@ function credentialStatusText(status, entry) {
 }
 
 /**
+ * Narrow screens show the details pane as a sheet over the model list
+ * (style.css, `.omtp-details-open`); wide screens ignore the class.
+ */
+export function openDetailsPane() {
+    document.getElementById('omtp-hub-body')?.classList.add('omtp-details-open');
+}
+
+export function closeDetailsPane() {
+    document.getElementById('omtp-hub-body')?.classList.remove('omtp-details-open');
+}
+
+/**
  * Render the details pane for the selected/current entry.
  */
 export function renderDetails() {
@@ -349,6 +361,11 @@ export function renderDetails() {
     }
     details.replaceChildren();
     details.scrollTop = 0;
+    // Only visible in the narrow-screen sheet: the way back to the list.
+    const back = el('button', 'omtp-details-back menu_button', `‹ ${tr('omtp_back_to_list', 'Back to list')}`);
+    back.type = 'button';
+    back.addEventListener('click', closeDetailsPane);
+    details.append(back);
     const entry = getSelectedEntry();
     if (!entry) {
         details.append(el('div', 'omtp-empty-state', tr('omtp_details_empty', 'Select a model to see its details.')));
@@ -415,6 +432,7 @@ function renderInHubProviderCard(entry, details) {
     action.type = 'button';
     action.addEventListener('click', () => {
         state.currentTab = 'providers';
+        closeDetailsPane();
         syncTabs();
         renderProviderList();
         renderList();

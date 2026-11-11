@@ -139,6 +139,11 @@ function normalizeSettings(settings) {
     settings.catalogUrl = typeof settings.catalogUrl === 'string'
         ? settings.catalogUrl
         : DEFAULT_SETTINGS.catalogUrl;
+    const companion = isPlainObject(settings.companion) ? settings.companion : {};
+    settings.companion = {
+        url: typeof companion.url === 'string' ? companion.url : '',
+        token: typeof companion.token === 'string' ? companion.token : '',
+    };
 
     settings.favorites = uniqueRefs(settings.favorites, MAX_FAVORITES);
     settings.recents = uniqueRefs(settings.recents, MAX_RECENTS);

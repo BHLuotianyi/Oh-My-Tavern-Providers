@@ -4,11 +4,12 @@
 import { Popup } from '../../../../../popup.js';
 import { setOnlineStatus } from '../../../../../../script.js';
 import * as engine from '../switch-engine.js';
-import { API_BASE, DEFAULT_HOTKEY, QUICK_SLOT_COUNT, SEARCH_DEBOUNCE_MS, withClientHeader } from '../constants.js';
+import { DEFAULT_HOTKEY, QUICK_SLOT_COUNT, SEARCH_DEBOUNCE_MS } from '../constants.js';
+import { apiBase, apiHeaders, hasServerBackend, isTauriTavern } from '../backend.js';
 import { UPDATE_POLL_MS } from '../update-check.js';
 import { supportsProviderNames } from '../provider-names.js';
 import * as loginPanel from './login-panel.js';
-import { tr, trf } from './dom.js';
+import { gatewayUnavailableText, tr, trf } from './dom.js';
 import { el, notify } from './helpers.js';
 import { state } from './hub-state.js';
 import { cssEscape, entryKey, isEditableTarget, persist, settings } from './hub-utils.js';
@@ -21,7 +22,7 @@ import {
     scoredOnly,
 } from './hub-catalog.js';
 import { highlightSelectedRow, renderList } from './hub-list.js';
-import { renderDetails, toggleFavorite } from './hub-details.js';
+import { closeDetailsPane, renderDetails, toggleFavorite } from './hub-details.js';
 import { assignQuickSlotFromSelection, renderAll, renderFooter, syncTabs, useQuickSlot } from './hub-quick.js';
 import { renderProviderList } from './hub-sidebar.js';
 import { useEntry } from './hub-actions.js';
@@ -36,14 +37,24 @@ async function updateGatewayPill() {
     const pill = document.getElementById('omtp-gateway-pill');
     if (!dot || !label || !pill) return;
 
+    // TauriTavern without a companion: there is no server side to ask.
+    if (!hasServerBackend()) {
+        dot.className = 'omtp-status-dot omtp-dot-muted';
+        label.textContent = tr('omtp_gateway_none', 'No gateway');
+        pill.title = gatewayUnavailableText();
+        return;
+    }
+
     const markOnline = (port) => {
         dot.className = 'omtp-status-dot omtp-dot-online';
         label.textContent = trf('omtp_gateway_online', 'Gateway online (${0})', port);
         pill.title = trf('omtp_gateway_online_hint', 'Local gateway is running (http://127.0.0.1:${0}/v1)', port);
     };
 
+    let reached = false;
     try {
-        const res = await fetch(`${API_BASE}/status`, { headers: withClientHeader(), signal: AbortSignal.timeout(2500) });
+        const res = await fetch(`${apiBase()}/status`, { headers: apiHeaders(), signal: AbortSignal.timeout(2500) });
+        reached = res.ok;
         if (res.ok) {
             const data = await res.json();
             if (data.gateway?.running || data.gateway?.listening) {
@@ -52,25 +63,35 @@ async function updateGatewayPill() {
             }
         }
     } catch {}
-    try {
-        const healthRes = await fetch('http://127.0.0.1:4100/health', { signal: AbortSignal.timeout(1500) });
-        if (healthRes.ok) {
-            markOnline(4100);
-            return;
-        }
-    } catch {}
+    // A gateway left running by another SillyTavern process. Under TauriTavern
+    // the companion's own status is the only authority (it may be on another device).
+    if (!isTauriTavern()) {
+        try {
+            const healthRes = await fetch('http://127.0.0.1:4100/health', { signal: AbortSignal.timeout(1500) });
+            if (healthRes.ok) {
+                markOnline(4100);
+                return;
+            }
+        } catch {}
+    }
 
     dot.className = 'omtp-status-dot omtp-dot-offline';
     label.textContent = tr('omtp_gateway_offline', 'Gateway offline');
-    pill.title = tr('omtp_gateway_offline_hint', 'Gateway not reachable — click to start it');
+    pill.title = reached || !isTauriTavern()
+        ? tr('omtp_gateway_offline_hint', 'Gateway not reachable — click to start it')
+        : gatewayUnavailableText();
 }
 
 /**
  * Start/restart the gateway when the header pill is clicked.
  */
 async function onGatewayPillClick() {
+    if (!hasServerBackend()) {
+        notify('info', gatewayUnavailableText());
+        return;
+    }
     try {
-        const res = await fetch(`${API_BASE}/status`, { headers: withClientHeader() });
+        const res = await fetch(`${apiBase()}/status`, { headers: apiHeaders() });
         if (res.ok) {
             const data = await res.json();
             if (data.gateway?.running || data.gateway?.listening) {
@@ -80,7 +101,7 @@ async function onGatewayPillClick() {
         }
         const restart = confirm(tr('omtp_gateway_restart_confirm', 'The local gateway is offline. Start/restart it?'));
         if (restart) {
-            await fetch(`${API_BASE}/gateway/restart`, { method: 'POST', headers: withClientHeader() });
+            await fetch(`${apiBase()}/gateway/restart`, { method: 'POST', headers: apiHeaders() });
             notify('info', tr('omtp_gateway_starting', 'Starting the gateway…'));
             setTimeout(updateGatewayPill, 1200);
         }
@@ -264,6 +285,7 @@ function bindModalListeners(overlay, { close, search, tabs }) {
             return;
         }
         state.currentTab = button.dataset.tab || 'all';
+        closeDetailsPane();
         syncTabs();
         renderProviderList();
         renderList();
@@ -329,6 +351,7 @@ function onSearchInput() {
         state.searchTimer = null;
         state.searchQuery = input?.value ?? '';
         state.selectedEntryKey = null;
+        closeDetailsPane();
         if (state.currentTab === 'providers') {
             // The sign-in tab filters its roster; the provider column mirrors
             // the same query over the provider index.
@@ -386,7 +409,10 @@ export function openHub(options = {}) {
     const search = document.getElementById('omtp-search');
     if (search) {
         search.value = state.searchQuery;
-        setTimeout(() => search.focus(), 0);
+        // On touch screens focusing would pop the keyboard over half the hub.
+        if (!globalThis.matchMedia?.('(pointer: coarse)').matches) {
+            setTimeout(() => search.focus(), 0);
+        }
     }
 }
 
@@ -427,6 +453,7 @@ export function showTab(tab) {
         return;
     }
     state.currentTab = tab;
+    closeDetailsPane();
     syncTabs();
     renderProviderList();
     renderList();
@@ -440,6 +467,7 @@ export function closeHub() {
         return;
     }
     state.modal.classList.add('omtp-hidden');
+    closeDetailsPane();
     state.isOpen = false;
     document.removeEventListener('keydown', handleOverlayKeydown);
     if (state.gatewayPollTimer) {

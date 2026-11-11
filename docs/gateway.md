@@ -24,6 +24,7 @@
 - [数据文件](#数据文件)
 - [环境变量](#环境变量)
 - [安全边界](#安全边界)
+- [伴随服务（TauriTavern）](#伴随服务tauritavern)
 
 ## 网关
 
@@ -282,3 +283,20 @@ Node 内置的 `fetch` 不读取代理环境变量。插件启动时把全局 `f
 - **OMP 导入**：只读取 `~/oh-my-pi`、`~/.omp` 与 `OMTP_OMP_CATALOG_ROOTS` 中的目录。
 - **自定义 Base URL**：只接受不带查询串、不含账号密码的 http(s) URL，保存时与使用时各校验一次；已保存的无效值回退到内置端点。
 - **OAuth 回调**：见 [OAuth 登录](#oauth-登录)。
+- **伴随服务**：见下一节。
+
+## 伴随服务（TauriTavern）
+
+`node server-plugin/standalone.mjs` 在 SillyTavern 之外运行同一套管理接口与网关，供不能加载服务端插件的 TauriTavern 使用。`index.mjs`（SillyTavern）与 `standalone.mjs` 都只是 `lib/plugin.mjs` 的入口：前者提供 SillyTavern 的 Express 与密钥读取，后者提供 `lib/mini-express.mjs` 与令牌校验。
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--data DIR` | `~/.omtp-companion` | 数据目录，状态写入 `DIR/omtp/`。指向 `SillyTavern/data` 可与 SillyTavern 共用密钥 |
+| `--host ADDR` | `127.0.0.1` | 伴随服务与网关绑定的地址；`0.0.0.0` 供局域网内的其他设备使用 |
+| `--port N` | `4099` | 伴随服务端口；网关仍使用自己的端口（默认 4100） |
+
+- **管理接口**：挂在 `http://<host>:<port>/api/plugins/omtp`，路由与插件相同。请求来自 TauriTavern WebView 的其他源，所以 `Origin` 校验不适用，改为要求 `x-omtp-client: omtp-web` 与 `x-omtp-token: <令牌>`。令牌在首次启动时生成，保存在 `companion-token`（`0600`），启动时打印。CORS 预检回显请求的 `Origin` 与请求头。
+- **`GET /health`**：无需令牌，返回 `{ok:true, service:'omtp-companion'}`。
+- **SillyTavern 密钥**：伴随服务读不到 SillyTavern 或 TauriTavern 的 `secrets.json`，凭据只来自 OMTP 自己的密钥库与环境变量。
+- **网关**：与插件相同；`--host` 也决定网关的绑定地址。客户端把伴随服务报告的 `127.0.0.1` 换成伴随服务的主机名后写入 `custom_url`。TauriTavern 第一次连接该地址时会请求用户授权。
+- **统计页面**：仍只监听 `127.0.0.1`。

@@ -24,6 +24,7 @@ Plugin data lives in `<SillyTavern data directory>/omtp/`, which is `SillyTavern
 - [Data files](#data-files)
 - [Environment variables](#environment-variables)
 - [Security boundaries](#security-boundaries)
+- [Companion (TauriTavern)](#companion-tauritavern)
 
 ## Gateway
 
@@ -282,3 +283,20 @@ Back up `master.key` together with `providers.json`: without the master key, enc
 - **OMP import**: only `~/oh-my-pi`, `~/.omp` and directories in `OMTP_OMP_CATALOG_ROOTS` can be read.
 - **Custom base URLs**: only http(s) URLs without a query string or embedded credentials are accepted, checked when saved and again when used; an invalid stored value falls back to the bundled endpoint.
 - **OAuth callbacks**: see [OAuth sign-in](#oauth-sign-in).
+- **Companion**: see the next section.
+
+## Companion (TauriTavern)
+
+`node server-plugin/standalone.mjs` runs the same management API and gateway outside SillyTavern, for TauriTavern, which cannot load server plugins. `index.mjs` (SillyTavern) and `standalone.mjs` are both entries to `lib/plugin.mjs`: the former supplies SillyTavern's Express and secret reader, the latter `lib/mini-express.mjs` and a token check.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--data DIR` | `~/.omtp-companion` | Data directory; state goes to `DIR/omtp/`. Point it at `SillyTavern/data` to share keys with SillyTavern |
+| `--host ADDR` | `127.0.0.1` | Address the companion and the gateway bind to; `0.0.0.0` for other devices on the LAN |
+| `--port N` | `4099` | Companion port; the gateway keeps its own port (4100 by default) |
+
+- **Management API**: served at `http://<host>:<port>/api/plugins/omtp` with the same routes as the plugin. Requests come from the TauriTavern WebView on another origin, so the `Origin` check does not apply; `x-omtp-client: omtp-web` and `x-omtp-token: <token>` are required instead. The token is generated on first start, stored in `companion-token` (`0600`) and printed at startup. CORS preflights echo the requested `Origin` and headers.
+- **`GET /health`**: no token needed; returns `{ok:true, service:'omtp-companion'}`.
+- **SillyTavern secrets**: the companion cannot read SillyTavern's or TauriTavern's `secrets.json`; credentials come only from OMTP's own key store and environment variables.
+- **Gateway**: as in the plugin; `--host` also sets the gateway's bind address. The client replaces the `127.0.0.1` the companion reports with the companion's host name before writing `custom_url`. TauriTavern asks the user to authorize that address the first time it connects.
+- **Statistics page**: still listens on `127.0.0.1` only.

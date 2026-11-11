@@ -19,8 +19,9 @@ import { SlashCommandParser } from '../../../../slash-commands/SlashCommandParse
 import { oai_settings } from '../../../../openai.js';
 import { getRequestHeaders as stRequestHeaders } from '../../../../../script.js';
 
-const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
-import { API_BASE, REASONING_LEVELS, withClientHeader } from './constants.js';
+const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
+import { REASONING_LEVELS } from './constants.js';
+import { apiBase, apiHeaders } from './backend.js';
 import { EFFORT_ALIASES, normalizeEffortList } from './reasoning.js';
 import { getEntries, resolveEntry, withProviderAvailability } from './catalog.js';
 import { switchToSelector } from './public-api.js';
@@ -65,7 +66,7 @@ async function openStatsDashboard() {
     if (chat) params.set('chat', chat);
     if (lang) params.set('lang', lang);
     const query = params.toString() ? `?${params}` : '';
-    const response = await fetch(`${API_BASE}/stats/server${query}`, { headers: getRequestHeaders() });
+    const response = await fetch(`${apiBase()}/stats/server${query}`, { headers: getRequestHeaders() });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data?.url) {
         throw new Error(tr('omtp_stats_server_failed', 'Could not start the stats dashboard.'));

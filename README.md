@@ -26,7 +26,7 @@ OMTP Model Hub（Oh-My-Tavern-Providers）是 SillyTavern 的模型选择扩展�
 ## 环境要求
 
 - SillyTavern 1.12.7 或更高版本
-- Node.js 18 或更高版本（仅服务端插件需要，即运行 SillyTavern 的 Node）
+- Node.js 18 或更高版本（仅服务端插件或 TauriTavern 伴随服务需要）
 
 ## 安装
 
@@ -65,6 +65,29 @@ git clone https://github.com/BHLuotianyi/Oh-My-Tavern-Providers omtp-model-hub
 3. 重启 SillyTavern。打开 OMTP 面板，网关状态显示端口（如 `:4100`）即表示插件已运行。
 
 单独分发 `server-plugin` 目录时，请附上仓库根目录的 [`NOTICE`](./NOTICE)：内置目录衍生自 OMP 的 `models.json`（MIT 许可）。
+
+### TauriTavern
+
+[TauriTavern](https://st-doc.pages.dev/tauritavern/) 可以加载客户端扩展：在它的扩展管理中用 Git 地址 `https://github.com/BHLuotianyi/Oh-My-Tavern-Providers` 安装即可。仅安装扩展时，可以使用 SillyTavern 原生支持的模型（**原生** 徽章）。
+
+TauriTavern 的后端是 Rust 实现，无法运行 SillyTavern 服务端插件。网关模型、登录、用量与统计改由**伴随服务**提供，它与服务端插件是同一份代码，单独用 Node 运行：
+
+1. 在装有 Node.js 18+ 的电脑上取得本仓库（`git clone`，或直接使用 TauriTavern 数据目录中 `extensions/` 下的扩展文件夹），运行：
+
+   ```bash
+   node server-plugin/standalone.mjs
+   ```
+
+   它会打印地址（默认 `http://127.0.0.1:4099`）和令牌。数据保存在 `~/.omtp-companion/omtp/`；加 `--data SillyTavern/data` 可以与已有的 SillyTavern 共用密钥。`--help` 查看全部参数。
+2. 在 TauriTavern 的 **扩展** 设置中展开 OMTP Model Hub，在 **伴随服务（TauriTavern）** 中填写地址和令牌，点击 **连接**。
+3. 首次使用网关模型时，TauriTavern 会弹出窗口询问是否允许连接 `http://127.0.0.1:4100/v1`，选择允许。
+
+说明：
+
+- 手机上的 TauriTavern 可以连接局域网内电脑上的伴随服务：在电脑上用 `--host 0.0.0.0` 启动，并在手机上填写电脑的局域网地址。伴随服务与网关都只接受带令牌的请求；请只在可信网络中这样做。统计页面（`/omtp stats`）只监听电脑本机，在手机上打不开。Android 也可以在 Termux 中用 Node 运行伴随服务。
+- OAuth 登录的回调发往运行伴随服务的电脑；伴随服务在另一台设备上时，把授权完成后地址栏中的完整 URL 粘贴到面板中提交即可。
+- TauriTavern 只保留对话补全（Chat Completion）接口，文本补全、NovelAI、AI Horde 的模型显示为不可用。
+- 在 TauriTavern 中选择过 Custom 的其他协议（如 Claude Messages）时，OMTP 恢复设置会保留该协议。
 
 ### 更新
 

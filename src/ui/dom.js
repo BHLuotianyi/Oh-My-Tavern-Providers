@@ -7,6 +7,7 @@
  * module created are removed again in cleanupDom().
  */
 import { getSettings } from '../store.js';
+import { companion, isTauriTavern } from '../backend.js';
 import { translate } from '../../../../../i18n.js';
 
 const TOP_BAR_ID = 'omtp-hub-button';
@@ -35,6 +36,21 @@ export function tr(key, fallback) {
 }
 
 /**
+ * Why the gateway (and every other server feature) is unavailable, phrased
+ * for the running host.
+ * @returns {string}
+ */
+export function gatewayUnavailableText() {
+    if (!isTauriTavern()) {
+        return tr('omtp_gateway_unavailable', 'OMTP Gateway unavailable (enable server plugins)');
+    }
+    const target = companion();
+    return target
+        ? trf('omtp_companion_unreachable', 'OMTP companion not reachable at ${0}: check that it is running and that the token matches', target.url)
+        : tr('omtp_gateway_unavailable_tauri', 'TauriTavern cannot run server plugins: start the OMTP companion (server-plugin/standalone.mjs) and enter its address in the OMTP settings');
+}
+
+/**
  * Messages for errors thrown by the switch engine and the selector.
  * Keys are the `code` values from `errors.js`.
  * @type {Record<string, [string, string]>}
@@ -56,7 +72,6 @@ const ERROR_TEXT = {
     control_missing: ['omtp_err_control_missing', 'Native model control not found: ${0}'],
     model_apply: ['omtp_err_model_apply', 'Failed to apply the model ${0}'],
     connect_failed: ['omtp_err_connect_failed', 'Connection failed for ${0}'],
-    gateway_off: ['omtp_err_gateway_off', 'OMTP Gateway unavailable (enable server plugins)'],
     gateway_reason: ['omtp_err_gateway_reason', 'OMTP Gateway unavailable: ${0}'],
     gateway_url: ['omtp_err_gateway_url', 'OMTP Gateway URL is not configured'],
     gateway_token: ['omtp_err_gateway_token', 'OMTP Gateway token is unavailable'],
@@ -88,6 +103,9 @@ const ERROR_TEXT = {
  */
 export function describeError(error) {
     const code = /** @type {any} */ (error)?.code;
+    if (code === 'gateway_off') {
+        return gatewayUnavailableText();
+    }
     const entry = typeof code === 'string' ? ERROR_TEXT[code] : undefined;
     if (!entry) {
         return String(/** @type {any} */ (error)?.message || error);

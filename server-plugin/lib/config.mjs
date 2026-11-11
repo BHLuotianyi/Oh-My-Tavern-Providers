@@ -12,6 +12,7 @@ export const CONFIG_FILE = 'config.json';
 export const PROVIDERS_FILE = 'providers.json';
 export const MASTER_KEY_FILE = 'master.key';
 export const TOKEN_FILE = 'gateway-token';
+export const COMPANION_TOKEN_FILE = 'companion-token';
 export const INSTALL_ID_FILE = 'install-id';
 export const CACHED_CATALOG_FILE = 'catalog.json';
 export const IMPORTED_CATALOG_FILE = 'imported-catalog.json';
@@ -142,12 +143,13 @@ export async function saveConfig(root, patch = {}) {
 }
 
 /**
- * Ensure the gateway token exists. Returns the token.
+ * Read a random hex token file, creating it on first use.
  * @param {string} root
+ * @param {string} file
  * @returns {Promise<string>}
  */
-export async function ensureGatewayToken(root = getOmtpRoot()) {
-    const tokenPath = omtpPath(root, TOKEN_FILE);
+async function ensureTokenFile(root, file) {
+    const tokenPath = omtpPath(root, file);
     try {
         const existing = (await fs.promises.readFile(tokenPath, 'utf8')).trim();
         if (existing) return existing;
@@ -157,6 +159,25 @@ export async function ensureGatewayToken(root = getOmtpRoot()) {
     const token = crypto.randomBytes(32).toString('hex');
     await writeFileAtomic(tokenPath, `${token}\n`, 0o600);
     return token;
+}
+
+/**
+ * Ensure the gateway token exists. Returns the token.
+ * @param {string} root
+ * @returns {Promise<string>}
+ */
+export function ensureGatewayToken(root = getOmtpRoot()) {
+    return ensureTokenFile(root, TOKEN_FILE);
+}
+
+/**
+ * Token the standalone companion requires on management calls (they come
+ * cross-origin from TauriTavern's WebView, so the Origin guard cannot apply).
+ * @param {string} root
+ * @returns {Promise<string>}
+ */
+export function ensureCompanionToken(root = getOmtpRoot()) {
+    return ensureTokenFile(root, COMPANION_TOKEN_FILE);
 }
 
 /** @type {Map<string,string>} In-process install id per OMTP root. */

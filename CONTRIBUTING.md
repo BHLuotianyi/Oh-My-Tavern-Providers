@@ -9,7 +9,7 @@
 OMTP 由两个独立部署的部分组成：
 
 - **客户端扩展**：`index.js`、`src/`、`settings.html`、`style.css`、`i18n/`、`catalog/`。在浏览器中运行，用相对路径直接导入 SillyTavern 的模块（`script.js`、`extensions.js`、`popup.js` 等）。没有打包步骤。
-- **服务端插件**：`server-plugin/`。用户把它复制到 `SillyTavern/plugins/omtp/`，在 SillyTavern 的 Node 进程中运行。
+- **服务端插件**：`server-plugin/`。用户把它复制到 `SillyTavern/plugins/omtp/`，在 SillyTavern 的 Node 进程中运行。同一份代码也可以用 `node server-plugin/standalone.mjs` 单独运行（伴随服务），供无法运行服务端插件的 TauriTavern 使用。客户端经 `src/backend.js` 决定管理接口的地址。
 
 运行时不调用 `omp` 程序，也不需要 Python。读取本地 OMP 凭据时会依次尝试 `node:sqlite`、`sqlite3` 命令和 `python3`，三者都没有时该功能不可用，其余功能不受影响。
 
@@ -19,6 +19,7 @@ settings.html            扩展设置面板模板，元素 ID 由 src/ui/setting
 i18n/                    界面文案（en、zh-cn）
 catalog/                 客户端使用的目录与人格评分快照
 src/
+  backend.js             管理接口地址：服务端插件或伴随服务
   catalog.js             目录加载与合并、连接方式判定、在线模型缓存
   switch-engine.js       写入 SillyTavern 设置、进入与退出网关模式
   selector.js            选择器解析与排序
@@ -29,9 +30,12 @@ src/
   adapters/native.js     SillyTavern 原生来源的描述
   ui/                    面板、登录、用量、设置、绑定等界面模块
 server-plugin/
-  index.mjs              插件入口与管理接口
+  index.mjs              SillyTavern 插件入口：注入 Express 与 SillyTavern 密钥读取
+  standalone.mjs         伴随服务入口（TauriTavern）：自带路由、CORS 与令牌校验
   catalog/               插件自带的目录副本
   lib/
+    plugin.mjs           管理接口、网关与各存储的组装，与宿主无关
+    mini-express.mjs     伴随服务使用的 Express 子集
     gateway-server.mjs   网关
     adapters/            上游协议适配器
     key-store.mjs        加密密钥库与凭据解析
@@ -62,7 +66,7 @@ npm run personality:verify  # 只检查人格指数的推导
 
 ## 必须保持的约束
 
-1. **插件独立**：`server-plugin/` 不能导入仓库根目录或 `src/` 下的文件，两边需要的常量和目录各自维护一份。`server-plugin/index.mjs` 中的 `../../src/…` 指向的是 SillyTavern 自己的模块。
+1. **插件独立**：`server-plugin/` 不能导入仓库根目录或 `src/` 下的文件，两边需要的常量和目录各自维护一份。`server-plugin/index.mjs` 中的 `../../src/…` 指向的是 SillyTavern 自己的模块；它们只能出现在 `index.mjs`，`lib/` 里的代码还要在伴随服务中运行。
 2. **不依赖宿主的模块**：`src/constants.js`、`src/selector.js`、`src/personality-match.js`、`src/update-check.js`、`src/profile-fields.js`、`src/reasoning.js` 不能导入 SillyTavern 模块，单元测试直接在 Node 中加载它们。
 3. **两份目录相同**：`catalog/omtp-catalog.json` 与 `server-plugin/catalog/omtp-catalog.json` 必须逐字节相同。`npm run catalog` 同时写两份，`npm run validate` 检查。
 4. **文案键一致**：`i18n/en.json` 与 `i18n/zh-cn.json` 的键集合相同。新增文案时两边同时添加。`omtp_pb_*`、`omtp_source_*`、`omtp_stats_col_*`、`omtp_tab_*` 等键由代码拼接使用，搜索不到引用也不要删除。

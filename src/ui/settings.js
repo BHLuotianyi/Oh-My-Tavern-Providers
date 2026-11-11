@@ -8,23 +8,22 @@
  */
 import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
 
-const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
+const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../../../../popup.js';
 import {
-    API_BASE,
     DEFAULT_GATEWAY_SETTINGS,
     DEFAULT_GATEWAY_URL,
     DEFAULT_SETTINGS,
     EXTENSION_VERSION,
     GATEWAY_ADAPTERS,
-    withClientHeader,
 } from '../constants.js';
+import { apiBase, apiHeaders, isTauriTavern } from '../backend.js';
 import { forgetLiveModels, getCatalogInfo, loadCatalog } from '../catalog.js';
 import { getSettings, updateSettings } from '../store.js';
-import { restoreSelection } from '../switch-engine.js';
+import { getGatewayStatus, restoreSelection } from '../switch-engine.js';
 import { UPDATE_CHANNELS, resolveUpdateChannel } from '../update-check.js';
 import { initBindingUI } from './bindings.js';
-import { applyNativeSelectorVisibility, describeError, tr, trf } from './dom.js';
+import { applyNativeSelectorVisibility, describeError, gatewayUnavailableText, tr, trf } from './dom.js';
 import { el, isPlainObject, notify } from './helpers.js';
 import { refreshUpdatePill } from './update-pill.js';
 
@@ -123,10 +122,10 @@ async function apiFetch(path, { method = 'GET', body } = {}) {
 
     let response;
     try {
-        response = await fetch(`${API_BASE}${path}`, init);
+        response = await fetch(`${apiBase()}${path}`, init);
     } catch (error) {
         markServerUnavailable(error);
-        throw new Error(tr('omtp_gateway_unavailable', 'OMTP Gateway unavailable (enable server plugins)'));
+        throw new Error(gatewayUnavailableText());
     }
 
     if (!response.ok) {
@@ -179,11 +178,17 @@ function applyLocalSettings() {
     setInputValue('omtp-gateway-url', settings.gatewayUrl || DEFAULT_GATEWAY_URL);
     setInputValue('omtp-catalog-url', settings.catalogUrl || '');
     setSelectValue('omtp-update-channel', resolveUpdateChannel(EXTENSION_VERSION, settings.updateChannel));
+    const companionSection = byId('omtp-companion-section');
+    if (companionSection) {
+        companionSection.hidden = !isTauriTavern();
+        setInputValue('omtp-companion-url', settings.companion.url);
+        setInputValue('omtp-companion-token', settings.companion.token);
+    }
 }
 
 function setServerControlsDisabled(disabled) {
     const reason = disabled
-        ? tr('omtp_server_plugin_unavailable', 'OMTP server plugin unavailable (enable server plugins)')
+        ? (isTauriTavern() ? gatewayUnavailableText() : tr('omtp_server_plugin_unavailable', 'OMTP server plugin unavailable (enable server plugins)'))
         : '';
     for (const id of SERVER_CONTROL_IDS) {
         setDisabled(id, disabled, reason);
@@ -199,7 +204,7 @@ function updateGatewayStatus(gateway) {
     let label;
     let dotClass;
     if (serverAvailable === false) {
-        label = tr('omtp_gateway_unavailable', 'OMTP Gateway unavailable (enable server plugins)');
+        label = gatewayUnavailableText();
         dotClass = 'omtp-bad';
     } else if (gateway?.running) {
         const url = gateway.url || `http://127.0.0.1:${gateway.port ?? 4100}/v1`;
@@ -550,7 +555,7 @@ async function submitCustomProvider({ idInput, labelInput, adapterSelect, baseUr
 
 export function openCustomProviderEditor() {
     if (serverAvailable === false) {
-        notify('warning', tr('omtp_gateway_unavailable', 'OMTP Gateway unavailable (enable server plugins)'));
+        notify('warning', gatewayUnavailableText());
         return;
     }
 
@@ -568,7 +573,7 @@ export function openCustomProviderEditor() {
 
 function openImportPopup() {
     if (serverAvailable === false) {
-        notify('warning', tr('omtp_gateway_unavailable', 'OMTP Gateway unavailable (enable server plugins)'));
+        notify('warning', gatewayUnavailableText());
         return;
     }
 
@@ -681,6 +686,33 @@ async function reloadClientCatalog() {
         console.warn('[omtp] could not refresh the hub', error);
     }
     await refreshServerStatus();
+}
+
+/**
+ * Save the companion address/token and reload everything that comes from the
+ * server side: catalog, provider availability, gateway status.
+ */
+async function connectCompanion() {
+    const url = safeHttpUrl(byId('omtp-companion-url')?.value ?? '');
+    if (url === null) {
+        notify('error', tr('omtp_invalid_url', 'Enter a valid http(s) URL without a query string.'));
+        return;
+    }
+    const token = String(byId('omtp-companion-token')?.value ?? '').trim();
+    updateSettings({ companion: { url, token } });
+    const status = byId('omtp-companion-status');
+    if (status) status.textContent = tr('omtp_companion_connecting', 'Connecting…');
+    await getGatewayStatus({ force: true });
+    // Re-probes /status first; the provider list is skipped while the server counts as unavailable.
+    await reloadClientCatalog();
+    await refreshProviders();
+    if (status) {
+        status.textContent = !url
+            ? ''
+            : serverAvailable === false
+                ? gatewayUnavailableText()
+                : tr('omtp_companion_connected', 'Connected');
+    }
 }
 
 async function refreshCatalog() {
@@ -1014,6 +1046,10 @@ function bindControls(root) {
     element(root, 'omtp-clear-settings')?.addEventListener('click', (event) => {
         event.preventDefault();
         clearSettings();
+    });
+    element(root, 'omtp-companion-connect')?.addEventListener('click', (event) => {
+        event.preventDefault();
+        connectCompanion();
     });
 }
 

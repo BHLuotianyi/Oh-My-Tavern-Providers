@@ -3,13 +3,14 @@
  */
 import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
 
-const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
+const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
 import { Fuse } from '../../../../../../lib.js';
 import * as catalogApi from '../catalog.js';
 import * as engine from '../switch-engine.js';
 import { loadPersonality, personalityFor } from '../personality.js';
 import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
-import { LAB_PROVIDERS, MAINSTREAM_PROVIDERS, PROFILE_PROVIDER_ID, withClientHeader } from '../constants.js';
+import { LAB_PROVIDERS, MAINSTREAM_PROVIDERS, PROFILE_PROVIDER_ID } from '../constants.js';
+import { apiBase, apiHeaders } from '../backend.js';
 import { tr } from './dom.js';
 import { notify } from './helpers.js';
 import { state } from './hub-state.js';
@@ -70,7 +71,7 @@ export async function loadCatalogOnce(force = false) {
  */
 export async function loadProviderAvailability() {
     try {
-        const response = await fetch('/api/plugins/omtp/providers', {
+        const response = await fetch(`${apiBase()}/providers`, {
             headers: getRequestHeaders(),
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);

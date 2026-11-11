@@ -28,6 +28,11 @@ import { renderList } from './hub-list.js';
 import { renderProviderList } from './hub-sidebar.js';
 import { getEffectiveBinding, useEntry } from './hub-actions.js';
 
+/** Touch hold that clears a quick slot, matching the desktop right-click. */
+const LONG_PRESS_MS = 600;
+/** The release after a long press must not also activate the slot. */
+let suppressSlotClickUntil = 0;
+
 /**
  * Inline status line under the quick bar (replaces the old toast, which
  * covered the list).
@@ -45,7 +50,7 @@ function renderQuickHint() {
     hint.hidden = false;
     hint.textContent = trf(
         'omtp_quick_arm_hint',
-        'Click a quick slot to place ${0} — right-click clears one.',
+        'Click a quick slot to place ${0} — right-click or long-press clears one.',
         `${state.pendingQuickEntry.providerLabel || state.pendingQuickEntry.provider} / ${state.pendingQuickEntry.model}`,
     );
 }
@@ -238,6 +243,9 @@ export function renderQuickBar() {
         button.textContent = entry ? (entry.modelLabel || entry.model) : '+';
         button.title = quickSlotTitle(entry, ref, index);
         button.addEventListener('click', () => {
+            if (Date.now() < suppressSlotClickUntil) {
+                return;
+            }
             // Armed from the model card: this click places the model
             // (overwriting whatever the slot held).
             if (state.pendingQuickEntry) {
@@ -254,9 +262,27 @@ export function renderQuickBar() {
             }
             useQuickSlot(index);
         });
+        // iOS never fires `contextmenu` on touch, so a held finger clears too.
+        let pressTimer = 0;
+        const cancelPress = () => clearTimeout(pressTimer);
+        button.addEventListener('pointerdown', (event) => {
+            if (event.pointerType !== 'touch' || !ref) {
+                return;
+            }
+            cancelPress();
+            pressTimer = setTimeout(() => {
+                suppressSlotClickUntil = Date.now() + 800;
+                clearQuickSlot(index);
+            }, LONG_PRESS_MS);
+        });
+        for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
+            button.addEventListener(type, cancelPress);
+        }
         button.addEventListener('contextmenu', (event) => {
             event.preventDefault();
+            cancelPress();
             if (ref) {
+                suppressSlotClickUntil = Date.now() + 800;
                 clearQuickSlot(index);
             }
         });

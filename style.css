@@ -42,6 +42,11 @@ body.omtp-hide-native-api-selector #rm_api_block > *:not(#omtp-api-drawer-tools)
 #omtp-hub-overlay {
     position: fixed;
     inset: 0;
+    /* SillyTavern puts a transform on <html>, which makes the zero-height root
+       the containing block of fixed elements; size to the viewport instead. */
+    height: 100vh;
+    height: 100dvh;
+    box-sizing: border-box;
     z-index: 6000;
     display: flex;
     align-items: center;
@@ -354,6 +359,10 @@ body.omtp-hide-native-api-selector #rm_api_block > *:not(#omtp-api-drawer-tools)
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.16));
     border-radius: 5px;
     cursor: pointer;
+    /* Long-press clears a slot on touch screens; no text selection or callout. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
 }
 
 .omtp-quick-slot::before {
@@ -920,6 +929,10 @@ body.omtp-hide-native-api-selector #rm_api_block > *:not(#omtp-api-drawer-tools)
 .omtp-picker-overlay {
     position: fixed;
     inset: 0;
+    /* Same <html> transform caveat as #omtp-hub-overlay. */
+    height: 100vh;
+    height: 100dvh;
+    box-sizing: border-box;
     z-index: 30000;
     display: flex;
     align-items: flex-end;
@@ -1908,4 +1921,188 @@ body.omtp-hide-native-api-selector #rm_api_block > *:not(#omtp-api-drawer-tools)
     margin-top: 12px;
     font-size: 0.75em;
     opacity: 0.6;
+}
+
+/* Only the narrow-screen details sheet needs a way back to the list. */
+.omtp-details-back {
+    display: none;
+}
+
+/* Phones: full-screen hub, providers as a scrolling strip, model details as a
+   sheet over the list (opened by tapping a row, see openDetailsPane()). */
+@media (max-width: 760px) {
+    #omtp-hub-overlay {
+        padding: 0;
+    }
+
+    /* SillyTavern's mobile top bar has no room left; the Usage tab shows the same numbers. */
+    #omtp-usage-chip {
+        display: none;
+    }
+
+    #omtp-hub {
+        width: 100%;
+        height: 100%;
+        border: none;
+        border-radius: 0;
+    }
+
+    #omtp-hub-header {
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px 10px 6px;
+    }
+
+    #omtp-hub-title {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    #omtp-search {
+        order: 1;
+        flex: 1 0 100%;
+    }
+
+    /* iOS zooms the page into any focused field below 16px. */
+    #omtp-hub input:not([type="checkbox"]):not([type="radio"]),
+    #omtp-hub select,
+    #omtp-hub textarea,
+    .omtp-picker-input {
+        font-size: 16px;
+    }
+
+    #omtp-quick-bar {
+        padding: 6px 10px;
+    }
+
+    .omtp-quick-slot {
+        max-width: 120px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+    }
+
+    #omtp-tabs {
+        flex-wrap: wrap;
+        gap: 0;
+        padding: 0 6px;
+    }
+
+    .omtp-tab {
+        padding: 8px 9px;
+    }
+
+    .omtp-tab-filters {
+        flex: 1 0 100%;
+        justify-content: flex-start;
+        gap: 4px 10px;
+        margin-left: 0;
+        padding: 4px 0 6px;
+    }
+
+    #omtp-hub-body {
+        position: relative;
+        flex-direction: column;
+    }
+
+    #omtp-provider-list {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 4px;
+        padding: 6px 8px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        border-right: none;
+        border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+    }
+
+    .omtp-provider-item {
+        flex: 0 0 auto;
+        width: auto;
+        max-width: 70vw;
+        padding: 6px 10px;
+    }
+
+    .omtp-provider-separator {
+        flex: 0 0 auto;
+        height: auto;
+        margin: 4px 2px;
+        border-top: none;
+        border-left: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+    }
+
+    #omtp-provider-list .omtp-empty-state {
+        padding: 6px 8px;
+        white-space: nowrap;
+    }
+
+    .omtp-model-row {
+        padding: 9px 8px;
+    }
+
+    #omtp-details {
+        display: none;
+    }
+
+    /* The list stays laid out (and keeps its scroll position) under the sheet;
+       hiding it keeps translucent themes from showing it through. */
+    #omtp-hub-body.omtp-details-open:not(.omtp-manager-open) > :not(#omtp-details) {
+        visibility: hidden;
+    }
+
+    #omtp-hub-body.omtp-details-open:not(.omtp-manager-open) #omtp-details {
+        display: block;
+        position: absolute;
+        inset: 0;
+        border-left: none;
+    }
+
+    .omtp-details-back {
+        display: block;
+        width: auto;
+        margin: 0 0 10px;
+    }
+
+    .omtp-details-actions button,
+    .omtp-profile-action {
+        padding: 9px 6px;
+    }
+
+    #omtp-hub-footer {
+        gap: 6px;
+        padding: 6px 10px;
+    }
+
+    .omtp-update-status {
+        max-width: 100%;
+    }
+
+    .omtp-stats-models {
+        overflow-x: auto;
+    }
+
+    .omtp-stats-row {
+        min-width: 420px;
+    }
+
+    .omtp-about-fact {
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .omtp-about-fact-label {
+        flex-basis: auto;
+    }
+
+    /* At the bottom the on-screen keyboard would cover the picker. */
+    .omtp-picker-overlay {
+        align-items: flex-start;
+        padding: 8px 0 0;
+    }
+
+    .omtp-picker {
+        width: calc(100% - 16px);
+        max-height: 60vh;
+    }
 }

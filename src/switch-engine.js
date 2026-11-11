@@ -14,7 +14,8 @@
 import { getSettings, saveSettings, getEntryKey, parseEntryKey } from './store.js';
 import { codedError } from './errors.js';
 import { resolveEntry } from './catalog.js';
-import { API_BASE, EVENTS, MAX_RECENTS, PROFILE_PROVIDER_ID, REASONING_LEVELS, withClientHeader } from './constants.js';
+import { EVENTS, MAX_RECENTS, PROFILE_PROVIDER_ID, REASONING_LEVELS } from './constants.js';
+import { apiBase, apiHeaders, reachableUrl } from './backend.js';
 import { currentChatId } from './usage-session.js';
 import { NATIVE_ADAPTERS } from './adapters/native.js';
 import {
@@ -25,7 +26,7 @@ import {
   getRequestHeaders as stRequestHeaders,
 } from '../../../../../script.js';
 
-const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
+const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
 import { eventSource } from '../../../../events.js';
 import { oai_settings } from '../../../../openai.js';
 import { textgenerationwebui_settings } from '../../../../textgen-settings.js';
@@ -74,7 +75,7 @@ async function getProviderStatuses() {
     return providerStatusCache.value;
   }
   try {
-    const response = await fetch(`${API_BASE}/providers`, { headers: getRequestHeaders({ omitContentType: true }) });
+    const response = await fetch(`${apiBase()}/providers`, { headers: getRequestHeaders({ omitContentType: true }) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     const list = Array.isArray(data?.providers) ? data.providers : [];
@@ -504,13 +505,14 @@ function mergeYamlHeaders(existing, additions) {
 // MARK: gateway status / token
 
 async function fetchGatewayStatus() {
-  const response = await fetch(`${API_BASE}/status`, { headers: getRequestHeaders() });
+  const response = await fetch(`${apiBase()}/status`, { headers: getRequestHeaders() });
   if (!response.ok) {
     throw new Error(`status request failed (${response.status})`);
   }
   const data = await response.json();
   const gateway = data?.gateway ?? {};
-  const url = normalizeUrl(gateway.url);
+  // A LAN companion reports its gateway on 127.0.0.1; ST must reach its host.
+  const url = normalizeUrl(reachableUrl(gateway.url));
   if (url) {
     activeGatewayUrl = url;
   }
@@ -559,7 +561,7 @@ async function resolveGatewayToken(status) {
     return gatewayTokenCache.token;
   }
   try {
-    const response = await fetch(`${API_BASE}/gateway/token`, { headers: getRequestHeaders() });
+    const response = await fetch(`${apiBase()}/gateway/token`, { headers: getRequestHeaders() });
     if (response.ok) {
       const data = await response.json();
       const token = typeof data?.token === 'string' ? data.token.trim() : '';
@@ -659,6 +661,8 @@ export function captureSelection() {
     ref: detectCurrentRef(),
     mainApi: main_api ?? '',
     chatCompletionSource: main_api === 'openai' ? (oai_settings?.chat_completion_source ?? null) : null,
+    // TauriTavern only: the Custom wire format (`openai_compat`, `claude_messages`, …).
+    customApiFormat: oai_settings?.custom_api_format ?? null,
     textgenType: main_api === 'textgenerationwebui' ? (textgenerationwebui_settings?.type ?? null) : null,
     model: currentModel(),
     reasoningEffort: oai_settings?.reasoning_effort ?? '',
@@ -716,7 +720,7 @@ export async function restoreSelection(snapshot, { fast = false } = {}) {
   }
 
   if (snapshot.mainApi === 'openai' && snapshot.chatCompletionSource) {
-    const changed = setControlValue('#chat_completion_source', snapshot.chatCompletionSource, 'change');
+    const changed = setControlValue('#chat_completion_source', chatCompletionSelectValue(snapshot), 'change');
     if (changed && !fast) {
       await waitFor(() => oai_settings.chat_completion_source === snapshot.chatCompletionSource).catch(() => {});
     }
@@ -755,6 +759,20 @@ export async function restoreSelection(snapshot, { fast = false } = {}) {
 
   emitSelectionChanged(snapshot.ref ? { ref: snapshot.ref } : null, { gateway: restoredIsGateway });
   return true;
+}
+
+/**
+ * `#chat_completion_source` value for a snapshot. TauriTavern stores Custom
+ * variants as `custom` + `custom_api_format` but selects them through
+ * `custom_<format>` options, and selecting plain `custom` resets the format.
+ */
+function chatCompletionSelectValue(snapshot) {
+  const format = snapshot.customApiFormat;
+  if (snapshot.chatCompletionSource !== 'custom' || !format || format === 'openai_compat') {
+    return snapshot.chatCompletionSource;
+  }
+  const variant = `custom_${format}`;
+  return jq(`#chat_completion_source option[value="${variant}"]`) ? variant : snapshot.chatCompletionSource;
 }
 
 // MARK: reasoning
@@ -847,9 +865,13 @@ async function leaveGatewayMode(settings) {
 
 /** Write ST's main API and wait for it to settle. */
 async function selectNativeApi(adapter) {
-  setControlValue('#main_api', adapter.mainApi, 'change');
+  const failed = () => codedError('api_switch', [adapter.mainApi], `Failed to switch the API to ${adapter.mainApi}`);
+  // A missing option (TauriTavern keeps only `openai`) fails now, not after the wait.
+  if (!setControlValue('#main_api', adapter.mainApi, 'change')) {
+    throw failed();
+  }
   await waitFor(() => main_api === adapter.mainApi).catch(() => {
-    throw codedError('api_switch', [adapter.mainApi], `Failed to switch the API to ${adapter.mainApi}`);
+    throw failed();
   });
 }
 
@@ -929,14 +951,18 @@ async function switchToNative(entry, { level, persist = true, reason } = {}) {
   const leftGateway = await leaveGatewayMode(settings);
 
   let connected = true;
+  let sourceChanged = false;
   try {
     await selectNativeApi(adapter);
     await selectNativeSource(entry, adapter);
+    sourceChanged = true;
 
     if (!adapter.modelControl) {
       throw codedError('unsupported', [entry?.providerLabel || entry?.provider || ''], 'Read-only provider; manage it in the native UI');
     }
     if (adapter.mainApi !== 'novel') {
+      // Can still fail when the model could not be checked beforehand
+      // (TauriTavern parks inactive source forms); the source is rolled back.
       await selectNativeModel(entry, adapter);
     }
 
@@ -944,7 +970,7 @@ async function switchToNative(entry, { level, persist = true, reason } = {}) {
     saveSettingsDebounced();
     connected = await ensureNativeConnection(adapter);
   } catch (error) {
-    if (previousWasGateway || leftGateway) {
+    if (previousWasGateway || leftGateway || sourceChanged) {
       await restoreSelection(previous, { fast: true }).catch(() => {});
     }
     throw error;

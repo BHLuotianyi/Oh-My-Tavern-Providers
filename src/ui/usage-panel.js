@@ -7,8 +7,8 @@
  */
 import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
 
-const getRequestHeaders = (...args) => withClientHeader(stRequestHeaders(...args));
-import { API_BASE, withClientHeader } from '../constants.js';
+const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
+import { apiBase, apiHeaders } from '../backend.js';
 import { currentChatId, ensureUsageSession } from '../usage-session.js';
 import { tr, trf } from './dom.js';
 import { el, formatTokens, formatUsd } from './helpers.js';
@@ -32,7 +32,7 @@ export function resetUsageSession(chatId) {
 
 async function api(path, init = {}) {
     const headers = { ...getRequestHeaders(), ...(init.headers || {}) };
-    const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+    const response = await fetch(`${apiBase()}${path}`, { ...init, headers });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
         throw new Error(data?.error?.message || `HTTP ${response.status}`);

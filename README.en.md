@@ -26,7 +26,7 @@ The bundled catalog is generated from the model data of [oh-my-pi (OMP)](https:/
 ## Requirements
 
 - SillyTavern 1.12.7 or later
-- Node.js 18 or later (server plugin only, i.e. the Node running SillyTavern)
+- Node.js 18 or later (server plugin or TauriTavern companion only)
 
 ## Installation
 
@@ -65,6 +65,29 @@ Reload SillyTavern and the panel works; gateway models, sign-in and usage stay u
 3. Restart SillyTavern. When the OMTP panel shows a gateway port (such as `:4100`), the plugin is running.
 
 If you redistribute the `server-plugin` directory on its own, include [`NOTICE`](./NOTICE) from the repository root: the bundled catalog is derived from OMP's `models.json` (MIT).
+
+### TauriTavern
+
+[TauriTavern](https://st-doc.pages.dev/tauritavern/) loads the client extension: install it from its extension manager with the Git URL `https://github.com/BHLuotianyi/Oh-My-Tavern-Providers`. With the extension alone, models SillyTavern supports natively (**Native** badge) work.
+
+TauriTavern's backend is written in Rust and cannot run SillyTavern server plugins. Gateway models, sign-in, usage and statistics come from the **companion** instead: the same code as the server plugin, run on its own with Node:
+
+1. On a computer with Node.js 18+, get this repository (`git clone`, or use the extension folder under `extensions/` in TauriTavern's data directory) and run:
+
+   ```bash
+   node server-plugin/standalone.mjs
+   ```
+
+   It prints an address (`http://127.0.0.1:4099` by default) and a token. Data is kept in `~/.omtp-companion/omtp/`; add `--data SillyTavern/data` to share keys with an existing SillyTavern. `--help` lists all options.
+2. In TauriTavern's **Extensions** settings, open OMTP Model Hub, enter the address and token under **Companion (TauriTavern)** and click **Connect**.
+3. The first time a gateway model is used, TauriTavern asks whether to allow connections to `http://127.0.0.1:4100/v1`; allow it.
+
+Notes:
+
+- TauriTavern on a phone can use a companion on a computer in the same LAN: start it with `--host 0.0.0.0` and enter the computer's LAN address on the phone. The companion and the gateway only accept requests that carry their token; do this on trusted networks only. The statistics page (`/omtp stats`) listens on the computer only and does not open on the phone. On Android the companion can also run under Node in Termux.
+- OAuth callbacks go to the computer that runs the companion. When the companion runs on another device, paste the full URL from the address bar after authorizing into the panel instead.
+- TauriTavern keeps only the Chat Completion API; text completion, NovelAI and AI Horde models show as unavailable.
+- When a TauriTavern Custom connection uses another wire format (such as Claude Messages), OMTP keeps that format when it restores the connection.
 
 ### Updating
 

@@ -20,7 +20,7 @@ import {
     visibleEntries,
 } from './hub-catalog.js';
 import { entriesForTab, highlightSelectedRow, renderList } from './hub-list.js';
-import { renderDetails } from './hub-details.js';
+import { closeDetailsPane, renderDetails } from './hub-details.js';
 import { syncTabs } from './hub-quick.js';
 
 /**
@@ -291,6 +291,7 @@ function selectFirstRowIfStale() {
 
 function selectProvider(provider) {
     state.selectedProvider = provider;
+    closeDetailsPane();
     if (state.currentTab !== 'all') {
         state.currentTab = 'all';
     }

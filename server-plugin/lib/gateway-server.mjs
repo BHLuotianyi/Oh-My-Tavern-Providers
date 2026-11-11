@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import { Readable, Transform } from 'node:stream';
-import express from 'express';
 import {
     ensureGatewayToken,
     ensureInstallId,
@@ -73,7 +72,8 @@ export function asyncHandler(fn) {
  */
 export class GatewayServer {
     /**
-     * @param {{root?:string, catalogService:any, keyStore:any, stats?:any, adapterResolver?:(id:string)=>Promise<any>}} options
+     * @param {{root?:string, catalogService:any, keyStore:any, stats?:any, adapterResolver?:(id:string)=>Promise<any>, express:any, host?:string}} options
+     *   `express` is the host's Express (or the companion's compatible mini router).
      */
     constructor(options) {
         this.root = options.root || getOmtpRoot();
@@ -81,6 +81,9 @@ export class GatewayServer {
         this.keyStore = options.keyStore;
         this.stats = options.stats || null;
         this.adapterResolver = options.adapterResolver || getAdapter;
+        this.express = options.express;
+        /** Interface to bind; loopback unless the companion was started for the LAN. */
+        this.host = options.host || '127.0.0.1';
         /** @type {http.Server|null} */
         this.server = null;
         this.running = false;
@@ -182,7 +185,7 @@ export class GatewayServer {
             };
             server.once('error', onError);
             server.once('listening', onListening);
-            server.listen(port, '127.0.0.1');
+            server.listen(port, this.host);
         });
         server.requestTimeout = 0;
         server.headersTimeout = 65_000;
@@ -225,6 +228,7 @@ export class GatewayServer {
      * @returns {import('express').Express}
      */
     _buildApp() {
+        const express = this.express;
         const app = express();
         app.disable('x-powered-by');
         app.use(express.json({ limit: '50mb' }));
