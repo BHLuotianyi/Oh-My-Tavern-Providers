@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2.2.1
+
+### 新增
+
+- **Gemini 4 Hydrogen**（Google Antigravity）：在线模型列表把 `gemini-4-hydrogen-low/medium/high/xhigh` 合并为一个 `gemini-4-hydrogen`，模型详情列出这四档；推理强度 **max** 对应 `xhigh`，其余按同名档位发送，未指定时用 `low`。Antigravity 的其他分档模型（如 Claude、GPT-OSS）也改为按在线列表中实际存在的档位发送。
+
+### 变更
+
+- 性格数据更新为 AA-PersonalityBench 2026-11-12 的结果（43 个模型，新增 Claude Fable 5.2）。
+
 ## 2.2.0
 
 ### 新增
