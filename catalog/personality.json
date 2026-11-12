@@ -3,7 +3,7 @@
   "source": "https://artificialanalysis.ai/evaluations/aa-personalitybench",
   "attribution": "Artificial Analysis — AA-PersonalityBench",
   "method": "Personality indexes are percentiles (1-100) across every model AA evaluated; models without published indexes are derived from the 30 trait z-scores using AA's documented aggregation. Trait percentiles cover the same 41 models.",
-  "fetchedAt": "2026-11-10",
+  "fetchedAt": "2026-11-12",
   "indexes": [
     "expressiveness",
     "organization",
@@ -15,6 +15,25 @@
     "slop"
   ],
   "models": {
+    "claude-fable-5-2": {
+      "name": "Claude Fable 5.2 (Max, Default Fallback)",
+      "creator": "Anthropic",
+      "published": true,
+      "mean": 61.9,
+      "scores": {
+        "expressiveness": 81,
+        "organization": 54.3,
+        "informativeness": 46.7,
+        "transparency": 81,
+        "warmth": 82.9,
+        "conviction": 75.3,
+        "imagination": 67.6,
+        "slop": 6.7
+      },
+      "traits": {
+        "sycophantic": 21.4
+      }
+    },
     "claude-opus-5-5": {
       "name": "Claude Opus 5.5 (Max, Default Fallback)",
       "creator": "Anthropic",
@@ -31,7 +50,7 @@
         "slop": 15.4
       },
       "traits": {
-        "sycophantic": 46.3
+        "sycophantic": 47.6
       }
     },
     "gpt-6-astra": {
@@ -50,7 +69,7 @@
         "slop": 11.3
       },
       "traits": {
-        "sycophantic": 43.9
+        "sycophantic": 45.2
       }
     },
     "gpt-6-1-sol": {
@@ -69,26 +88,26 @@
         "slop": 9.3
       },
       "traits": {
-        "sycophantic": 51.2
+        "sycophantic": 52.4
       }
     },
     "kimi-k3-1-pro": {
       "name": "Kimi K3.1 Pro",
       "creator": "Kimi",
       "published": true,
-      "mean": 57.5,
+      "mean": 58.6,
       "scores": {
-        "expressiveness": 67,
-        "organization": 83.5,
-        "informativeness": 27.8,
-        "transparency": 87.6,
-        "warmth": 56.7,
-        "conviction": 64.9,
-        "imagination": 54.6,
-        "slop": 17.5
+        "expressiveness": 65.7,
+        "organization": 82.9,
+        "informativeness": 31.5,
+        "transparency": 88.6,
+        "warmth": 58.1,
+        "conviction": 65.7,
+        "imagination": 54.3,
+        "slop": 21.9
       },
       "traits": {
-        "sycophantic": 58.5
+        "sycophantic": 59.5
       }
     },
     "muse-wonder": {
@@ -107,7 +126,7 @@
         "slop": 56.7
       },
       "traits": {
-        "sycophantic": 65.9
+        "sycophantic": 66.7
       }
     },
     "grok-4-7": {
@@ -145,7 +164,7 @@
         "slop": 36.1
       },
       "traits": {
-        "sycophantic": 9.8
+        "sycophantic": 9.5
       }
     },
     "glm-5-3": {
@@ -164,7 +183,7 @@
         "slop": 30.7
       },
       "traits": {
-        "sycophantic": 24.4
+        "sycophantic": 26.2
       }
     },
     "mimo-v2-6-pro": {
@@ -183,156 +202,156 @@
         "slop": 60.8
       },
       "traits": {
-        "sycophantic": 12.2
+        "sycophantic": 11.9
       }
     },
     "claude-sonnet-5-5": {
       "name": "Claude Sonnet 5.5 (Max, Default Fallback)",
       "creator": "Anthropic",
       "published": false,
-      "mean": 69.8,
+      "mean": 69.6,
       "scores": {
-        "expressiveness": 70.7,
-        "organization": 80.5,
-        "informativeness": 85.4,
+        "expressiveness": 69,
+        "organization": 81,
+        "informativeness": 85.7,
         "transparency": 100,
-        "warmth": 70.7,
-        "conviction": 53.7,
-        "imagination": 82.9,
-        "slop": 14.6
+        "warmth": 69,
+        "conviction": 52.4,
+        "imagination": 83.3,
+        "slop": 16.7
       },
       "traits": {
-        "sycophantic": 26.8
+        "sycophantic": 28.6
       }
     },
     "gemini-4-argon": {
       "name": "Gemini 4 Argon (High)",
       "creator": "Google",
       "published": false,
-      "mean": 59.1,
+      "mean": 58.9,
       "scores": {
-        "expressiveness": 82.9,
-        "organization": 46.3,
-        "informativeness": 78,
-        "transparency": 17.1,
-        "warmth": 75.6,
-        "conviction": 58.5,
-        "imagination": 46.3,
-        "slop": 68.3
+        "expressiveness": 83.3,
+        "organization": 45.2,
+        "informativeness": 78.6,
+        "transparency": 16.7,
+        "warmth": 73.8,
+        "conviction": 59.5,
+        "imagination": 45.2,
+        "slop": 69
       },
       "traits": {
-        "sycophantic": 80.5
+        "sycophantic": 81
       }
     },
     "claude-fable-5-1": {
       "name": "Claude Fable 5.1 (Max, Default Fallback)",
       "creator": "Anthropic",
       "published": false,
-      "mean": 80.8,
+      "mean": 81.3,
       "scores": {
         "expressiveness": 100,
-        "organization": 51.2,
+        "organization": 52.4,
         "informativeness": 97.6,
         "transparency": 97.6,
         "warmth": 97.6,
         "conviction": 100,
-        "imagination": 80.5,
-        "slop": 22
+        "imagination": 81,
+        "slop": 23.8
       },
       "traits": {
-        "sycophantic": 4.9
+        "sycophantic": 4.8
       }
     },
     "gpt-6-sol": {
       "name": "GPT-6 Sol (Max)",
       "creator": "OpenAI",
       "published": false,
-      "mean": 25.9,
+      "mean": 25.3,
       "scores": {
-        "expressiveness": 24.4,
-        "organization": 9.8,
-        "informativeness": 9.8,
-        "transparency": 41.5,
-        "warmth": 46.3,
-        "conviction": 48.8,
-        "imagination": 26.8,
+        "expressiveness": 23.8,
+        "organization": 9.5,
+        "informativeness": 9.5,
+        "transparency": 40.5,
+        "warmth": 45.2,
+        "conviction": 47.6,
+        "imagination": 26.2,
         "slop": 0
       },
       "traits": {
-        "sycophantic": 48.8
+        "sycophantic": 50
       }
     },
     "muse-spark-1-3": {
       "name": "Muse Spark 1.3 (Max)",
       "creator": "Meta",
       "published": false,
-      "mean": 76.5,
+      "mean": 76.2,
       "scores": {
-        "expressiveness": 65.9,
-        "organization": 58.5,
+        "expressiveness": 64.3,
+        "organization": 59.5,
         "informativeness": 100,
-        "transparency": 39,
-        "warmth": 95.1,
-        "conviction": 75.6,
+        "transparency": 38.1,
+        "warmth": 95.2,
+        "conviction": 73.8,
         "imagination": 100,
-        "slop": 78
+        "slop": 78.6
       },
       "traits": {
-        "sycophantic": 87.8
+        "sycophantic": 88.1
       }
     },
     "claude-haiku-5-5": {
       "name": "Claude Haiku 5.5 (Max)",
       "creator": "Anthropic",
       "published": false,
-      "mean": 58.8,
+      "mean": 58,
       "scores": {
-        "expressiveness": 80.5,
-        "organization": 39,
-        "informativeness": 73.2,
-        "transparency": 78,
-        "warmth": 68.3,
-        "conviction": 65.9,
-        "imagination": 58.5,
-        "slop": 7.3
+        "expressiveness": 78.6,
+        "organization": 38.1,
+        "informativeness": 73.8,
+        "transparency": 76.2,
+        "warmth": 66.7,
+        "conviction": 64.3,
+        "imagination": 57.1,
+        "slop": 9.5
       },
       "traits": {
-        "sycophantic": 53.7
+        "sycophantic": 54.8
       }
     },
     "qwen3-8-max": {
       "name": "Qwen3.8 Max (0902)",
       "creator": "Alibaba",
       "published": false,
-      "mean": 43.6,
+      "mean": 43.2,
       "scores": {
-        "expressiveness": 17.1,
-        "organization": 63.4,
-        "informativeness": 34.1,
-        "transparency": 46.3,
-        "warmth": 36.6,
-        "conviction": 29.3,
-        "imagination": 48.8,
-        "slop": 73.2
+        "expressiveness": 16.7,
+        "organization": 64.3,
+        "informativeness": 33.3,
+        "transparency": 45.2,
+        "warmth": 35.7,
+        "conviction": 28.6,
+        "imagination": 47.6,
+        "slop": 73.8
       },
       "traits": {
-        "sycophantic": 73.2
+        "sycophantic": 73.8
       }
     },
     "grok-4-6-xhigh": {
       "name": "Grok 4.6 (Xhigh)",
       "creator": "SpaceXAI",
       "published": false,
-      "mean": 44.2,
+      "mean": 43.8,
       "scores": {
-        "expressiveness": 61,
-        "organization": 12.2,
-        "informativeness": 39,
-        "transparency": 75.6,
-        "warmth": 22,
-        "conviction": 92.7,
-        "imagination": 14.6,
-        "slop": 36.6
+        "expressiveness": 59.5,
+        "organization": 11.9,
+        "informativeness": 38.1,
+        "transparency": 73.8,
+        "warmth": 21.4,
+        "conviction": 92.9,
+        "imagination": 14.3,
+        "slop": 38.1
       },
       "traits": {
         "sycophantic": 2.4
@@ -342,19 +361,19 @@
       "name": "Gemini 3.8 Flash (High)",
       "creator": "Google",
       "published": false,
-      "mean": 61.6,
+      "mean": 61.3,
       "scores": {
-        "expressiveness": 75.6,
-        "organization": 68.3,
-        "informativeness": 80.5,
-        "transparency": 19.5,
-        "warmth": 53.7,
-        "conviction": 82.9,
-        "imagination": 36.6,
-        "slop": 75.6
+        "expressiveness": 73.8,
+        "organization": 69,
+        "informativeness": 81,
+        "transparency": 19,
+        "warmth": 52.4,
+        "conviction": 83.3,
+        "imagination": 35.7,
+        "slop": 76.2
       },
       "traits": {
-        "sycophantic": 29.3
+        "sycophantic": 31
       }
     },
     "claude-sonnet-5-5-medium": {
@@ -363,112 +382,112 @@
       "published": false,
       "mean": 52.1,
       "scores": {
-        "expressiveness": 39,
-        "organization": 43.9,
-        "informativeness": 48.8,
-        "transparency": 82.9,
-        "warmth": 61,
-        "conviction": 39,
-        "imagination": 75.6,
-        "slop": 26.8
+        "expressiveness": 38.1,
+        "organization": 42.9,
+        "informativeness": 50,
+        "transparency": 83.3,
+        "warmth": 59.5,
+        "conviction": 38.1,
+        "imagination": 76.2,
+        "slop": 28.6
       },
       "traits": {
-        "sycophantic": 31.7
+        "sycophantic": 33.3
       }
     },
     "minimax-m3-1-flash": {
       "name": "MiniMax-M3.1-Flash",
       "creator": "MiniMax",
       "published": false,
-      "mean": 33.6,
+      "mean": 33,
       "scores": {
-        "expressiveness": 19.5,
-        "organization": 73.2,
-        "informativeness": 36.6,
-        "transparency": 29.3,
-        "warmth": 12.2,
-        "conviction": 61,
-        "imagination": 12.2,
-        "slop": 24.4
+        "expressiveness": 19,
+        "organization": 73.8,
+        "informativeness": 35.7,
+        "transparency": 28.6,
+        "warmth": 11.9,
+        "conviction": 57.1,
+        "imagination": 11.9,
+        "slop": 26.2
       },
       "traits": {
-        "sycophantic": 61
+        "sycophantic": 61.9
       }
     },
     "step-5": {
       "name": "Step 5 Preview",
       "creator": "StepFun",
       "published": false,
-      "mean": 47.8,
+      "mean": 47.6,
       "scores": {
-        "expressiveness": 31.7,
-        "organization": 95.1,
-        "informativeness": 46.3,
-        "transparency": 36.6,
-        "warmth": 34.1,
-        "conviction": 56.1,
-        "imagination": 39,
-        "slop": 43.9
+        "expressiveness": 31,
+        "organization": 95.2,
+        "informativeness": 47.6,
+        "transparency": 35.7,
+        "warmth": 33.3,
+        "conviction": 54.8,
+        "imagination": 38.1,
+        "slop": 45.2
       },
       "traits": {
-        "sycophantic": 41.5
+        "sycophantic": 42.9
       }
     },
     "gpt-6-luna": {
       "name": "GPT-6 Luna (Max)",
       "creator": "OpenAI",
       "published": false,
-      "mean": 29,
+      "mean": 28,
       "scores": {
-        "expressiveness": 34.1,
-        "organization": 17.1,
-        "informativeness": 14.6,
-        "transparency": 58.5,
-        "warmth": 41.5,
-        "conviction": 46.3,
-        "imagination": 17.1,
+        "expressiveness": 33.3,
+        "organization": 16.7,
+        "informativeness": 14.3,
+        "transparency": 57.1,
+        "warmth": 40.5,
+        "conviction": 42.9,
+        "imagination": 16.7,
         "slop": 2.4
       },
       "traits": {
-        "sycophantic": 56.1
+        "sycophantic": 57.1
       }
     },
     "glm-5-3-flash": {
       "name": "GLM-5.3-Flash",
       "creator": "Z AI",
       "published": false,
-      "mean": 66.8,
+      "mean": 66.9,
       "scores": {
-        "expressiveness": 95.1,
-        "organization": 34.1,
-        "informativeness": 58.5,
-        "transparency": 70.7,
-        "warmth": 85.4,
-        "conviction": 80.5,
-        "imagination": 78,
-        "slop": 31.7
+        "expressiveness": 95.2,
+        "organization": 33.3,
+        "informativeness": 59.5,
+        "transparency": 69,
+        "warmth": 85.7,
+        "conviction": 81,
+        "imagination": 78.6,
+        "slop": 33.3
       },
       "traits": {
-        "sycophantic": 14.6
+        "sycophantic": 14.3
       }
     },
     "mistral-large-4-preview": {
       "name": "Mistral Large 4 Preview",
       "creator": "Mistral",
       "published": false,
-      "mean": 62.8,
+      "mean": 63.1,
       "scores": {
-        "expressiveness": 85.4,
-        "organization": 82.9,
-        "informativeness": 65.9,
-        "transparency": 34.1,
-        "warmth": 78,
-        "conviction": 34.1,
-        "imagination": 61,
-        "slop": 61
+        "expressiveness": 85.7,
+        "organization": 85.7,
+        "informativeness": 66.7,
+        "transparency": 33.3,
+        "warmth": 76.2,
+        "conviction": 33.3,
+        "imagination": 61.9,
+        "slop": 61.9
       },
       "traits": {
-        "sycophantic": 63.4
+        "sycophantic": 64.3
       }
     },
     "muse-spark-open": {
@@ -477,131 +496,131 @@
       "published": false,
       "mean": 64.3,
       "scores": {
-        "expressiveness": 51.2,
-        "organization": 26.8,
-        "informativeness": 90.2,
-        "transparency": 51.2,
-        "warmth": 87.8,
-        "conviction": 24.4,
+        "expressiveness": 52.4,
+        "organization": 26.2,
+        "informativeness": 90.5,
+        "transparency": 50,
+        "warmth": 88.1,
+        "conviction": 23.8,
         "imagination": 97.6,
-        "slop": 85.4
+        "slop": 85.7
       },
       "traits": {
-        "sycophantic": 75.6
+        "sycophantic": 76.2
       }
     },
     "qwen3-8-27b": {
       "name": "Qwen3.8 27B (Xhigh)",
       "creator": "Alibaba",
       "published": false,
-      "mean": 38.4,
+      "mean": 37.8,
       "scores": {
-        "expressiveness": 14.6,
-        "organization": 56.1,
-        "informativeness": 31.7,
-        "transparency": 31.7,
-        "warmth": 24.4,
-        "conviction": 31.7,
-        "imagination": 34.1,
-        "slop": 82.9
+        "expressiveness": 14.3,
+        "organization": 54.8,
+        "informativeness": 31,
+        "transparency": 31,
+        "warmth": 23.8,
+        "conviction": 31,
+        "imagination": 33.3,
+        "slop": 83.3
       },
       "traits": {
-        "sycophantic": 70.7
+        "sycophantic": 71.4
       }
     },
     "minimax-m3": {
       "name": "MiniMax-M3",
       "creator": "MiniMax",
       "published": false,
-      "mean": 43,
+      "mean": 42.6,
       "scores": {
-        "expressiveness": 48.8,
-        "organization": 22,
-        "informativeness": 29.3,
-        "transparency": 26.8,
-        "warmth": 80.5,
-        "conviction": 17.1,
-        "imagination": 63.4,
-        "slop": 56.1
+        "expressiveness": 47.6,
+        "organization": 21.4,
+        "informativeness": 28.6,
+        "transparency": 26.2,
+        "warmth": 78.6,
+        "conviction": 16.7,
+        "imagination": 64.3,
+        "slop": 57.1
       },
       "traits": {
-        "sycophantic": 34.1
+        "sycophantic": 35.7
       }
     },
     "k2-horizon-375b-a23b": {
       "name": "K2 Horizon 375B A23B",
       "creator": "Institute of Foundation Models",
       "published": false,
-      "mean": 38.7,
+      "mean": 38.4,
       "scores": {
-        "expressiveness": 22,
-        "organization": 41.5,
-        "informativeness": 70.7,
-        "transparency": 14.6,
-        "warmth": 14.6,
-        "conviction": 9.8,
-        "imagination": 43.9,
-        "slop": 92.7
+        "expressiveness": 21.4,
+        "organization": 40.5,
+        "informativeness": 71.4,
+        "transparency": 14.3,
+        "warmth": 14.3,
+        "conviction": 9.5,
+        "imagination": 42.9,
+        "slop": 92.9
       },
       "traits": {
-        "sycophantic": 92.7
+        "sycophantic": 92.9
       }
     },
     "reflection-beam": {
       "name": "Beam 1.0",
       "creator": "Reflection",
       "published": false,
-      "mean": 55.8,
+      "mean": 55.7,
       "scores": {
-        "expressiveness": 36.6,
-        "organization": 70.7,
-        "informativeness": 87.8,
-        "transparency": 68.3,
-        "warmth": 29.3,
-        "conviction": 36.6,
-        "imagination": 65.9,
-        "slop": 51.2
+        "expressiveness": 35.7,
+        "organization": 71.4,
+        "informativeness": 88.1,
+        "transparency": 66.7,
+        "warmth": 28.6,
+        "conviction": 35.7,
+        "imagination": 66.7,
+        "slop": 52.4
       },
       "traits": {
-        "sycophantic": 36.6
+        "sycophantic": 38.1
       }
     },
     "nemotron-3-5-super-vl": {
       "name": "Nemotron 3.5 Super VL",
       "creator": "NVIDIA",
       "published": false,
-      "mean": 57,
+      "mean": 56.6,
       "scores": {
-        "expressiveness": 68.3,
+        "expressiveness": 66.7,
         "organization": 97.6,
-        "informativeness": 61,
-        "transparency": 48.8,
-        "warmth": 43.9,
-        "conviction": 22,
-        "imagination": 51.2,
-        "slop": 63.4
+        "informativeness": 61.9,
+        "transparency": 47.6,
+        "warmth": 42.9,
+        "conviction": 21.4,
+        "imagination": 50,
+        "slop": 64.3
       },
       "traits": {
-        "sycophantic": 39
+        "sycophantic": 40.5
       }
     },
     "inkling": {
       "name": "Inkling (Xhigh)",
       "creator": "Thinking Machines",
       "published": false,
-      "mean": 65.3,
+      "mean": 64.9,
       "scores": {
-        "expressiveness": 78,
-        "organization": 92.7,
-        "informativeness": 63.4,
-        "transparency": 53.7,
-        "warmth": 48.8,
-        "conviction": 68.3,
-        "imagination": 68.3,
-        "slop": 48.8
+        "expressiveness": 76.2,
+        "organization": 92.9,
+        "informativeness": 64.3,
+        "transparency": 52.4,
+        "warmth": 47.6,
+        "conviction": 66.7,
+        "imagination": 69,
+        "slop": 50
       },
       "traits": {
-        "sycophantic": 7.3
+        "sycophantic": 7.1
       }
     },
     "nvidia-nemotron-3-ultra-550b-a55b": {
@@ -610,36 +629,36 @@
       "published": false,
       "mean": 25.9,
       "scores": {
-        "expressiveness": 7.3,
-        "organization": 7.3,
-        "informativeness": 75.6,
-        "transparency": 9.8,
+        "expressiveness": 7.1,
+        "organization": 7.1,
+        "informativeness": 76.2,
+        "transparency": 9.5,
         "warmth": 0,
-        "conviction": 12.2,
-        "imagination": 4.9,
-        "slop": 90.2
+        "conviction": 11.9,
+        "imagination": 4.8,
+        "slop": 90.5
       },
       "traits": {
-        "sycophantic": 85.4
+        "sycophantic": 85.7
       }
     },
     "muse-glimmer": {
       "name": "Muse Glimmer (High)",
       "creator": "Meta",
       "published": false,
-      "mean": 42.1,
+      "mean": 42,
       "scores": {
-        "expressiveness": 26.8,
-        "organization": 14.6,
-        "informativeness": 43.9,
-        "transparency": 22,
-        "warmth": 65.9,
-        "conviction": 7.3,
-        "imagination": 85.4,
-        "slop": 70.7
+        "expressiveness": 26.2,
+        "organization": 14.3,
+        "informativeness": 45.2,
+        "transparency": 21.4,
+        "warmth": 64.3,
+        "conviction": 7.1,
+        "imagination": 85.7,
+        "slop": 71.4
       },
       "traits": {
-        "sycophantic": 78
+        "sycophantic": 78.6
       }
     },
     "gpt-35-turbo": {
@@ -655,48 +674,48 @@
         "warmth": 2.4,
         "conviction": 2.4,
         "imagination": 0,
-        "slop": 87.8
+        "slop": 88.1
       },
       "traits": {
-        "sycophantic": 95.1
+        "sycophantic": 95.2
       }
     },
     "nemotron-3-5-bolt-e4b-4gb": {
       "name": "Nemotron 3.5 Bolt E4B 4GB (Reasoning)",
       "creator": "NVIDIA",
       "published": false,
-      "mean": 27.5,
+      "mean": 27.7,
       "scores": {
-        "expressiveness": 12.2,
-        "organization": 53.7,
-        "informativeness": 12.2,
-        "transparency": 7.3,
-        "warmth": 9.8,
-        "conviction": 19.5,
-        "imagination": 9.8,
-        "slop": 95.1
+        "expressiveness": 11.9,
+        "organization": 57.1,
+        "informativeness": 11.9,
+        "transparency": 7.1,
+        "warmth": 9.5,
+        "conviction": 19,
+        "imagination": 9.5,
+        "slop": 95.2
       },
       "traits": {
-        "sycophantic": 82.9
+        "sycophantic": 83.3
       }
     },
     "grok-4-5": {
       "name": "Grok 4.5 (High)",
       "creator": "SpaceXAI",
       "published": false,
-      "mean": 54,
+      "mean": 53.6,
       "scores": {
-        "expressiveness": 41.5,
-        "organization": 48.8,
-        "informativeness": 53.7,
-        "transparency": 65.9,
-        "warmth": 26.8,
-        "conviction": 87.8,
-        "imagination": 41.5,
-        "slop": 65.9
+        "expressiveness": 40.5,
+        "organization": 47.6,
+        "informativeness": 54.8,
+        "transparency": 64.3,
+        "warmth": 26.2,
+        "conviction": 88.1,
+        "imagination": 40.5,
+        "slop": 66.7
       },
       "traits": {
-        "sycophantic": 17.1
+        "sycophantic": 16.7
       }
     },
     "llama-4-maverick": {
@@ -709,7 +728,7 @@
         "organization": 2.4,
         "informativeness": 2.4,
         "transparency": 2.4,
-        "warmth": 4.9,
+        "warmth": 4.8,
         "conviction": 0,
         "imagination": 2.4,
         "slop": 100
@@ -724,51 +743,51 @@
       "published": false,
       "mean": 27.1,
       "scores": {
-        "expressiveness": 9.8,
-        "organization": 61,
-        "informativeness": 7.3,
-        "transparency": 24.4,
-        "warmth": 19.5,
-        "conviction": 26.8,
-        "imagination": 22,
-        "slop": 46.3
+        "expressiveness": 9.5,
+        "organization": 61.9,
+        "informativeness": 7.1,
+        "transparency": 23.8,
+        "warmth": 19,
+        "conviction": 26.2,
+        "imagination": 21.4,
+        "slop": 47.6
       },
       "traits": {
-        "sycophantic": 68.3
+        "sycophantic": 69
       }
     },
     "gemini-3-1-pro-preview": {
       "name": "Gemini 3.1 Pro Preview",
       "creator": "Google",
       "published": false,
-      "mean": 43.9,
+      "mean": 43.7,
       "scores": {
-        "expressiveness": 58.5,
-        "organization": 36.6,
-        "informativeness": 41.5,
-        "transparency": 12.2,
-        "warmth": 58.5,
-        "conviction": 43.9,
-        "imagination": 19.5,
-        "slop": 80.5
+        "expressiveness": 57.1,
+        "organization": 35.7,
+        "informativeness": 42.9,
+        "transparency": 11.9,
+        "warmth": 57.1,
+        "conviction": 45.2,
+        "imagination": 19,
+        "slop": 81
       },
       "traits": {
-        "sycophantic": 90.2
+        "sycophantic": 90.5
       }
     },
     "gpt-4o": {
       "name": "GPT-4o (Nov '24)",
       "creator": "OpenAI",
       "published": false,
-      "mean": 17.1,
+      "mean": 17,
       "scores": {
-        "expressiveness": 4.9,
-        "organization": 4.9,
-        "informativeness": 4.9,
-        "transparency": 4.9,
-        "warmth": 7.3,
-        "conviction": 4.9,
-        "imagination": 7.3,
+        "expressiveness": 4.8,
+        "organization": 4.8,
+        "informativeness": 4.8,
+        "transparency": 4.8,
+        "warmth": 7.1,
+        "conviction": 4.8,
+        "imagination": 7.1,
         "slop": 97.6
       },
       "traits": {
@@ -779,38 +798,38 @@
       "name": "DeepSeek V4.1 Flash (Max)",
       "creator": "DeepSeek",
       "published": false,
-      "mean": 61.6,
+      "mean": 61.3,
       "scores": {
-        "expressiveness": 56.1,
+        "expressiveness": 54.8,
         "organization": 100,
-        "informativeness": 82.9,
-        "transparency": 61,
-        "warmth": 31.7,
+        "informativeness": 83.3,
+        "transparency": 59.5,
+        "warmth": 31,
         "conviction": 97.6,
-        "imagination": 24.4,
-        "slop": 39
+        "imagination": 23.8,
+        "slop": 40.5
       },
       "traits": {
-        "sycophantic": 19.5
+        "sycophantic": 19
       }
     },
     "kimi-k3": {
       "name": "Kimi K3 (Max)",
       "creator": "Kimi",
       "published": false,
-      "mean": 67.1,
+      "mean": 67,
       "scores": {
-        "expressiveness": 92.7,
-        "organization": 31.7,
-        "informativeness": 51.2,
-        "transparency": 73.2,
-        "warmth": 92.7,
-        "conviction": 73.2,
-        "imagination": 87.8,
-        "slop": 34.1
+        "expressiveness": 92.9,
+        "organization": 31,
+        "informativeness": 52.4,
+        "transparency": 71.4,
+        "warmth": 92.9,
+        "conviction": 71.4,
+        "imagination": 88.1,
+        "slop": 35.7
       },
       "traits": {
-        "sycophantic": 22
+        "sycophantic": 23.8
       }
     }
   }
