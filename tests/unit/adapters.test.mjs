@@ -5,6 +5,8 @@ import openai from '../../server-plugin/lib/adapters/openai.mjs';
 import anthropic from '../../server-plugin/lib/adapters/anthropic.mjs';
 import antigravity from '../../server-plugin/lib/adapters/antigravity.mjs';
 import { xxh64 } from '../../server-plugin/lib/claude-code-billing.mjs';
+import { buildGatewayContext } from '../../server-plugin/lib/gateway-server.mjs';
+import { buildProviderConfig } from '../../server-plugin/lib/provider-config.mjs';
 
 async function withServer(handler, run) {
   const server = http.createServer(handler);
@@ -59,6 +61,39 @@ test('openai adapter passes through streaming SSE', async () => {
     assert.equal(response.headers.get('content-type'), 'text/event-stream; charset=utf-8');
     assert.equal(await response.text(), 'data: {"choices":[{"delta":{"content":"pong"}}]}\n\ndata: [DONE]\n\n');
   });
+});
+
+test('providers declaring singleMaxTokens drop max_completion_tokens unless the switch is off', async () => {
+  const sent = [];
+  await withServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const { max_tokens, max_completion_tokens } = JSON.parse(body);
+    sent.push({ max_tokens, max_completion_tokens });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }));
+  }, async (baseUrl) => {
+    const ark = { id: 'ark', gatewayAdapter: 'openai', baseUrl, singleMaxTokens: true, models: [] };
+    const plain = { id: 'plain', gatewayAdapter: 'openai', baseUrl, models: [] };
+    const cases = [
+      [ark, {}, { max_tokens: 100, max_completion_tokens: 100 }],
+      [ark, { singleMaxTokens: false }, { max_tokens: 100, max_completion_tokens: 100 }],
+      [plain, {}, { max_tokens: 100, max_completion_tokens: 100 }],
+      [ark, {}, { max_completion_tokens: 100 }],
+    ];
+    for (const [catalogProvider, stored, limits] of cases) {
+      const resolved = buildProviderConfig(catalogProvider, { stored, apiKey: 'k' });
+      const ctx = await buildGatewayContext(resolved, {}, 'm', null, catalogProvider);
+      const response = await openai.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }], ...limits }, ctx);
+      assert.equal(response.status, 200);
+    }
+  });
+  assert.deepEqual(sent, [
+    { max_tokens: 100, max_completion_tokens: undefined },
+    { max_tokens: 100, max_completion_tokens: 100 },
+    { max_tokens: 100, max_completion_tokens: 100 },
+    { max_tokens: undefined, max_completion_tokens: 100 },
+  ]);
 });
 
 test('openai adapter reports missing credentials', async () => {

@@ -56,7 +56,7 @@
 | | `POST /import/omp` | 从本地 OMP 导入目录覆盖层；`credentials: true` 且 `confirm: true` 时同时导入凭据 |
 | 服务商 | `GET /providers` | 各服务商的可用性、凭据来源、密钥末四位、登录方式、模型数 |
 | | `POST /providers/:id/key`、`DELETE /providers/:id/key` | 保存或清除 API 密钥 |
-| | `POST /providers/:id/config`、`DELETE /providers/:id/config` | 新建、修改或删除服务商配置（`label`、`adapter`、`baseUrl`、`headers`、`extraConfig`、`custom`、`models`、`userAgentSpoof`） |
+| | `POST /providers/:id/config`、`DELETE /providers/:id/config` | 新建、修改或删除服务商配置（`label`、`adapter`、`baseUrl`、`headers`、`extraConfig`、`custom`、`models`、`userAgentSpoof`、`singleMaxTokens`） |
 | | `POST /providers/:id/test` | 用真实适配器请求上游，检查连通性 |
 | | `GET /providers/:id/models` | 获取在线模型列表，`?refresh=true` 跳过缓存。见[在线模型缓存](#在线模型缓存) |
 | 登录 | `POST /providers/:id/login` | 开始登录会话 |

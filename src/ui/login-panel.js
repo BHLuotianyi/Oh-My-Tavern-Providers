@@ -256,7 +256,18 @@ function renderRow(provider) {
 
     row.append(actions);
     if (provider.supportsUserAgentSpoof) {
-        row.append(renderUaSpoofToggle(provider, row));
+        row.append(renderConfigToggle(provider, row, 'userAgentSpoof',
+            tr('omtp_login_ua_spoof', 'Disguise User-Agent as the opencode client'),
+            (message) => trf('omtp_login_ua_spoof_failed', 'Could not save the User-Agent setting: ${0}', message)));
+    }
+    if (provider.supportsSingleMaxTokens) {
+        row.append(renderConfigToggle(provider, row, 'singleMaxTokens',
+            tr('omtp_login_single_max_tokens', 'Send only max_tokens (drop max_completion_tokens when both are set)'),
+            (message) => trf('omtp_login_single_max_tokens_failed', 'Could not save the token limit setting: ${0}', message)));
+    }
+    const notice = PROVIDER_NOTICES[id];
+    if (notice) {
+        row.append(el('div', 'omtp-login-hint omtp-login-warning', tr(notice[0], notice[1])));
     }
     if (actionErrors.has(id)) {
         row.append(el('div', 'omtp-login-hint omtp-login-error omtp-login-action-error', actionErrors.get(id)));
@@ -268,36 +279,49 @@ function renderRow(provider) {
 const KEY_MASK = '••••••••••••';
 
 /**
- * Per-provider User-Agent disguise switch. Defaults to on; turning it off
- * forwards SillyTavern's own User-Agent instead.
+ * Warnings shown under a provider row: `[i18n key, English fallback]`.
+ * Volcengine's plan terms say the plan key outside AI coding / agent tools may
+ * get the subscription suspended or the account banned.
+ */
+const PROVIDER_NOTICES = Object.freeze({
+    'volcengine-coding-plan': ['omtp_login_ark_plan_warning', 'Volcengine only allows this plan in AI coding / agent tools; using it elsewhere (such as SillyTavern) may get the subscription suspended or the account banned.'],
+    'volcengine-agent-plan': ['omtp_login_ark_plan_warning', 'Volcengine only allows this plan in AI coding / agent tools; using it elsewhere (such as SillyTavern) may get the subscription suspended or the account banned.'],
+});
+
+/**
+ * Per-provider boolean switch stored in the provider config. Defaults to on;
+ * the server treats an absent value as on.
  * @param {object} provider
  * @param {HTMLElement} row
+ * @param {'userAgentSpoof'|'singleMaxTokens'} key
+ * @param {string} label
+ * @param {(message: string) => string} failureText
  * @returns {HTMLElement}
  */
-function renderUaSpoofToggle(provider, row) {
+function renderConfigToggle(provider, row, key, label, failureText) {
     const id = String(provider.id);
     const wrap = el('label', 'checkbox_label omtp-login-spoof');
     const input = document.createElement('input');
     input.type = 'checkbox';
-    input.checked = provider.userAgentSpoof !== false;
+    input.checked = provider[key] !== false;
     input.addEventListener('change', async () => {
         input.disabled = true;
         try {
             await api(`/providers/${encodeURIComponent(id)}/config`, {
                 method: 'POST',
-                body: JSON.stringify({ userAgentSpoof: input.checked }),
+                body: JSON.stringify({ [key]: input.checked }),
             });
             onChanged?.();
             await refresh();
         } catch (error) {
             input.checked = !input.checked;
-            showActionError(row, id, trf('omtp_login_ua_spoof_failed', 'Could not save the User-Agent setting: ${0}', error.message || error));
+            showActionError(row, id, failureText(error.message || error));
             onChanged?.();
         } finally {
             input.disabled = false;
         }
     });
-    wrap.append(input, el('span', null, tr('omtp_login_ua_spoof', 'Disguise User-Agent as the opencode client')));
+    wrap.append(input, el('span', null, label));
     return wrap;
 }
 

@@ -10,7 +10,7 @@ import {
     tokensEqual,
 } from './config.mjs';
 import { applyRequestHeaders, requestHeaderPolicy } from './request-headers.mjs';
-import { buildProviderContext, userAgentSpoofEnabled } from './provider-config.mjs';
+import { buildProviderContext, singleMaxTokensEnabled, userAgentSpoofEnabled } from './provider-config.mjs';
 import { resolveAccessToken } from './oauth.mjs';
 import { openAIErrorEnvelope } from './sse.mjs';
 import { log, logError } from './redact.mjs';
@@ -630,6 +630,7 @@ export async function buildGatewayContext(
     }
     if (credential && resolved.id === 'anthropic') ctx.extraConfig.claudeCode = true;
     if (credential?.projectId && !ctx.extraConfig.project) ctx.extraConfig.project = credential.projectId;
+    if (catalogProvider?.singleMaxTokens === true && singleMaxTokensEnabled(resolved)) ctx.extraConfig.singleMaxTokens = true;
     await applyProviderRequestHeaders(ctx, resolved, catalogProvider, requestContext, keyStore);
     return ctx;
 }

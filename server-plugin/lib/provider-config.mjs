@@ -162,6 +162,17 @@ export function userAgentSpoofEnabled(config) {
 }
 
 /**
+ * Dropping `max_completion_tokens` when `max_tokens` is also set is on unless
+ * the stored config says otherwise. Only catalog providers that declare
+ * `singleMaxTokens` act on it.
+ * @param {Record<string, any>|null|undefined} config Resolved or stored config.
+ * @returns {boolean}
+ */
+export function singleMaxTokensEnabled(config) {
+    return config?.singleMaxTokens !== false;
+}
+
+/**
  * Merge catalog metadata, stored overrides and key information into the config
  * consumed by gateway adapters.
  *
@@ -216,9 +227,11 @@ export function buildProviderConfig(catalogProvider, options = {}) {
         keySource,
         available: Boolean(adapter) && Boolean(keyless || hasAdapterCredentials(adapter, apiKey, extraConfig)),
         keyless,
-        // Only providers whose catalog policy declares a spoof UA expose the
-        // switch, but the flag round-trips for every provider.
+        // Only providers whose catalog policy declares a spoof UA (or a single
+        // token limit) expose the switch, but the flags round-trip for every
+        // provider.
         userAgentSpoof: userAgentSpoofEnabled(stored),
+        singleMaxTokens: singleMaxTokensEnabled(stored),
         custom: Boolean(stored.custom || catalogProvider?.custom),
         models: Array.isArray(stored.models) && stored.models.length > 0 ? stored.models : catalogProvider?.models || [],
     };

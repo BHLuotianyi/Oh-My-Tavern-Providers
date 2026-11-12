@@ -1222,6 +1222,12 @@ body.omtp-hide-native-api-selector #rm_api_block > *:not(#omtp-api-drawer-tools)
     color: #f87171;
 }
 
+/* Terms-of-service risk: keep it readable despite the dimmed hint style. */
+.omtp-login-warning {
+    color: #fbbf24;
+    opacity: 0.9;
+}
+
 .omtp-login-success {
     color: #22c55e;
 }

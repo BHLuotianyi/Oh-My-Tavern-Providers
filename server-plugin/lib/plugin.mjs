@@ -11,7 +11,7 @@ import { KeyStore, KeyStoreUnreadableError } from './key-store.mjs';
 import { freshLiveModels, loadLiveModels, saveLiveModels } from './live-models-store.mjs';
 import { CatalogService } from './catalog-service.mjs';
 import { GatewayServer, asyncHandler, buildGatewayContext, credentialStorageId, resolveProviderCredentials } from './gateway-server.mjs';
-import { buildModelsProbe, buildProviderContext, isSupportedAdapter, SUPPORTED_ADAPTERS, userAgentSpoofEnabled } from './provider-config.mjs';
+import { buildModelsProbe, buildProviderContext, isSupportedAdapter, singleMaxTokensEnabled, SUPPORTED_ADAPTERS, userAgentSpoofEnabled } from './provider-config.mjs';
 import { parseStructuredCredential, resolveAccessToken } from './oauth.mjs';
 import { importFromOmp } from './import-omp.mjs';
 import { installProxyFetch } from './proxy-fetch.mjs';
@@ -270,6 +270,8 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
         keyInvalidReason: authFailure?.message ?? null,
         userAgentSpoof: userAgentSpoofEnabled(resolved),
         supportsUserAgentSpoof: Boolean(provider?.requestHeaders?.spoofUserAgent),
+        singleMaxTokens: singleMaxTokensEnabled(resolved),
+        supportsSingleMaxTokens: provider?.singleMaxTokens === true,
         unsupportedReason: synthetic.unsupportedReason || authFailure?.message || null,
     };
 }
@@ -576,11 +578,14 @@ function registerProviderRoutes(router) {
         const body = req.body && typeof req.body === 'object' ? req.body : {};
         /** @type {Record<string, any>} */
         const patch = {};
-        for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'userAgentSpoof']) {
+        for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'userAgentSpoof', 'singleMaxTokens']) {
             if (key in body) patch[key] = body[key];
         }
         if (patch.userAgentSpoof !== undefined && patch.userAgentSpoof !== null && typeof patch.userAgentSpoof !== 'boolean') {
             throw new HttpError(400, 'userAgentSpoof must be a boolean', 'invalid_user_agent_spoof');
+        }
+        if (patch.singleMaxTokens !== undefined && patch.singleMaxTokens !== null && typeof patch.singleMaxTokens !== 'boolean') {
+            throw new HttpError(400, 'singleMaxTokens must be a boolean', 'invalid_single_max_tokens');
         }
         if (patch.adapter !== undefined && patch.adapter !== null && patch.adapter !== '' && !isSupportedAdapter(patch.adapter)) {
             throw new HttpError(400, `Unsupported adapter; expected one of ${SUPPORTED_ADAPTERS.join(', ')}`, 'invalid_adapter');

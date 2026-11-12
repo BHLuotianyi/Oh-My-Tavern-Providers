@@ -56,7 +56,7 @@ All routes live under `/api/plugins/omtp`, use SillyTavern's own session and CSR
 | | `POST /import/omp` | Import a catalog overlay from a local OMP; with `credentials: true` and `confirm: true` also import credentials |
 | Providers | `GET /providers` | Availability, credential source, last four key characters, sign-in method and model count per provider |
 | | `POST /providers/:id/key`, `DELETE /providers/:id/key` | Save or clear an API key |
-| | `POST /providers/:id/config`, `DELETE /providers/:id/config` | Create, change or delete provider config (`label`, `adapter`, `baseUrl`, `headers`, `extraConfig`, `custom`, `models`, `userAgentSpoof`) |
+| | `POST /providers/:id/config`, `DELETE /providers/:id/config` | Create, change or delete provider config (`label`, `adapter`, `baseUrl`, `headers`, `extraConfig`, `custom`, `models`, `userAgentSpoof`, `singleMaxTokens`) |
 | | `POST /providers/:id/test` | Call the provider through its real adapter to check connectivity |
 | | `GET /providers/:id/models` | Live model list; `?refresh=true` skips the cache. See [Live model cache](#live-model-cache) |
 | Sign-in | `POST /providers/:id/login` | Start a sign-in session |

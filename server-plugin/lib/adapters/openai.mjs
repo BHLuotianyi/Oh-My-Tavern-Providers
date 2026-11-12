@@ -469,6 +469,10 @@ export async function chat(req, ctx) {
     body.max_completion_tokens = body.max_tokens;
     delete body.max_tokens;
   }
+  // Some upstreams (Volcengine Ark plans) reject a request carrying both limits.
+  if (extra.singleMaxTokens && body.max_tokens != null && body.max_completion_tokens != null) {
+    delete body.max_completion_tokens;
+  }
   if (extra.body && typeof extra.body === 'object' && !Array.isArray(extra.body)) {
     Object.assign(body, extra.body);
   }
