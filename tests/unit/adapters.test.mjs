@@ -165,6 +165,42 @@ test('antigravity adapter builds CCA request envelope and parses response', asyn
   });
 });
 
+test('antigravity collapses effort-tier variants and requests the tier for the effort', async () => {
+  const roster = {
+    models: Object.fromEntries(['low', 'medium', 'high', 'xhigh'].map((tier) => [
+      `gemini-4-hydrogen-${tier}`,
+      { displayName: 'Gemini 4 Hydrogen', supportsThinking: true, maxTokens: 1048576 },
+    ])),
+  };
+  const listed = await antigravity.listModels({
+    provider: 'google-antigravity',
+    apiKey: 'tok',
+    fetchImpl: async () => new Response(JSON.stringify(roster), { status: 200 }),
+  });
+  assert.deepEqual(listed.map((model) => [model.id, model.efforts]), [
+    ['gemini-4-hydrogen', ['low', 'medium', 'high', 'xhigh']],
+  ]);
+
+  const wireModels = [];
+  await withServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    wireModels.push(JSON.parse(body).model);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end('data: ' + JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] } }) + '\n\n');
+  }, async (baseUrl) => {
+    const cases = [['gemini-4-hydrogen', 'max'], ['gemini-4-hydrogen', 'medium'], ['gemini-4-hydrogen', undefined], ['gemini-4-argon', 'max']];
+    for (const [model, effort] of cases) {
+      const response = await antigravity.chat(
+        { model, reasoning_effort: effort, messages: [{ role: 'user', content: 'hi' }] },
+        { provider: 'google-antigravity', model, baseUrl, apiKey: 'tok', extraConfig: { project: 'p' } },
+      );
+      assert.equal(response.status, 200);
+    }
+  });
+  assert.deepEqual(wireModels, ['gemini-4-hydrogen-xhigh', 'gemini-4-hydrogen-medium', 'gemini-4-hydrogen-low', 'gemini-4-argon-high']);
+});
+
 test('antigravity adapter declares tools and round-trips tool calls', async () => {
   let capturedEnvelope;
   await withServer(async (req, res) => {

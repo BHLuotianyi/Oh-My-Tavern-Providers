@@ -550,6 +550,7 @@ function modelsForProvider(provider, liveList) {
                 contextWindow: liveModel.contextWindow ?? null,
                 maxTokens: liveModel.maxTokens ?? null,
                 reasoning: Boolean(liveModel.reasoning || liveModel.supportsThinking),
+                efforts: Array.isArray(liveModel.efforts) ? liveModel.efforts : [],
                 supportsTools: liveModel.supportsTools ?? true,
                 input: liveModel.input || ['text'],
                 isLive: true,

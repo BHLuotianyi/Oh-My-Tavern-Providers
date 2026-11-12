@@ -187,14 +187,38 @@ function translateToolConfig(choice) {
   return undefined;
 }
 
-function mapAntigravityWireModel(model, effort = 'low') {
-  if (/-(?:minimal|extra-low|low|medium|high|tiered|thinking)$/.test(model)) return model;
-  if (model.startsWith('gemini-3.8-flash') || model.startsWith('gemini-4-argon')) {
-    // `max` used to fall through to `-low`, unlike the other adapters.
-    const tier = effort === 'max' || effort === 'high' ? 'high' : effort === 'medium' ? 'medium' : 'low';
-    return `${model}-${tier}`;
-  }
-  return model;
+/** Effort tiers Antigravity encodes as a `-<tier>` wire-id suffix, lowest first. */
+const EFFORT_TIERS = ['low', 'medium', 'high', 'xhigh'];
+const TIER_SUFFIX = /-(?:minimal|extra-low|low|medium|high|xhigh|tiered|thinking)$/;
+
+/**
+ * Tier variants per logical id, learned from the last discovery. Families
+ * listed below are known before any discovery has run (e.g. after a restart).
+ * @type {Map<string, string[]>}
+ */
+const discoveredTiers = new Map();
+const KNOWN_TIERS = [
+  ['gemini-3.8-flash', ['low', 'medium', 'high']],
+  ['gemini-4-argon', ['low', 'medium', 'high']],
+  ['gemini-4-hydrogen', ['low', 'medium', 'high', 'xhigh']],
+];
+
+function tiersOf(model) {
+  return discoveredTiers.get(model) || KNOWN_TIERS.find(([prefix]) => model.startsWith(prefix))?.[1] || null;
+}
+
+/**
+ * Pick the wire variant for a logical id: the requested effort's tier, or the
+ * highest tier the model has below it. No effort means the lowest tier.
+ */
+function mapAntigravityWireModel(model, effort) {
+  if (TIER_SUFFIX.test(model)) return model;
+  const tiers = tiersOf(model);
+  if (!tiers) return model;
+  const wanted = effort === 'max' || effort === 'xhigh' ? 'xhigh' : effort === 'high' ? 'high' : effort === 'medium' ? 'medium' : 'low';
+  const rank = EFFORT_TIERS.indexOf(wanted);
+  const tier = [...tiers].reverse().find((candidate) => EFFORT_TIERS.indexOf(candidate) <= rank) || tiers[0];
+  return `${model}-${tier}`;
 }
 
 function buildEnvelope(req, ctx, project) {
@@ -396,22 +420,27 @@ async function fetchAvailableModels(endpoints, headers, doFetch, signal) {
   throw new Error(`Antigravity fetchAvailableModels failed (HTTP ${lastStatus || 'network'})`);
 }
 
-/** Strip wire-model suffixes and denylisted entries from the discovery map. */
+/**
+ * Collapse `-low`/`-medium`/`-high`/`-xhigh` variants into one logical id
+ * (remembering which tiers exist for request mapping) and drop denylisted,
+ * disabled, internal and image entries.
+ */
 function toDiscoveredModels(data) {
   const modelsMap = data?.models && typeof data.models === 'object' ? data.models : {};
   const imageIds = new Set(Array.isArray(data?.imageGenerationModelIds) ? data.imageGenerationModelIds : []);
-  const seen = new Set();
-  const out = [];
+  const byId = new Map();
+  const tiers = new Map();
   for (const [id, meta] of Object.entries(modelsMap)) {
     if (!id || DISCOVERY_DENYLIST.has(id) || imageIds.has(id)) continue;
     if (meta?.disabled || meta?.isInternal || id.startsWith('tab_') || id.startsWith('chat_')) continue;
-    const logicalId = id.replace(/-(?:minimal|extra-low|low|medium|high|tiered|thinking)$/, '');
-    if (seen.has(logicalId)) continue;
-    seen.add(logicalId);
+    const logicalId = id.replace(TIER_SUFFIX, '');
+    const tier = /-(low|medium|high|xhigh)$/.exec(id)?.[1];
+    if (tier && logicalId !== id) tiers.set(logicalId, [...(tiers.get(logicalId) || []), tier]);
+    if (byId.has(logicalId)) continue;
     const name = typeof meta?.displayName === 'string' && meta.displayName
-      ? meta.displayName.replace(/\s*\((?:minimal|low|medium|high|tiered|thinking)\)$/i, '')
+      ? meta.displayName.replace(/\s*\((?:minimal|low|medium|high|xhigh|tiered|thinking)\)$/i, '')
       : logicalId;
-    out.push({
+    byId.set(logicalId, {
       id: logicalId,
       name,
       contextWindow: Number(meta?.maxTokens) || 200_000,
@@ -420,7 +449,15 @@ function toDiscoveredModels(data) {
       input: meta?.supportsImages ? ['text', 'image'] : ['text'],
     });
   }
-  return out;
+  for (const [logicalId, found] of tiers) {
+    // A roster that also serves the bare id takes it as-is.
+    if (Object.hasOwn(modelsMap, logicalId)) continue;
+    const ordered = EFFORT_TIERS.filter((tier) => found.includes(tier));
+    discoveredTiers.set(logicalId, ordered);
+    const model = byId.get(logicalId);
+    if (model) model.efforts = ordered;
+  }
+  return [...byId.values()];
 }
 
 export async function listModels(ctx) {
