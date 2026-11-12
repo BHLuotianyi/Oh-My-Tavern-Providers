@@ -117,6 +117,7 @@ export const MAINSTREAM_PROVIDERS = Object.freeze(new Set([
     'commandcode', 'opencode-go', 'opencode-zen',
     // Coding subscriptions.
     'github-copilot', 'cursor', 'gitlab-duo', 'gitlab-duo-agent',
+    'volcengine-coding-plan', 'volcengine-agent-plan',
     // Major clouds.
     'amazon-bedrock', 'azure',
     // Local runtimes.

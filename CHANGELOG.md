@@ -1,5 +1,12 @@
 # 更新日志
 
+## 未发布
+
+### 新增
+
+- **火山方舟 Coding Plan / Agent Plan**：新增两个服务商（`/api/coding/v3`、`/api/plan/v3`），内置官方文档列出的模型和 `ark-code-latest`。方舟规定套餐只能在 AI 编程 / Agent 工具中使用，在 SillyTavern 中使用可能导致订阅停用或封号；登录行上会显示这条警告。
+- **只发送 max_tokens 开关**：上面两个服务商的登录行新增此开关，默认开启。请求同时带 `max_tokens` 和 `max_completion_tokens` 时（如 MVU 额外模型解析），网关去掉 `max_completion_tokens`，避免方舟返回 400 "cannot be set at the same time"。其他服务商的请求不受影响。
+
 ## 2.2.1
 
 ### 新增

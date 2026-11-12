@@ -126020,6 +126020,428 @@
       "gatewayAdapter": "openai",
       "models": []
     },
+    "volcengine-agent-plan": {
+      "id": "volcengine-agent-plan",
+      "label": "Volcengine Ark Agent Plan",
+      "api": "openai-completions",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+      "envVars": [
+        "ARK_API_KEY"
+      ],
+      "authKind": "api-key",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultModel": "ark-code-latest",
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "singleMaxTokens": true,
+      "models": [
+        {
+          "id": "ark-code-latest",
+          "name": "Ark Code Latest (model picked in console)",
+          "contextWindow": 256000,
+          "maxTokens": 32000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "doubao-seed-evolving",
+          "name": "Doubao Seed Evolving",
+          "contextWindow": 1024000,
+          "maxTokens": 256000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "doubao-seed-2.1-pro",
+          "name": "Doubao Seed 2.1 Pro",
+          "contextWindow": 1024000,
+          "maxTokens": 256000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "doubao-seed-2.1-lite",
+          "name": "Doubao Seed 2.1 Lite",
+          "contextWindow": 1024000,
+          "maxTokens": 256000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "doubao-seed-2.0-mini",
+          "name": "Doubao Seed 2.0 Mini",
+          "contextWindow": 256000,
+          "maxTokens": 128000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "glm-5.3",
+          "name": "GLM-5.3",
+          "contextWindow": 1024000,
+          "maxTokens": 128000,
+          "input": [
+            "text"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "glm-latest",
+          "name": "GLM Latest (GLM-5.3)",
+          "contextWindow": 1024000,
+          "maxTokens": 128000,
+          "input": [
+            "text"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "glm-5.3-flash",
+          "name": "GLM-5.3 Flash",
+          "contextWindow": 1024000,
+          "maxTokens": 128000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "deepseek-v4.1-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "contextWindow": 1024000,
+          "maxTokens": 384000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "deepseek-v4.1-flash-economy",
+          "name": "DeepSeek V4.1 Flash Economy",
+          "contextWindow": 1024000,
+          "maxTokens": 384000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "contextWindow": 1024000,
+          "maxTokens": 384000,
+          "input": [
+            "text"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "contextWindow": 1024000,
+          "maxTokens": 384000,
+          "input": [
+            "text"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "kimi-k2.8-preview",
+          "name": "Kimi K2.8 Preview",
+          "contextWindow": 1024000,
+          "maxTokens": 1024000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "kimi-k3.1-pro",
+          "name": "Kimi K3.1 Pro",
+          "contextWindow": 1024000,
+          "maxTokens": 1024000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        }
+      ]
+    },
+    "volcengine-coding-plan": {
+      "id": "volcengine-coding-plan",
+      "label": "Volcengine Ark Coding Plan",
+      "api": "openai-completions",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "envVars": [
+        "ARK_API_KEY"
+      ],
+      "authKind": "api-key",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultModel": "ark-code-latest",
+      "stAdapter": null,
+      "gatewayAdapter": "openai",
+      "singleMaxTokens": true,
+      "models": [
+        {
+          "id": "ark-code-latest",
+          "name": "Ark Code Latest (model picked in console)",
+          "contextWindow": 256000,
+          "maxTokens": 32000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "doubao-seed-evolving",
+          "name": "Doubao Seed Evolving",
+          "contextWindow": 1024000,
+          "maxTokens": 256000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "doubao-seed-2.1-pro",
+          "name": "Doubao Seed 2.1 Pro",
+          "contextWindow": 1024000,
+          "maxTokens": 256000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "doubao-seed-2.1-lite",
+          "name": "Doubao Seed 2.1 Lite",
+          "contextWindow": 1024000,
+          "maxTokens": 256000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "doubao-seed-2.0-mini",
+          "name": "Doubao Seed 2.0 Mini",
+          "contextWindow": 256000,
+          "maxTokens": 128000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "glm-5.3",
+          "name": "GLM-5.3",
+          "contextWindow": 1024000,
+          "maxTokens": 128000,
+          "input": [
+            "text"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "glm-latest",
+          "name": "GLM Latest (GLM-5.3)",
+          "contextWindow": 1024000,
+          "maxTokens": 128000,
+          "input": [
+            "text"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "glm-5.3-flash",
+          "name": "GLM-5.3 Flash",
+          "contextWindow": 1024000,
+          "maxTokens": 128000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "deepseek-v4.1-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "contextWindow": 1024000,
+          "maxTokens": 384000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "deepseek-v4.1-flash-economy",
+          "name": "DeepSeek V4.1 Flash Economy",
+          "contextWindow": 1024000,
+          "maxTokens": 384000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "contextWindow": 1024000,
+          "maxTokens": 384000,
+          "input": [
+            "text"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "contextWindow": 1024000,
+          "maxTokens": 384000,
+          "input": [
+            "text"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "kimi-k2.8-preview",
+          "name": "Kimi K2.8 Preview",
+          "contextWindow": 1024000,
+          "maxTokens": 1024000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        },
+        {
+          "id": "kimi-k3.1-pro",
+          "name": "Kimi K3.1 Pro",
+          "contextWindow": 1024000,
+          "maxTokens": 1024000,
+          "input": [
+            "text",
+            "image"
+          ],
+          "supportsTools": true,
+          "reasoning": true,
+          "efforts": [],
+          "kind": "chat"
+        }
+      ]
+    },
     "wafer-serverless": {
       "id": "wafer-serverless",
       "label": "Wafer Serverless (pay-as-you-go)",
@@ -136574,7 +136996,7 @@
     }
   },
   "stats": {
-    "providers": 104,
-    "models": 5796
+    "providers": 106,
+    "models": 5824
   }
 }

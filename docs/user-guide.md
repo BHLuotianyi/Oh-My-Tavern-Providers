@@ -70,6 +70,11 @@ OMTP 按以下顺序查找凭据：OMTP 自己保存的凭据 → SillyTavern �
 
 部分服务商（如 opencode）在登录行上有 **将 User-Agent 伪装为 opencode 客户端** 开关，默认开启；关闭后网关转发 SillyTavern 自己的 User-Agent。
 
+火山方舟 Coding Plan 和 Agent Plan 的登录行上有 **只发送 max_tokens** 开关，默认开启：请求同时带 `max_tokens` 和 `max_completion_tokens` 时（如 MVU 额外模型解析），网关去掉 `max_completion_tokens`，否则方舟会以 400 拒绝。
+
+> [!WARNING]
+> 火山方舟规定这两个套餐只能在 AI 编程 / Agent 工具中使用。在 SillyTavern 中使用套餐的 Base URL 和 API Key 可能被识别为滥用，导致订阅停用或账号封禁。
+
 ### 自定义服务商
 
 **登录** 标签页底部的 **添加自定义服务商** 可以接入任意 OpenAI 兼容或其他受支持协议的接口：填写 ID、名称、适配器、Base URL、模型列表和密钥。自定义服务商会出现在面板和网关的模型列表中。

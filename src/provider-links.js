@@ -39,6 +39,8 @@ const API_KEY_URLS = Object.freeze({
     'together': 'https://api.together.xyz/settings/api-keys',
     'venice': 'https://venice.ai/settings/api',
     'vercel-ai-gateway': 'https://vercel.com/dashboard/ai-gateway',
+    'volcengine-agent-plan': 'https://ark.volcengine.com/region:cn-beijing/apikey',
+    'volcengine-coding-plan': 'https://ark.volcengine.com/region:cn-beijing/apikey',
     'xai': 'https://console.x.ai/',
     'zai': 'https://z.ai/manage-apikey/apikey-list',
 });

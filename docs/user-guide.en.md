@@ -70,6 +70,11 @@ OMTP looks for credentials in this order: credentials saved by OMTP → keys sav
 
 Some providers (such as opencode) have a **Disguise User-Agent as the opencode client** switch on their row, on by default. When it is off, the gateway forwards SillyTavern's own User-Agent.
 
+Volcengine Ark Coding Plan and Agent Plan have a **Send only max_tokens** switch on their row, on by default: when a request carries both `max_tokens` and `max_completion_tokens` (MVU's extra-model parsing does), the gateway drops `max_completion_tokens`, which Ark otherwise rejects with a 400.
+
+> [!WARNING]
+> Volcengine only allows these plans in AI coding / agent tools. Using a plan's Base URL and API key from SillyTavern may be treated as abuse and get the subscription suspended or the account banned.
+
 ### Custom providers
 
 **Add custom provider** at the bottom of the **Sign-in** tab connects any endpoint that speaks a supported protocol, OpenAI-compatible or otherwise: enter an id, label, adapter, base URL, model list and key. Custom providers appear in the panel and in the gateway's model list.

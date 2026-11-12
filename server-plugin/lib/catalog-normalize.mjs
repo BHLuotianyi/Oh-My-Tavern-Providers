@@ -231,6 +231,30 @@ function normalizeProvider(providerId, rule, rawModels, context) {
     };
 }
 
+/**
+ * Build a provider OMP does not ship from its provider-map definition.
+ * @param {string} providerId
+ * @param {any} source `omtpProviders[providerId]` from the provider map
+ * @returns {any}
+ */
+function normalizeOmtpProvider(providerId, source) {
+    const models = normalizeModels(Array.isArray(source.models) ? source.models : []);
+    return {
+        id: providerId,
+        label: source.label || titleCase(providerId),
+        api: source.api,
+        baseUrl: source.baseUrl || '',
+        envVars: Array.isArray(source.envVars) ? source.envVars : [],
+        authKind: 'api-key',
+        authKinds: ['api-key'],
+        defaultModel: source.defaultModel || models[0]?.id || '',
+        stAdapter: source.stAdapter ?? null,
+        gatewayAdapter: source.gatewayAdapter,
+        ...(source.singleMaxTokens === true ? { singleMaxTokens: true } : {}),
+        models,
+    };
+}
+
 export function normalizeCatalog(compactOrPlainModels, rules, providerMap, { generatedAt = new Date().toISOString() } = {}) {
     const models = decodeOmpModels(compactOrPlainModels);
     if (!models || typeof models !== 'object' || Array.isArray(models)) {
@@ -243,6 +267,7 @@ export function normalizeCatalog(compactOrPlainModels, rules, providerMap, { gen
         exceptions: providerMap?.exceptions || {},
         remainingGatewayAdapter: providerMap?.remainingGatewayAdapter ?? 'openai',
     };
+    const omtpProviders = providerMap?.omtpProviders || {};
     const providers = {};
     let modelCount = 0;
 
@@ -254,9 +279,17 @@ export function normalizeCatalog(compactOrPlainModels, rules, providerMap, { gen
         ...Object.keys(rules.providers || {}),
         ...(Array.isArray(rules.auth?.providers) ? rules.auth.providers.map((entry) => entry.id) : []),
     ]);
+    for (const providerId of Object.keys(omtpProviders)) {
+        if (providerIds.has(providerId)) {
+            throw new Error(`${providerId} now ships with OMP; remove it from omtpProviders`);
+        }
+        providerIds.add(providerId);
+    }
 
     for (const providerId of [...providerIds].sort()) {
-        const provider = normalizeProvider(providerId, rules.providers?.[providerId] || {}, models[providerId], context);
+        const provider = omtpProviders[providerId]
+            ? normalizeOmtpProvider(providerId, omtpProviders[providerId])
+            : normalizeProvider(providerId, rules.providers?.[providerId] || {}, models[providerId], context);
         providers[providerId] = provider;
         modelCount += provider.models.length;
     }
@@ -271,7 +304,7 @@ export function normalizeCatalog(compactOrPlainModels, rules, providerMap, { gen
     };
 }
 
-export const CATALOG_EXPECTATIONS = Object.freeze({ providers: 104, minModels: 5700 });
+export const CATALOG_EXPECTATIONS = Object.freeze({ providers: 106, minModels: 5700 });
 
 export function validateCatalog(catalog, { expectedProviders = CATALOG_EXPECTATIONS.providers, minModels = CATALOG_EXPECTATIONS.minModels, adapterKeys } = {}) {
     const errors = [];

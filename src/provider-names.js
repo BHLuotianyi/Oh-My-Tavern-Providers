@@ -14,6 +14,8 @@ const ZH_NAMES = Object.freeze({
     'zhipu-coding-plan': '智谱（编码套餐）',
     zai: '智谱国际版（GLM 编码套餐）',
     'zai-coding-plan': '智谱国际版（GLM 编码套餐 · 登录）',
+    'volcengine-coding-plan': '火山方舟 Coding Plan',
+    'volcengine-agent-plan': '火山方舟 Agent Plan',
     xiaomi: '小米 MiMo',
     'xiaomi-token-plan-ams': '小米 Token Plan（欧洲）',
     'xiaomi-token-plan-cn': '小米 Token Plan（中国）',
