@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
 import {
     buildAuthorizeUrl,
@@ -9,12 +10,25 @@ import {
     fillTemplate,
     getSession,
     mapCredential,
+    missingLoginHook,
     parseAuthorizationInput,
     pickLocale,
     policyValue,
     startLogin,
     submitCode,
 } from '../../server-plugin/lib/login-engine.mjs';
+
+async function freePort(host = '127.0.0.1') {
+    const server = http.createServer();
+    await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, host, resolve);
+    });
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    await new Promise((resolve) => server.close(resolve));
+    return port;
+}
 
 const anthropicPolicy = {
     kind: 'oauth-code',
@@ -146,7 +160,7 @@ test('only ported custom hooks are advertised as runnable', () => {
 test('startLogin refuses custom hooks we do not implement', async () => {
     await assert.rejects(
         startLogin('github-copilot', { kind: 'custom', hook: 'github-copilot' }, { keyStore: {} }),
-        /needs provider-specific code/,
+        /This login needs a provider hook OMTP does not ship: github-copilot/,
     );
 });
 
@@ -315,9 +329,7 @@ test('oauth-code exchange sends the locally resolved client id', async () => {
         ...anthropicPolicy,
         clientId: { value: '', env: ['OMTP_ANTHROPIC_CLIENT_ID'] },
         token: { url: { value: 'https://api.anthropic.com/v1/oauth/token' }, body: 'json', standard: true },
-        // A random high port keeps parallel test files from colliding; a busy
-        // port only falls back to the manual paste path.
-        callback: { port: 50_000 + Math.floor(Math.random() * 10_000), path: '/callback' },
+        callback: { port: await freePort(), path: '/callback' },
     };
     const started = await startLogin('anthropic', policy, {
         keyStore: {
@@ -391,7 +403,7 @@ test('the session state reaches a {state} token parameter for every paste form',
 });
 
 test('callback reports the real exchange result and stays retryable', async () => {
-    const port = 51_000 + Math.floor(Math.random() * 8_000);
+    const port = await freePort();
     let attempts = 0;
     // First exchange fails the way a proxy-blocked machine fails; the retry works.
     const doFetch = async () => {
@@ -432,7 +444,7 @@ test('callback reports the real exchange result and stays retryable', async () =
 });
 
 test('a stateless policy completes through the loopback callback', async () => {
-    const port = 51_000 + Math.floor(Math.random() * 8_000);
+    const port = await freePort();
     const stored = {};
     const started = await startLogin('openrouter', { ...openrouterPolicy, callback: { hostname: '127.0.0.1', port, path: '/callback' } }, {
         keyStore: { async setProviderConfig(target, patch) { stored[target] = patch; } },
@@ -451,7 +463,7 @@ test('a stateless policy completes through the loopback callback', async () => {
 });
 
 test('foreign and duplicate callbacks cannot spoil a pending sign-in', async () => {
-    const port = 51_000 + Math.floor(Math.random() * 8_000);
+    const port = await freePort();
     let exchanges = 0;
     /** @type {(value?: unknown) => void} */
     let release = () => {};
@@ -511,7 +523,7 @@ test('sweep aborts a background device poll', async () => {
 });
 
 test('a declared loopback redirect URI is advertised verbatim and bound', async () => {
-    const port = 52_000 + Math.floor(Math.random() * 8_000);
+    const port = await freePort();
     const redirectUri = `http://127.0.0.1:${port}/custom/callback`;
     const stored = {};
     const policy = {
@@ -582,7 +594,7 @@ test('a non-http redirect URI starts no listener and asks for a pasted code', as
 });
 
 test('manualOnly policies never bind the callback port', async () => {
-    const port = 54_000 + Math.floor(Math.random() * 5_000);
+    const port = await freePort();
     const policy = {
         ...anthropicPolicy,
         clientId: { value: 'client-id' },
@@ -603,9 +615,9 @@ test('manualOnly policies never bind the callback port', async () => {
 });
 
 test('a busy callback port degrades to manual paste instead of a dead redirect', async () => {
-    const port = 55_000 + Math.floor(Math.random() * 4_500);
     const blocker = http.createServer((req, res) => res.end('blocked'));
-    await new Promise((resolve) => blocker.listen(port, '127.0.0.1', resolve));
+    await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+    const port = blocker.address().port;
     const stored = {};
     const policy = {
         ...anthropicPolicy,
@@ -716,7 +728,7 @@ test('zai-mint-key stores the durable key minted after the exchange', async () =
 });
 
 test('an unknown after-exchange hook leaves the login successful', async () => {
-    const port = 56_000 + Math.floor(Math.random() * 3_000);
+    const port = await freePort();
     const stored = {};
     const policy = {
         ...anthropicPolicy,
@@ -736,5 +748,146 @@ test('an unknown after-exchange hook leaves the login successful', async () => {
         assert.equal(JSON.parse(stored.anthropic.apiKey).access, 'access');
     } finally {
         cancelLogin(started.id);
+    }
+});
+
+test('missingLoginHook detects hook-backed URLs in xai-oauth catalog policy and startLogin rejects it', async () => {
+    const catalog = JSON.parse(fs.readFileSync(new URL('../../server-plugin/catalog/omtp-catalog.json', import.meta.url), 'utf8'));
+    const xaiPolicy = catalog.providers['xai-oauth']?.authLogin;
+    assert.ok(xaiPolicy);
+    assert.equal(missingLoginHook(xaiPolicy), 'xai-token-endpoint');
+    assert.equal(missingLoginHook(catalog.providers.anthropic?.authLogin), null);
+    assert.equal(missingLoginHook(catalog.providers['kimi-code']?.authLogin), null);
+    assert.equal(missingLoginHook(catalog.providers['openai-codex-device']?.authLogin), null);
+    assert.equal(missingLoginHook(catalog.providers.kilo?.authLogin), null);
+    assert.equal(missingLoginHook(catalog.providers['github-copilot']?.authLogin), 'github-copilot');
+
+    await assert.rejects(
+        startLogin('xai-oauth', xaiPolicy, { keyStore: {} }),
+        /This login needs a provider hook OMTP does not ship: xai-token-endpoint/,
+    );
+});
+
+test('device-code polling survives one transient fetch rejection and completes', async () => {
+    const stored = {};
+    let tokenPolls = 0;
+    const doFetch = async (url) => {
+        const href = String(url);
+        if (href.endsWith('/device_authorization')) {
+            return new Response(JSON.stringify({
+                device_code: 'dev-1',
+                user_code: 'ABCD-1234',
+                verification_uri: 'https://auth.example.test/device',
+                interval: 1,
+                expires_in: 60,
+            }), { status: 200 });
+        }
+        if (href.endsWith('/token')) {
+            tokenPolls += 1;
+            if (tokenPolls === 1) throw new TypeError('fetch failed');
+            return new Response(JSON.stringify({
+                access_token: 'ok-access',
+                refresh_token: 'ok-refresh',
+                expires_in: 3600,
+            }), { status: 200 });
+        }
+        throw new Error(`unexpected ${href}`);
+    };
+    const policy = {
+        kind: 'device-code',
+        clientId: { value: 'test-client' },
+        device: { url: { value: 'https://auth.example.test/device_authorization' }, body: 'form', standard: true },
+        token: { url: { value: 'https://auth.example.test/token' }, body: 'form', standard: true },
+        credential: { access: { path: 'access_token' }, refresh: { path: 'refresh_token' } },
+    };
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn) => realSetTimeout(fn, 0);
+    try {
+        const started = await startLogin('test-device', policy, {
+            keyStore: { async setProviderConfig(target, patch) { stored[target] = patch; } },
+            doFetch,
+            env: {},
+        });
+        const session = getSession(started.id);
+        await session.promise;
+        assert.equal(session.status, 'done');
+        assert.equal(tokenPolls, 2);
+        assert.equal(JSON.parse(stored['test-device'].apiKey).access, 'ok-access');
+        cancelLogin(started.id);
+    } finally {
+        globalThis.setTimeout = realSetTimeout;
+    }
+});
+
+test('exchangeCode resolves token.url env overrides and {auth} templates', async () => {
+    const calls = [];
+    const policy = {
+        kind: 'oauth-code',
+        pkce: true,
+        state: 'hex',
+        standardAuthorizeParams: true,
+        clientId: { value: 'omp' },
+        authUrl: { value: 'https://auth.example.test', env: ['TEST_AUTH_URL'] },
+        authorizeUrl: { value: '{auth}/oauth/authorize' },
+        callback: { port: 0, path: '/callback', hostname: '127.0.0.1', manualOnly: true },
+        token: { url: { value: '{auth}/oauth/token', env: ['TEST_TOKEN_URL'] }, body: 'form', standard: true },
+        credential: { access: { path: 'access_token' } },
+    };
+    const started = await startLogin('stencil', policy, {
+        keyStore: { async setProviderConfig() {} },
+        env: { TEST_AUTH_URL: 'https://custom-auth.example.test', TEST_TOKEN_URL: 'https://override-token.example.test/tok' },
+        doFetch: async (url) => {
+            calls.push(String(url));
+            return new Response(JSON.stringify({ access_token: 'ok' }), { status: 200 });
+        },
+    });
+    try {
+        assert.match(started.url, /^https:\/\/custom-auth\.example\.test\/oauth\/authorize\?/);
+        await submitCode(started.id, 'code-1');
+        assert.deepEqual(calls, ['https://override-token.example.test/tok']);
+    } finally {
+        cancelLogin(started.id);
+    }
+});
+
+test('openai-codex-device survives one transient fetch rejection during polling', async () => {
+    let pollCalls = 0;
+    const stored = {};
+    const jwtPayload = Buffer.from(JSON.stringify({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-retry' },
+        'https://api.openai.com/profile': { email: 'retry@example.com' },
+    })).toString('base64url');
+    const fakeJwt = `e30.${jwtPayload}.sig`;
+    const doFetch = async (url) => {
+        const href = String(url);
+        if (href.endsWith('/usercode')) {
+            return new Response(JSON.stringify({ device_auth_id: 'dev-1', user_code: 'ABCD-1234', interval: 0 }), { status: 200 });
+        }
+        if (href.endsWith('/deviceauth/token')) {
+            pollCalls += 1;
+            if (pollCalls === 1) throw new TypeError('fetch failed');
+            return new Response(JSON.stringify({ authorization_code: 'code-retry', code_verifier: 'ver-retry' }), { status: 200 });
+        }
+        if (href.endsWith('/oauth/token')) {
+            return new Response(JSON.stringify({ access_token: fakeJwt, refresh_token: 'ref-retry', expires_in: 3600 }), { status: 200 });
+        }
+        throw new Error(`unexpected ${href}`);
+    };
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn) => realSetTimeout(fn, 0);
+    try {
+        const started = await startLogin('openai-codex', { kind: 'custom', hook: 'openai-codex-device' }, {
+            keyStore: { async setProviderConfig(target, patch) { stored[target] = patch; } },
+            doFetch,
+            env: { OMTP_OPENAI_CODEX_CLIENT_ID: 'codex-client' },
+        });
+        const session = getSession(started.id);
+        await session.promise;
+        assert.equal(session.status, 'done');
+        assert.equal(pollCalls, 2);
+        assert.equal(JSON.parse(stored['openai-codex'].apiKey).accountId, 'acct-retry');
+        cancelLogin(started.id);
+    } finally {
+        globalThis.setTimeout = realSetTimeout;
     }
 });

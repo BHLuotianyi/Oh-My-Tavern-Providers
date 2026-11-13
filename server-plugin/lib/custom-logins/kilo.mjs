@@ -41,13 +41,39 @@ export async function startKilo({ doFetch = fetch, signal } = {}) {
         async waitForCompletion({ signal: inner } = {}) {
             const cancel = inner || signal;
             const deadline = Date.now() + expiresIn * 1000;
+            const waitPoll = () => new Promise((resolve) => {
+                if (cancel?.aborted) {
+                    resolve();
+                    return;
+                }
+                const onAbort = () => {
+                    clearTimeout(timer);
+                    resolve();
+                };
+                const timer = setTimeout(() => {
+                    cancel?.removeEventListener?.('abort', onAbort);
+                    resolve();
+                }, POLL_INTERVAL_MS);
+                timer.unref?.();
+                cancel?.addEventListener?.('abort', onAbort, { once: true });
+            });
             while (Date.now() < deadline) {
                 if (cancel?.aborted) throw new Error('Login canceled');
-                const response = await doFetch(`${BASE_URL}/codes/${encodeURIComponent(userCode)}`, {
-                    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-                });
+                const reqSignal = cancel
+                    ? AbortSignal.any([cancel, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+                    : AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+                let response;
+                try {
+                    response = await doFetch(`${BASE_URL}/codes/${encodeURIComponent(userCode)}`, {
+                        signal: reqSignal,
+                    });
+                } catch {
+                    if (cancel?.aborted) throw new Error('Login canceled');
+                    await waitPoll();
+                    continue;
+                }
                 if (response.status === 202) {
-                    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+                    await waitPoll();
                     continue;
                 }
                 if (response.status === 403) throw new Error('Authorization was denied');
@@ -61,7 +87,7 @@ export async function startKilo({ doFetch = fetch, signal } = {}) {
                 }
                 if (data?.status === 'denied') throw new Error('Authorization was denied');
                 if (data?.status === 'expired') throw new Error('Authorization code expired — try again');
-                await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+                await waitPoll();
             }
             throw new Error('Authentication timed out');
         },

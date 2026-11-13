@@ -19,22 +19,26 @@
  * and are imported below; everything else is reported as `loginNeedsHook` and
  * can still be imported from OMP.
  */
-import http from 'node:http';
 import crypto from 'node:crypto';
-import { logError } from './redact.mjs';
+import { clearTimeout as clearExpiryTimer, setTimeout as setExpiryTimer } from 'node:timers';
 import { applyAfterExchange } from './after-exchange.mjs';
-import { HOOKS as CODEX_HOOKS } from './custom-logins/openai-codex-device.mjs';
+import { listenForCode, resolveCallbackOptions } from './callback-listener.mjs';
+import { pickLocale } from './callback-page.mjs';
 import { HOOKS as KILO_HOOKS } from './custom-logins/kilo.mjs';
+import { headerHookSupported } from './custom-logins/kimi-fingerprint.mjs';
+import { HOOKS as CODEX_HOOKS } from './custom-logins/openai-codex-device.mjs';
 import { policyValue } from './oauth-clients.mjs';
 import { describeFetchFailure } from './proxy-fetch.mjs';
 
 /** Policy-value resolution lives with the credential helpers. */
-export { policyValue };
+export { policyValue, pickLocale, resolveCallbackOptions };
 
 /** Sessions live for this long before they are garbage-collected. */
 const SESSION_TTL_MS = 10 * 60_000;
 /** Device-code polling safety margin (seconds added to the server interval). */
 const DEVICE_POLL_SLACK_S = 1;
+/** Default token-endpoint request timeout. */
+const TOKEN_REQUEST_TIMEOUT_MS = 20_000;
 
 /** @type {Map<string, any>} */
 const sessions = new Map();
@@ -58,111 +62,37 @@ export function customHookSupported(hook) {
 }
 
 /**
- * Strings for the loopback callback page. The browser opens it directly, so
- * the locale comes from the client that started the session (falling back to
- * `Accept-Language`), never from the server's own settings.
+ * Return the name of a provider hook that `policy` needs to run a login flow
+ * but OMTP does not ship (hook-backed URL/field with no literal fallback,
+ * unsupported `headersHook`, or unsupported `custom` hook), else `null`.
+ *
+ * @param {any} policy compiled `provider.authLogin`
+ * @returns {string|null}
  */
-const CALLBACK_TEXT = {
-    en: {
-        title: 'OMTP sign-in',
-        done: 'Login complete. You can close this tab and return to SillyTavern.',
-        failed: 'Login failed. You can close this tab and start again from SillyTavern.',
-        missing: 'The provider did not return an authorization code.',
-        mismatch: 'This callback does not belong to the current sign-in; SillyTavern is still waiting for it.',
-        manual: 'If SillyTavern did not switch to signed in by itself, copy the address below, paste it into the input box in SillyTavern and click Submit.',
-        copy: 'Copy',
-        copied: 'Copied',
-    },
-    'zh-cn': {
-        title: 'OMTP 登录',
-        done: '登录成功，可以关闭此页面并返回 SillyTavern。',
-        failed: '登录失败，可以关闭此页面并在 SillyTavern 中重试。',
-        missing: '服务商没有返回授权码。',
-        mismatch: '此回调不属于当前登录请求，SillyTavern 仍在等待登录完成。',
-        manual: '如果此时酒馆页面没有自动成功，请复制以下内容到输入框并点击提交。',
-        copy: '复制',
-        copied: '已复制',
-    },
-};
-
-/**
- * Pick the closest supported locale.
- * @param {string|undefined} requested
- * @param {string|undefined} acceptLanguage
- * @returns {'en'|'zh-cn'}
- */
-export function pickLocale(requested, acceptLanguage) {
-    const candidates = [];
-    if (requested) candidates.push(String(requested).toLowerCase());
-    for (const part of String(acceptLanguage || '').toLowerCase().split(',')) {
-        const tag = part.split(';')[0].trim();
-        if (tag) candidates.push(tag);
+export function missingLoginHook(policy) {
+    if (!policy || typeof policy !== 'object') return null;
+    if (policy.kind === 'custom') {
+        return customHookSupported(policy.hook) ? null : String(policy.hook || 'custom');
     }
-    for (const tag of candidates) {
-        if (tag.startsWith('zh')) return 'zh-cn';
-        if (tag.startsWith('en')) return 'en';
+    if (policy.headersHook && !headerHookSupported(policy.headersHook)) {
+        return String(policy.headersHook);
     }
-    return 'en';
-}
-
-/**
- * @param {string} value
- * @returns {string}
- */
-function escapeHtml(value) {
-    return String(value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
-
-/**
- * Minimal standalone page for the callback.
- * @param {'done'|'failed'|'missing'|'mismatch'} outcome
- * @param {string} locale
- * @param {string} [requestUrl] full callback URL, for the manual paste fallback
- */
-function callbackPage(outcome, locale, requestUrl = '') {
-    const text = CALLBACK_TEXT[locale] || CALLBACK_TEXT.en;
-    const message = text[outcome];
-    const accent = outcome === 'done' ? '#3ba55d' : '#e05252';
-    const manual = requestUrl ? `
-<p class="hint">${text.manual}</p>
-<input id="cb-url" readonly value="${escapeHtml(requestUrl)}" spellcheck="false">
-<button id="cb-copy" type="button">${text.copy}</button>
-<script>
-document.getElementById('cb-copy').addEventListener('click', async () => {
-    const field = document.getElementById('cb-url');
-    field.select();
-    try { await navigator.clipboard.writeText(field.value); } catch { document.execCommand('copy'); }
-    const button = document.getElementById('cb-copy');
-    button.textContent = ${JSON.stringify(text.copied)};
-});
-</script>` : '';
-    return `<!doctype html>
-<html lang="${locale}">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${text.title}</title>
-<style>
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#15141b;color:#e6e6ef;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-.card{max-width:26rem;padding:2rem 2.25rem;border:1px solid #2c2b38;border-radius:14px;background:#1c1b24;box-shadow:0 12px 32px rgba(0,0,0,.35)}
-.badge{display:inline-block;padding:.15rem .55rem;border-radius:999px;font-size:.75rem;letter-spacing:.04em;text-transform:uppercase;color:${accent};border:1px solid ${accent}}
-p{margin:1rem 0 0}
-.hint{margin:1.25rem 0 .5rem;font-size:.9rem;color:#b9b8c6}
-input{width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #3a3948;border-radius:8px;background:#12111a;color:#e6e6ef;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
-button{margin-top:.6rem;padding:.45rem .9rem;border:1px solid #3a3948;border-radius:8px;background:#262533;color:#e6e6ef;font:inherit;font-size:.85rem;cursor:pointer}
-</style>
-</head>
-<body>
-<div class="card">
-<div class="badge">OMTP</div>
-<p>${message}</p>${manual}
-</div>
-</body>
-</html>`;
+    const fields = [
+        policy.authorizeUrl,
+        policy.device?.url,
+        policy.token?.url,
+        policy.baseUrl,
+        policy.authUrl,
+        policy.clientId,
+        policy.clientSecret,
+        policy.callback?.redirectUri,
+    ];
+    for (const field of fields) {
+        if (field && typeof field === 'object' && field.hook && !field.fallback) {
+            return String(field.hook);
+        }
+    }
+    return null;
 }
 
 const b64url = (buffer) => Buffer.from(buffer).toString('base64url');
@@ -172,6 +102,25 @@ export function fillTemplate(text, vars) {
     return String(text).replace(/\{([a-z_]+)\}/gi, (match, name) => (
         Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name] ?? '') : match
     ));
+}
+
+/**
+ * Resolve a policy URL field and substitute `{base}` / `{auth}` placeholders
+ * from the compiled policy's `baseUrl` / `authUrl` fields.
+ * @param {any} field
+ * @param {any} login
+ * @param {Record<string,string|undefined>} [env]
+ * @returns {string}
+ */
+export function resolvePolicyUrl(field, login, env = process.env) {
+    const raw = policyValue(field, env);
+    if (!raw) return '';
+    const vars = {};
+    const base = policyValue(login?.baseUrl, env);
+    if (base) vars.base = base;
+    const auth = policyValue(login?.authUrl, env);
+    if (auth) vars.auth = auth;
+    return fillTemplate(raw, vars);
 }
 
 /**
@@ -197,7 +146,7 @@ function createState() {
  * @returns {string}
  */
 export function buildAuthorizeUrl(login, { state, challenge, redirectUri, env = process.env }) {
-    const base = policyValue(login?.authorizeUrl, env);
+    const base = resolvePolicyUrl(login?.authorizeUrl, login, env);
     if (!base) {
         throw new Error('This provider has no authorize URL');
     }
@@ -308,7 +257,7 @@ function readPath(source, path) {
  *
  * @param {object} credential policy `login.credential`
  * @param {any} token token endpoint JSON
- * @param {{provider?: string, now?: number}} [options]
+ * @param {{provider?: string, now?: number, result?: string}} [options]
  * @returns {{type: string, access: string, refresh?: string, expires?: number, [k: string]: any}}
  */
 export function mapCredential(credential, token, { provider = '', now = Date.now(), result = '' } = {}) {
@@ -418,9 +367,12 @@ function describeTokenError(status, json, text) {
  * @param {'json'|'form'} mode
  * @param {Record<string,string>} headers
  * @param {typeof fetch} doFetch
+ * @param {{signal?: AbortSignal, timeoutMs?: number, label?: string}} [options]
  */
-async function postToken(url, body, mode, headers, doFetch) {
-    const init = { method: 'POST', headers: { Accept: 'application/json', ...headers } };
+export async function postToken(url, body, mode, headers, doFetch, { signal, timeoutMs = TOKEN_REQUEST_TIMEOUT_MS, label = 'Token exchange' } = {}) {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const reqSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    const init = { method: 'POST', headers: { Accept: 'application/json', ...headers }, signal: reqSignal };
     if (mode === 'form') {
         init.headers['Content-Type'] = 'application/x-www-form-urlencoded';
         init.body = new URLSearchParams(body).toString();
@@ -429,14 +381,17 @@ async function postToken(url, body, mode, headers, doFetch) {
         init.body = JSON.stringify(body);
     }
     let response;
+    let text;
     try {
         response = await doFetch(url, init);
+        text = await response.text();
     } catch (error) {
         // Undici reports every network problem as a bare `fetch failed`; show
         // the underlying cause (ECONNREFUSED, ENOTFOUND, proxy refused, …).
-        throw new Error(`Token exchange request failed: ${describeFetchFailure(error)}`);
+        const err = /** @type {Error & {transient?: boolean}} */ (new Error(`${label} request failed: ${describeFetchFailure(error)}`));
+        err.transient = true;
+        throw err;
     }
-    const text = await response.text();
     let json = null;
     try {
         json = JSON.parse(text);
@@ -444,7 +399,7 @@ async function postToken(url, body, mode, headers, doFetch) {
         json = null;
     }
     if (!response.ok) {
-        throw new Error(`Token exchange failed: ${describeTokenError(response.status, json, text)}`);
+        throw new Error(`${label} failed: ${describeTokenError(response.status, json, text)}`);
     }
     return json ?? {};
 }
@@ -453,14 +408,16 @@ async function postToken(url, body, mode, headers, doFetch) {
  * Exchange an authorization code.
  *
  * @param {object} login
- * @param {{code: string, state?: string, verifier?: string, redirectUri: string, provider?: string}} options
+ * @param {{code: string, state?: string, verifier?: string, redirectUri: string, provider?: string, result?: string}} options
  * @returns {Promise<{credential: object, raw: unknown}>} structured credential and the token response body
  */
 async function exchangeCode(login, { code, state = '', verifier, redirectUri, provider = '', result = '' }, doFetch = fetch, env = process.env) {
     const params = { code, grant_type: 'authorization_code' };
     if (login.pkce && verifier) params.code_verifier = verifier;
     const body = tokenRequestBody(login, params, redirectUri, env, state);
-    const token = await postToken(policyValue(login.token?.url), body, login.token?.body || 'json', login.token?.headers || {}, doFetch);
+    const url = resolvePolicyUrl(login.token?.url, login, env);
+    const timeoutMs = Number(login.token?.timeoutMs) || TOKEN_REQUEST_TIMEOUT_MS;
+    const token = await postToken(url, body, login.token?.body || 'json', login.token?.headers || {}, doFetch, { timeoutMs });
     return { credential: mapCredential(login.credential, token, { provider, result }), raw: token };
 }
 
@@ -468,7 +425,7 @@ async function exchangeCode(login, { code, state = '', verifier, redirectUri, pr
  * Start a device authorization grant.
  *
  * @param {object} login
- * @param {{provider?: string, env?: Record<string,string|undefined>}} [options]
+ * @param {{env?: Record<string,string|undefined>}} [options]
  * @returns {Promise<{deviceCode: string, userCode: string, verificationUri: string, verificationUriComplete?: string, interval: number, expiresIn: number}>}
  */
 async function startDeviceAuthorization(login, { env = process.env } = {}, doFetch = fetch) {
@@ -476,13 +433,13 @@ async function startDeviceAuthorization(login, { env = process.env } = {}, doFet
     if (!device?.url) {
         throw new Error('This provider does not expose a device authorization endpoint');
     }
-    const base = policyValue(login.baseUrl, env);
-    const url = policyValue(device.url, env).replace('{base}', base);
+    const url = resolvePolicyUrl(device.url, login, env);
     const body = { client_id: policyValue(login.clientId, env) };
     for (const [key, value] of Object.entries(device.params || {})) {
         body[key] = String(value);
     }
-    const response = await postToken(url, body, device.body || 'form', device.headers || {}, doFetch);
+    const timeoutMs = Number(device.timeoutMs) || TOKEN_REQUEST_TIMEOUT_MS;
+    const response = await postToken(url, body, device.body || 'form', device.headers || {}, doFetch, { timeoutMs });
     const map = login.response || {};
     const deviceCode = readPath(response, map.deviceCode || 'device_code');
     const userCode = readPath(response, map.userCode || 'user_code');
@@ -501,6 +458,31 @@ async function startDeviceAuthorization(login, { env = process.env } = {}, doFet
 }
 
 /**
+ * Sleep for `ms`, resolving early if `signal` aborts. Timer is `.unref()`ed
+ * so an abandoned poll never keeps the process alive.
+ * @param {number} ms
+ * @param {AbortSignal|undefined} signal
+ */
+function sleepPoll(ms, signal) {
+    return new Promise((resolve) => {
+        if (signal?.aborted) {
+            resolve();
+            return;
+        }
+        const onAbort = () => {
+            clearTimeout(timer);
+            resolve();
+        };
+        const timer = setTimeout(() => {
+            signal?.removeEventListener?.('abort', onAbort);
+            resolve();
+        }, ms);
+        timer.unref?.();
+        signal?.addEventListener?.('abort', onAbort, { once: true });
+    });
+}
+
+/**
  * Poll the token endpoint until the device grant completes.
  *
  * @param {object} login
@@ -511,27 +493,34 @@ async function startDeviceAuthorization(login, { env = process.env } = {}, doFet
 async function pollDeviceToken(login, grant, { signal, env = process.env } = {}, doFetch = fetch) {
     const deadline = Date.now() + grant.expiresIn * 1000;
     let interval = Math.max(1, grant.interval) + DEVICE_POLL_SLACK_S;
+    const timeoutMs = Number(login.token?.timeoutMs) || TOKEN_REQUEST_TIMEOUT_MS;
     while (Date.now() < deadline) {
         if (signal?.aborted) {
             throw new Error('Login canceled');
         }
-        await new Promise((resolve) => setTimeout(resolve, interval * 1000));
+        await sleepPoll(interval * 1000, signal);
         if (signal?.aborted) {
             throw new Error('Login canceled');
         }
-        const base = policyValue(login.baseUrl, env);
-        const url = policyValue(login.token?.url, env).replace('{base}', base);
+        const url = resolvePolicyUrl(login.token?.url, login, env);
         const body = tokenRequestBody(login, {
             device_code: grant.deviceCode,
             grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
         }, '', env);
         try {
-            const token = await postToken(url, body, login.token?.body || 'form', login.token?.headers || {}, doFetch);
+            const token = await postToken(url, body, login.token?.body || 'form', login.token?.headers || {}, doFetch, { signal, timeoutMs });
             return {
                 credential: mapCredential(login.credential, token, { provider: grant.provider || '', result: login.result || '' }),
                 raw: token,
             };
         } catch (error) {
+            if (signal?.aborted) {
+                throw new Error('Login canceled');
+            }
+            // Retry transient network failures until the device code expires.
+            if (error?.transient) {
+                continue;
+            }
             const message = String(error?.message || error);
             if (/authorization_pending|slow_down/i.test(message)) {
                 if (/slow_down/i.test(message)) interval += 5;
@@ -547,16 +536,27 @@ async function pollDeviceToken(login, grant, { signal, env = process.env } = {},
 /* Session management                                                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Stop any active listeners/polls for a session and remove it from `sessions`.
+ * @param {string} id
+ * @param {any} session
+ */
+function disposeSession(id, session) {
+    clearExpiryTimer(session.expiryTimer);
+    session.expiryTimer = null;
+    // Device-code/custom sessions poll in the background; aborting only
+    // the oauth-code listener would let an abandoned poll complete and
+    // silently write a credential.
+    session.controller?.abort();
+    session.cancel?.();
+    sessions.delete(id);
+}
+
 function sweep() {
     const now = Date.now();
     for (const [id, session] of sessions) {
         if (now - session.startedAt > SESSION_TTL_MS) {
-            // Device-code/custom sessions poll in the background; aborting only
-            // the oauth-code listener would let an abandoned poll complete and
-            // silently write a credential.
-            session.controller?.abort();
-            session.cancel?.();
-            sessions.delete(id);
+            disposeSession(id, session);
         }
     }
 }
@@ -568,99 +568,16 @@ function sweep() {
 function remember(session) {
     sweep();
     const id = crypto.randomBytes(12).toString('hex');
-    sessions.set(id, { ...session, id, startedAt: Date.now(), status: 'pending' });
-    return sessions.get(id);
-}
-
-/** Hosts that resolve to this machine's loopback interface. */
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
-
-/** Drop the brackets `new URL()` keeps around an IPv6 literal. */
-function bareHostname(host) {
-    return String(host || '').replace(/^\[/, '').replace(/\]$/, '');
-}
-
-/** Format a bare host for use inside a URL (IPv6 literals need brackets). */
-function urlHost(host) {
-    const bare = bareHostname(host);
-    return bare.includes(':') ? `[${bare}]` : bare;
-}
-
-/**
- * Addresses to bind for a loopback callback.
- *
- * `server.listen(port, 'localhost')` binds only the first address
- * `dns.lookup` returns, so on a host whose `/etc/hosts` lists `::1` first the
- * IPv4 loopback is refused. A client that tries the other family — a browser
- * without IPv6, a proxy that dials `127.0.0.1`, a webview — then never
- * delivers the code. Bind every loopback address and keep the first that
- * works.
- *
- * @param {string} hostname
- * @returns {string[]}
- */
-function bindAddresses(hostname) {
-    const host = bareHostname(hostname || 'localhost');
-    return host === 'localhost' ? ['127.0.0.1', '::1'] : [host];
-}
-
-/**
- * Resolve the callback transport for one `oauth-code` policy.
- *
- * The catalog may declare its own redirect URI (`callback.redirectUri`, e.g.
- * GitLab Duo's `GITLAB_REDIRECT_URI` override or Codex's fixed
- * `http://localhost:1455/auth/callback`). A declared URI is advertised
- * verbatim and never moved to another port: the provider validates it against
- * a registered callback, so a random port would be rejected after the user
- * already granted consent.
- *
- * Only an HTTP loopback URI can be served by our listener. A custom scheme
- * (`zcode://`, `vscode://`) belongs to an OS handler this plugin does not
- * install, and a remote HTTP callback never reaches this process, so those
- * flows collect the code by pasting it back instead.
- *
- * @param {any} callback compiled `login.callback`
- * @param {Record<string,string|undefined>} env
- * @returns {{redirectUri:string, baseUrl:string, hostname:string, hosts:string[], port:number, path:string, reason:''|'manual'|'native'|'scheme'|'remote'|'invalid'}}
- */
-export function resolveCallbackOptions(callback = {}, env = process.env) {
-    const hostname = bareHostname(callback.hostname || 'localhost');
-    const path = callback.path || '/callback';
-    const port = Number(callback.port) || 54545;
-    const baseUrl = `http://${urlHost(hostname)}:${port}`;
-    const local = { redirectUri: `${baseUrl}${path}`, baseUrl, hostname, hosts: bindAddresses(hostname), port, path, reason: '' };
-    const declared = String(policyValue(callback.redirectUri, env) || '').trim();
-    if (!declared) {
-        if (callback.nativeScheme) return { ...local, reason: 'native' };
-        return callback.manualOnly ? { ...local, reason: 'manual' } : local;
-    }
-    /** A declared URI this process cannot serve: advertise it, collect the code by paste. */
-    const pasteOnly = (reason) => ({ redirectUri: declared, baseUrl: local.baseUrl, hostname, hosts: [], port, path, reason });
-    let parsed;
-    try {
-        parsed = new URL(declared);
-    } catch {
-        return { ...local, redirectUri: declared, reason: 'invalid' };
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        // `nativeScheme` says the policy expected an OS-registered handler;
-        // spell out that this plugin has none.
-        return pasteOnly(callback.nativeScheme ? 'native' : 'scheme');
-    }
-    if (!LOOPBACK_HOSTS.has(parsed.hostname) || parsed.protocol === 'https:') {
-        return pasteOnly('remote');
-    }
-    return {
-        redirectUri: declared,
-        // The declared origin keeps the provider's host form (including IPv6
-        // brackets), so the paste URL and the page URL stay byte-identical.
-        baseUrl: parsed.origin,
-        hostname: bareHostname(parsed.hostname),
-        hosts: bindAddresses(parsed.hostname),
-        port: parsed.port ? Number.parseInt(parsed.port, 10) : 80,
-        path: parsed.pathname || path,
-        reason: callback.manualOnly ? 'manual' : '',
-    };
+    const entry = { ...session, id, startedAt: Date.now(), status: 'pending', expiryTimer: null };
+    const timer = setExpiryTimer(() => {
+        if (sessions.get(id) === entry && Date.now() - entry.startedAt >= SESSION_TTL_MS) {
+            disposeSession(id, entry);
+        }
+    }, SESSION_TTL_MS);
+    timer.unref?.();
+    entry.expiryTimer = timer;
+    sessions.set(id, entry);
+    return entry;
 }
 
 /**
@@ -733,7 +650,7 @@ async function startOauthCode(providerId, login, { keyStore, env, doFetch, local
     // to this process, so the code arrives through the paste box instead.
     let reason = options.reason;
     if (!reason) {
-        const { servers, error } = await listenForCode(session);
+        const { servers, error } = await listenForCode(session, { sessions, finishWithCode, disposeSession });
         if (servers.length) {
             session.servers = servers;
         } else {
@@ -750,8 +667,7 @@ async function startOauthCode(providerId, login, { keyStore, env, doFetch, local
     } catch (error) {
         // A refused authorize URL (e.g. the client id was never configured)
         // must not leave the listener holding the port for the next attempt.
-        session.cancel?.();
-        sessions.delete(session.id);
+        disposeSession(session.id, session);
         throw error;
     }
     return {
@@ -804,7 +720,7 @@ async function startCustomHook(providerId, login, { keyStore, env, doFetch, loca
     const hookName = String(login.hook || '');
     const hook = CUSTOM_HOOKS.get(hookName);
     if (!hook) {
-        throw new Error(`Login hook "${hookName || 'unknown'}" needs provider-specific code; sign in with omp and import the credential`);
+        throw new Error(`This login needs a provider hook OMTP does not ship: ${hookName || 'unknown'}`);
     }
     const controller = new AbortController();
     const started = await hook({ providerId, login, env, doFetch, signal: controller.signal });
@@ -839,12 +755,16 @@ async function startCustomHook(providerId, login, { keyStore, env, doFetch, loca
  *
  * @param {string} providerId
  * @param {object} login compiled policy (`provider.authLogin`)
- * @param {{keyStore:any, env?: Record<string,string|undefined>, doFetch?: typeof fetch}} deps
+ * @param {{keyStore:any, env?: Record<string,string|undefined>, doFetch?: typeof fetch, locale?: string}} deps
  * @returns {Promise<{id: string, kind: string, url?: string, userCode?: string, redirectUri?: string, manual?: boolean, instructions?: string}>}
  */
 export async function startLogin(providerId, login, { keyStore, env = process.env, doFetch = fetch, locale } = {}) {
     if (!login?.kind) {
         throw new Error('This provider has no login flow');
+    }
+    const missingHook = missingLoginHook(login);
+    if (missingHook) {
+        throw new Error(`This login needs a provider hook OMTP does not ship: ${missingHook}`);
     }
     const uiLocale = pickLocale(locale, '');
     if (login.kind === 'oauth-code') {
@@ -857,192 +777,6 @@ export async function startLogin(providerId, login, { keyStore, env = process.en
         return startCustomHook(providerId, login, { keyStore, env, doFetch, locale: uiLocale });
     }
     throw new Error(`Login kind "${login.kind}" needs provider-specific code; import the session from OMP instead`);
-}
-
-/**
- * Serve one callback request: exchange the code, then report the real outcome
- * on the page. A code-less hit is not the end of the flow — proxy/AV probes and
- * link previewers request the callback path, and closing the listener there
- * would strand the session before the browser arrives. Only a real outcome
- * releases the port.
- * @param {any} session
- * @param {import('node:http').IncomingMessage} req
- * @param {import('node:http').ServerResponse} res
- */
-async function handleCallback(session, req, res) {
-    const { path, baseUrl } = session.callback;
-    // `req.url` is an absolute-form target when a proxy forwards the request
-    // (`GET http://localhost:54545/callback?…`). Resolving it against the
-    // callback origin keeps path matching working and keeps the pasted URL a
-    // single, valid URL instead of `http://host:porthttp://…`.
-    const url = new URL(req.url || '/', baseUrl);
-    if (url.pathname !== path) {
-        res.writeHead(404).end('Not found');
-        return;
-    }
-    const code = url.searchParams.get('code');
-    const state = url.searchParams.get('state');
-    const error = url.searchParams.get('error');
-    const locale = pickLocale(session.locale, req.headers['accept-language']);
-    // The page must reflect the real outcome: it used to claim success before
-    // the token exchange ran, so a proxy failure looked like a completed
-    // sign-in that never reached SillyTavern.
-    const callbackUrl = url.href;
-    const page = (outcome, status) => {
-        if (outcome !== 'missing') {
-            res.once('finish', () => session.cancel?.());
-        }
-        res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' })
-            .end(callbackPage(outcome, locale, callbackUrl));
-    };
-    // A callback that does not carry this session's state is not the
-    // provider's redirect for it (another page, a stale tab): answer without
-    // touching the session or releasing the port, or any page could abort an
-    // in-progress sign-in with `?error=…`.
-    if (session.state && state !== session.state) {
-        res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' })
-            .end(callbackPage('mismatch', locale, callbackUrl));
-        return;
-    }
-    if (error) {
-        session.status = 'error';
-        session.error = url.searchParams.get('error_description') || error;
-        page('failed', 400);
-        return;
-    }
-    if (!code) {
-        page('missing', 400);
-        return;
-    }
-    /** @type {NodeJS.Timeout|undefined} */
-    let guard;
-    await Promise.race([
-        finishWithCode(session, { code, state }, { requireState: true }).catch((err) => logError('callback exchange failed', err)),
-        // A tunneled POST may spend up to 30 s in CONNECT alone (see
-        // `openTunnel`), so the page has to outwait that before it reports a
-        // failure the session does not share.
-        new Promise((resolve) => { guard = setTimeout(resolve, 60_000); guard.unref?.(); }),
-    ]);
-    clearTimeout(guard);
-    if (session.status === 'done') {
-        page('done', 200);
-    } else {
-        page('failed', 400);
-    }
-}
-
-/**
- * Callback listener for one bound address. A rejected handler logs and drops
- * the socket; the browser is already gone.
- * @param {any} session
- * @returns {import('node:http').Server}
- */
-function createCallbackServer(session) {
-    return http.createServer((req, res) => {
-        handleCallback(session, req, res).catch((error) => {
-            logError('callback handler failed', error);
-            try {
-                res.destroy();
-            } catch {
-                // the client is already gone
-            }
-        });
-    });
-}
-
-/**
- * Bind loopback listeners that complete the session when the browser hits the
- * callback URL. Every loopback address for the host is bound (see
- * `bindAddresses()`); the flow needs only one to succeed. A total bind failure
- * is reported to the caller, which degrades the flow to manual paste instead of
- * advertising a dead redirect URI.
- * @param {any} session
- * @returns {Promise<{servers: http.Server[], error: string}>}
- */
-async function listenForCode(session) {
-    const { hosts, port } = session.callback;
-    session.port = port;
-    // One listener per port: a stale session from an abandoned flow would
-    // otherwise keep the port and serve the new flow's callback with the old
-    // locale/state.
-    for (const [id, other] of sessions) {
-        if (other !== session && other.port === port && other.cancel) {
-            other.cancel();
-            sessions.delete(id);
-        }
-    }
-    const servers = [];
-    let lastError = '';
-    let conflict = '';
-    for (const host of hosts) {
-        const server = createCallbackServer(session);
-        const error = await bind(server, port, host);
-        if (!error) {
-            servers.push(server);
-            continue;
-        }
-        // A missing family (IPv6 disabled, address not configured) is fine as
-        // long as another address answered. A port already held by another
-        // process is not: the advertised `localhost` may resolve to that
-        // process, so the flow degrades to paste instead of serving the wrong
-        // service.
-        if (/EADDRINUSE/.test(error)) conflict = conflict || error;
-        else lastError = error;
-        closeServers([server]);
-    }
-    if (!servers.length || conflict) {
-        closeServers(servers);
-        return { servers: [], error: conflict || lastError };
-    }
-    session.cancel = () => closeServers(servers);
-    return { servers, error: '' };
-}
-
-/**
- * Close every bound listener and drop its keep-alive sockets so the port is
- * free for the next flow.
- * @param {http.Server[]} servers
- */
-function closeServers(servers) {
-    for (const server of servers) {
-        try {
-            server.close();
-            // Keep-alive sockets keep the port bound; drop them so the next
-            // flow can bind immediately.
-            server.closeAllConnections?.();
-        } catch {
-            // ignore
-        }
-    }
-}
-
-/**
- * Listen on one address and report the failure instead of throwing.
- * @param {http.Server} server
- * @param {number} port
- * @param {string} host
- * @returns {Promise<string>} empty on success, an error code/message otherwise
- */
-function bind(server, port, host) {
-    return new Promise((resolve) => {
-        /** Resolve once and detach both listeners. */
-        const settle = (value) => {
-            server.removeListener('error', onError);
-            server.removeListener('listening', onListening);
-            resolve(value);
-        };
-        const onError = (error) => settle(error?.code || error?.message || String(error));
-        const onListening = () => settle('');
-        server.once('error', onError);
-        server.once('listening', onListening);
-        try {
-            server.listen(port, host);
-        } catch (error) {
-            // `listen` rejects some inputs synchronously (out-of-range port,
-            // unresolvable host); treat those like an unavailable port.
-            settle(error?.code || error?.message || String(error));
-        }
-    });
 }
 
 /**
@@ -1070,9 +804,34 @@ function credentialToStore(credential) {
 }
 
 /**
- * Run the policy's after-exchange hook and persist the credential when a
- * background flow settles, recording the failure on the session instead of
- * throwing.
+ * Run the policy's after-exchange hook and persist the credential to the key
+ * store before marking the session `done`.
+ * @param {any} session
+ * @param {object} credential
+ * @param {unknown} raw
+ * @param {string} target
+ * @param {any} keyStore
+ */
+async function storeCredential(session, credential, raw, target, keyStore) {
+    // Hooks enrich (recover identity, mint a durable key, resolve projects)
+    // after the exchange and before storing, so the key store only ever holds
+    // a usable credential.
+    const enriched = await applyAfterExchange(session.login?.afterExchange, credential, {
+        provider: session.providerId,
+        phase: 'login',
+        raw,
+        fetch: session.doFetch,
+        env: session.env,
+        signal: session.controller?.signal,
+    });
+    await keyStore.setProviderConfig(target, { apiKey: credentialToStore(enriched) });
+    session.credential = enriched;
+    session.status = 'done';
+}
+
+/**
+ * Persist a background login flow when it settles, recording any failure on
+ * the session instead of throwing.
  * @param {any} session
  * @param {Promise<{credential: object, raw?: unknown}>} promise exchange result
  * @param {string} target provider id the credential is stored under
@@ -1080,20 +839,7 @@ function credentialToStore(credential) {
  */
 function completeInBackground(session, promise, target, keyStore) {
     session.promise = promise
-        .then(async ({ credential, raw }) => {
-            // Hooks enrich (mint keys, resolve projects) after the exchange and
-            // before storing, so the key store only ever holds a usable one.
-            const enriched = await applyAfterExchange(session.login?.afterExchange, credential, {
-                provider: session.providerId,
-                phase: 'login',
-                raw,
-                fetch: session.doFetch,
-                env: session.env,
-            });
-            await keyStore.setProviderConfig(target, { apiKey: credentialToStore(enriched) });
-            session.credential = enriched;
-            session.status = 'done';
-        })
+        .then(({ credential, raw }) => storeCredential(session, credential, raw, target, keyStore))
         .catch((error) => {
             if (session.status === 'pending') {
                 session.status = 'error';
@@ -1137,20 +883,7 @@ async function finishWithCode(session, input, { requireState = false } = {}) {
                 provider: session.providerId,
                 result: session.login.result || '',
             }, session.doFetch, session.env);
-            // Hooks enrich (recover identity, mint a durable key) after the exchange
-            // and before storing, so the key store only ever holds a usable one.
-            const enriched = await applyAfterExchange(session.login.afterExchange, credential, {
-                provider: session.providerId,
-                phase: 'login',
-                raw,
-                fetch: session.doFetch,
-                env: session.env,
-            });
-            await session.keyStore.setProviderConfig(credentialTarget(session.login, session.providerId), {
-                apiKey: credentialToStore(enriched),
-            });
-            session.credential = enriched;
-            session.status = 'done';
+            await storeCredential(session, credential, raw, credentialTarget(session.login, session.providerId), session.keyStore);
         } catch (error) {
             session.status = 'error';
             session.error = String(error?.message || error);
@@ -1201,9 +934,7 @@ export async function submitCode(id, raw) {
 export function cancelLogin(id) {
     const session = getSession(id);
     if (!session) return false;
-    session.controller?.abort();
-    session.cancel?.();
-    sessions.delete(String(id));
+    disposeSession(String(id), session);
     return true;
 }
 

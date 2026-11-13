@@ -144,14 +144,38 @@ export async function startOpenAICodexDevice({ providerId = 'openai-codex', logi
         async waitForCompletion({ signal: inner } = {}) {
             const cancel = inner || signal;
             for (let poll = 0; poll < MAX_POLLS; poll++) {
-                await new Promise((resolve) => setTimeout(resolve, poll === 0 ? Math.min(intervalMs, POLL_FLOOR_MS) : intervalMs));
-                if (cancel?.aborted) throw new Error('Login canceled');
-                const response = await doFetch(DEVICE_TOKEN_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ device_auth_id: grant.device_auth_id, user_code: userCode }),
-                    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+                await new Promise((resolve) => {
+                    if (cancel?.aborted) {
+                        resolve();
+                        return;
+                    }
+                    const onAbort = () => {
+                        clearTimeout(timer);
+                        resolve();
+                    };
+                    const timer = setTimeout(() => {
+                        cancel?.removeEventListener?.('abort', onAbort);
+                        resolve();
+                    }, poll === 0 ? Math.min(intervalMs, POLL_FLOOR_MS) : intervalMs);
+                    timer.unref?.();
+                    cancel?.addEventListener?.('abort', onAbort, { once: true });
                 });
+                if (cancel?.aborted) throw new Error('Login canceled');
+                const reqSignal = cancel
+                    ? AbortSignal.any([cancel, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+                    : AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+                let response;
+                try {
+                    response = await doFetch(DEVICE_TOKEN_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ device_auth_id: grant.device_auth_id, user_code: userCode }),
+                        signal: reqSignal,
+                    });
+                } catch {
+                    if (cancel?.aborted) throw new Error('Login canceled');
+                    continue;
+                }
                 // 403/404 mean "authorization still pending" for this endpoint.
                 if (response.status === 403 || response.status === 404) continue;
                 if (!response.ok) {
