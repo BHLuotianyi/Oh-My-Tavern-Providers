@@ -37,12 +37,27 @@ function underPrefix(path, prefix) {
     return prefix === '/' || path === prefix || path.startsWith(`${prefix}/`);
 }
 
+/**
+ * Parse an incoming origin-form request URL safely.
+ * Rejects protocol-relative (`//`), backslash-authority (`/\`), and non-origin URLs.
+ * @param {unknown} rawUrl
+ * @returns {URL|null}
+ */
+function parseRequestUrl(rawUrl) {
+    const raw = typeof rawUrl === 'string' && rawUrl ? rawUrl : '/';
+    if (!raw.startsWith('/') || raw.startsWith('//')) return null;
+    try {
+        const parsed = new URL(raw, 'http://localhost');
+        if (parsed.origin !== 'http://localhost') return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
 /** Decorate Node's request/response with the Express helpers the routes call. */
 function decorate(req, res) {
-    if (req.query) return;
-    const url = new URL(req.url, 'http://localhost');
-    req.path = url.pathname;
-    req.query = Object.fromEntries(url.searchParams);
+    if (req.query) return true;
     req.params = {};
     req.get = (name) => req.headers[String(name).toLowerCase()];
     res.status = (code) => {
@@ -54,6 +69,15 @@ function decorate(req, res) {
         res.end(JSON.stringify(value));
         return res;
     };
+    const url = parseRequestUrl(req.url);
+    if (!url) {
+        req.path = '/';
+        req.query = {};
+        return false;
+    }
+    req.path = url.pathname;
+    req.query = Object.fromEntries(url.searchParams);
+    return true;
 }
 
 function createRouter() {
@@ -67,11 +91,10 @@ function createRouter() {
      * @param {(error?: unknown) => void} done
      */
     function handle(req, res, done) {
-        decorate(req, res);
+        const validUrl = decorate(req, res);
         const method = String(req.method || 'GET').toLowerCase();
         const fullPath = req.path;
         let index = 0;
-
         const next = (error) => {
             req.path = fullPath;
             while (index < layers.length) {
@@ -86,7 +109,12 @@ function createRouter() {
                 const isErrorHandler = layer.fn.length === 4;
                 if (Boolean(error) !== isErrorHandler) continue;
                 if (match) {
-                    req.params = Object.fromEntries(layer.route.keys.map((key, i) => [key, decodeURIComponent(match[i + 1])]));
+                    try {
+                        req.params = Object.fromEntries(layer.route.keys.map((key, i) => [key, decodeURIComponent(match[i + 1])]));
+                    } catch {
+                        next(Object.assign(new Error('Invalid URL parameter'), { status: 400 }));
+                        return;
+                    }
                 }
                 if (layer.prefix && layer.prefix !== '/') {
                     req.path = fullPath.slice(layer.prefix.length) || '/';
@@ -101,6 +129,10 @@ function createRouter() {
             }
             done(error);
         };
+        if (!validUrl) {
+            next(Object.assign(new Error('Invalid request URL'), { status: 400 }));
+            return;
+        }
         next();
     }
 
@@ -140,9 +172,11 @@ export default function miniExpress() {
             res.end();
             return;
         }
-        res.statusCode = error ? Number(error?.status) || 500 : 404;
+        const status = error ? Number(error?.status) || 500 : 404;
+        res.statusCode = status;
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify({ error: { message: error ? 'Server error' : 'Not found' } }));
+        const message = !error ? 'Not found' : (status < 500 && error.message ? error.message : 'Server error');
+        res.end(JSON.stringify({ error: { message } }));
     });
     Object.assign(app, router);
     app.handle = router.handle;

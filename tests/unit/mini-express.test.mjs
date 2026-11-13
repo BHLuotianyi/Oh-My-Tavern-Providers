@@ -94,3 +94,25 @@ test('bodies over the limit are rejected and paths outside the mount get the app
         assert.equal(outside.status, 404);
     });
 });
+
+test('malformed URLs like GET // and invalid percent-encoded params return 400 without crashing', async () => {
+    await withApp(buildApp(), async (base) => {
+        // Use raw HTTP so Node's fetch does not reject or normalize `//`.
+        const rawStatus = await new Promise((resolve, reject) => {
+            const req = http.request(`${base}/`, { method: 'GET', path: '//' }, (res) => {
+                res.resume();
+                res.on('end', () => resolve(res.statusCode));
+            });
+            req.on('error', reject);
+            req.end();
+        });
+        assert.ok(rawStatus >= 400 && rawStatus < 500, `expected 4xx, got ${rawStatus}`);
+
+        const badParam = await fetch(`${base}/api/plugins/omtp/providers/%ZZ/login/s1`);
+        assert.equal(badParam.status, 400);
+
+        // Server must still be alive and handle valid requests afterward.
+        const alive = await fetch(`${base}/api/plugins/omtp/providers/openai/login/s1`);
+        assert.equal(alive.status, 200);
+    });
+});

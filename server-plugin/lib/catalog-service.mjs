@@ -19,7 +19,8 @@ const DEFAULT_REMAINING_GATEWAY_ADAPTER = 'openai';
 
 const FETCH_TIMEOUT_MS = 60_000;
 const MAX_FETCH_BYTES = 20 * 1024 * 1024;
-
+const MAX_FETCH_REDIRECTS = 5;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 /**
  * @param {string} url
  * @returns {boolean}
@@ -111,27 +112,72 @@ function mergeCatalog(base, overlay) {
  * @param {AbortSignal} signal
  * @returns {Promise<any>}
  */
-async function fetchJsonLimited(url, signal) {
-    const response = await fetch(url, {
-        signal,
-        headers: { Accept: 'application/json', 'User-Agent': 'omtp-gateway/0.1.0' },
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-    // A redirect must not turn a trusted catalog URL into an arbitrary
-    // internal endpoint (blind SSRF). Same-host redirects are fine.
-    if (response.url) {
-        let sameHost = false;
-        try {
-            sameHost = new URL(response.url).host === new URL(url).host;
-        } catch {
-            sameHost = false;
-        }
-        if (!sameHost) throw new Error('Catalog redirect to a different host is not allowed');
-    }
+async function readStreamLimited(response, maxBytes) {
     const declaredLength = Number(response.headers.get('content-length') || 0);
-    if (declaredLength > MAX_FETCH_BYTES) throw new Error(`Catalog exceeds ${MAX_FETCH_BYTES} bytes`);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.length > MAX_FETCH_BYTES) throw new Error(`Catalog exceeds ${MAX_FETCH_BYTES} bytes`);
+    if (declaredLength > maxBytes) {
+        await response.body?.cancel?.().catch(() => {});
+        throw new Error(`Catalog exceeds ${maxBytes} bytes`);
+    }
+    if (!response.body) {
+        const buffer = Buffer.from(await response.arrayBuffer());
+        if (buffer.length > maxBytes) throw new Error(`Catalog exceeds ${maxBytes} bytes`);
+        return buffer;
+    }
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            total += value.byteLength;
+            if (total > maxBytes) {
+                await reader.cancel().catch(() => {});
+                throw new Error(`Catalog exceeds ${maxBytes} bytes`);
+            }
+            chunks.push(value);
+        }
+    } finally {
+        reader.releaseLock();
+    }
+    return Buffer.concat(chunks, total);
+}
+
+async function fetchJsonLimited(url, signal) {
+    const initialHost = new URL(url).host;
+    let currentUrl = url;
+    let response;
+    for (let hop = 0; hop <= MAX_FETCH_REDIRECTS; hop += 1) {
+        response = await fetch(currentUrl, {
+            signal,
+            redirect: 'manual',
+            headers: { Accept: 'application/json', 'User-Agent': 'omtp-gateway/0.1.0' },
+        });
+        if (!REDIRECT_STATUSES.has(response.status)) break;
+        await response.body?.cancel?.().catch(() => {});
+        if (hop === MAX_FETCH_REDIRECTS) {
+            throw new Error('Too many catalog redirects');
+        }
+        const location = response.headers.get('location');
+        if (!location) {
+            throw new Error(`HTTP ${response.status} without Location for ${currentUrl}`);
+        }
+        let nextUrl;
+        try {
+            nextUrl = new URL(location, currentUrl);
+        } catch {
+            throw new Error(`Invalid catalog redirect URL for ${currentUrl}`);
+        }
+        if ((nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') || nextUrl.host !== initialHost) {
+            throw new Error('Catalog redirect to a different host is not allowed');
+        }
+        currentUrl = nextUrl.toString();
+    }
+    if (!response.ok) {
+        await response.body?.cancel?.().catch(() => {});
+        throw new Error(`HTTP ${response.status} for ${currentUrl}`);
+    }
+    const buffer = await readStreamLimited(response, MAX_FETCH_BYTES);
     return JSON.parse(buffer.toString('utf8'));
 }
 
@@ -150,6 +196,11 @@ export class CatalogService {
         this._catalog = null;
         /** @type {any|null} */
         this._bundled = null;
+        /** @type {Promise<any>|null} */
+        this._catalogPromise = null;
+        /** @type {Promise<any>|null} */
+        this._bundledPromise = null;
+        this._generation = 0;
         this._source = 'bundled';
     }
 
@@ -159,11 +210,20 @@ export class CatalogService {
      */
     async loadBundled(force = false) {
         if (this._bundled && !force) return this._bundled;
-        const bundledFile = this.bundledPath instanceof URL ? fileURLToPath(this.bundledPath) : this.bundledPath;
-        const raw = await readJsonFile(bundledFile);
-        if (!raw || !raw.providers) throw new Error('Bundled OMTP catalog is missing or invalid');
-        this._bundled = raw;
-        return raw;
+        if (!force && this._bundledPromise) return this._bundledPromise;
+        const load = (async () => {
+            const bundledFile = this.bundledPath instanceof URL ? fileURLToPath(this.bundledPath) : this.bundledPath;
+            const raw = await readJsonFile(bundledFile);
+            if (!raw || !raw.providers) throw new Error('Bundled OMTP catalog is missing or invalid');
+            this._bundled = raw;
+            return raw;
+        })();
+        this._bundledPromise = load;
+        try {
+            return await load;
+        } finally {
+            if (this._bundledPromise === load) this._bundledPromise = null;
+        }
     }
 
     /**
@@ -231,39 +291,57 @@ export class CatalogService {
      */
     async loadActive(force = false) {
         if (this._catalog && !force) return this._catalog;
-        const bundled = await this.loadBundled(force);
-        // Copy so the layers below never mutate the trusted bundled object.
-        let merged = { ...bundled };
-        this._source = 'bundled';
+        if (!force && this._catalogPromise) return this._catalogPromise;
+        const generation = force ? (this._generation += 1) : this._generation;
+        if (force) {
+            this._catalog = null;
+            this._catalogPromise = null;
+        }
+        const load = (async () => {
+            const bundled = await this.loadBundled(false);
+            // Copy so the layers below never mutate the trusted bundled object.
+            let merged = { ...bundled };
+            let source = 'bundled';
 
-        // Cached / imported layers come from the network or from disk and can
-        // only contribute model metadata. Routing, headers and OAuth endpoints
-        // always come from the bundled catalog.
-        const cached = await this.readLayer(CACHED_CATALOG_FILE);
-        if (cached) {
-            merged = mergeCatalog(merged, sanitizeExternalLayer(cached, bundled));
-            this._source = 'cached';
+            // Cached / imported layers come from the network or from disk and can
+            // only contribute model metadata. Routing, headers and OAuth endpoints
+            // always come from the bundled catalog.
+            const cached = await this.readLayer(CACHED_CATALOG_FILE);
+            if (cached) {
+                merged = mergeCatalog(merged, sanitizeExternalLayer(cached, bundled));
+                source = 'cached';
+            }
+            const imported = await this.readLayer(IMPORTED_CATALOG_FILE);
+            if (imported) {
+                merged = mergeCatalog(merged, sanitizeExternalLayer(imported, bundled));
+                source = 'cached';
+            }
+            const custom = await this.buildCustomProviders();
+            if (Object.keys(custom.providers).length > 0) {
+                merged = mergeCatalog(merged, { providers: custom.providers });
+            }
+            // Ensure local-only OAuth client material (e.g. google-gemini-cli)
+            // is scrubbed to env references before leaving this method.
+            merged.providers = stripCatalogCredentials(merged.providers);
+            merged.stats = computeStats(merged.providers);
+            if (generation === this._generation) {
+                this._catalog = merged;
+                this._source = source;
+            }
+            return merged;
+        })();
+        this._catalogPromise = load;
+        try {
+            return await load;
+        } finally {
+            if (this._catalogPromise === load) this._catalogPromise = null;
         }
-        const imported = await this.readLayer(IMPORTED_CATALOG_FILE);
-        if (imported) {
-            merged = mergeCatalog(merged, sanitizeExternalLayer(imported, bundled));
-            this._source = 'cached';
-        }
-        const custom = await this.buildCustomProviders();
-        if (Object.keys(custom.providers).length > 0) {
-            merged = mergeCatalog(merged, { providers: custom.providers });
-        }
-        // Catalog layers (cache, OMP import, refresh) can carry OAuth client
-        // material from upstream; only env references leave this method.
-        merged.providers = stripCatalogCredentials(merged.providers);
-        merged.stats = computeStats(merged.providers);
-        this._catalog = merged;
-        return merged;
     }
 
     invalidate() {
+        this._generation += 1;
         this._catalog = null;
-        this._bundled = null;
+        this._catalogPromise = null;
     }
 
     /**
@@ -286,7 +364,7 @@ export class CatalogService {
      */
     async getProvider(id) {
         const providers = await this.getProviders();
-        return providers[id] || null;
+        return Object.hasOwn(providers, id) ? providers[id] : null;
     }
 
     /**
@@ -354,18 +432,17 @@ export class CatalogService {
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
         try {
             const payload = await fetchJsonLimited(target, controller.signal);
+            const bundled = await this.loadBundled();
             let catalog;
             if (payload && payload.schemaVersion === 1 && payload.providers && typeof payload.providers === 'object') {
                 catalog = payload;
             } else {
                 const rules = await fetchJsonLimited(DEFAULT_OMP_RULES_URL, controller.signal);
-                const bundled = await this.loadBundled(true);
                 catalog = normalizeCatalog(payload, rules, providerMapFromCatalog(bundled));
             }
             // External data may only contribute model metadata. Validate the
             // merged result (so routing fields from the bundled catalog are
             // present), then persist just the sanitized overlay.
-            const bundled = await this.loadBundled(true);
             const safe = sanitizeExternalLayer(catalog, bundled);
             const effective = mergeCatalog(bundled, safe);
             const validation = validateCatalog(effective, { expectedProviders: 0, minModels: 0 });
@@ -378,8 +455,7 @@ export class CatalogService {
                 ...safe,
                 providers: stripCatalogCredentials(safe.providers),
             });
-            this._catalog = null;
-            this._bundled = null;
+            this.invalidate();
             const active = await this.loadActive(true);
             this._source = 'refreshed';
             log(`catalog refreshed: ${effective.stats.providers} providers, ${effective.stats.models} models`);
@@ -408,6 +484,6 @@ export class CatalogService {
             ...catalog,
             providers: stripCatalogCredentials(catalog.providers),
         });
-        this._catalog = null;
+        this.invalidate();
     }
 }

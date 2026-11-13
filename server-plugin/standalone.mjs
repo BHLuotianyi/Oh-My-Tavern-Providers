@@ -93,10 +93,13 @@ app.get('/health', (req, res) => {
     res.json({ ok: true, service: 'omtp-companion' });
 });
 
-app.use(miniExpress.json({ limit: '50mb' }));
-
 const router = miniExpress.Router();
-await init(router, { express: miniExpress, checkClient: checkCompanionClient, gatewayHost: args.host });
+await init(router, {
+    express: miniExpress,
+    jsonParser: miniExpress.json({ limit: '50mb' }),
+    checkClient: checkCompanionClient,
+    gatewayHost: args.host,
+});
 app.use('/api/plugins/omtp', router);
 
 const server = http.createServer(app);

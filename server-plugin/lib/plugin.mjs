@@ -11,13 +11,13 @@ import { KeyStore, KeyStoreUnreadableError } from './key-store.mjs';
 import { freshLiveModels, loadLiveModels, saveLiveModels } from './live-models-store.mjs';
 import { CatalogService } from './catalog-service.mjs';
 import { GatewayServer, asyncHandler, buildGatewayContext, credentialStorageId, resolveProviderCredentials } from './gateway-server.mjs';
-import { buildModelsProbe, buildProviderContext, isSupportedAdapter, singleMaxTokensEnabled, SUPPORTED_ADAPTERS, userAgentSpoofEnabled } from './provider-config.mjs';
+import { ADAPTER_IDS } from './adapter-ids.mjs';
+import { buildModelsProbe, buildProviderContext, isSupportedAdapter, singleMaxTokensEnabled, userAgentSpoofEnabled } from './provider-config.mjs';
 import { parseStructuredCredential, resolveAccessToken } from './oauth.mjs';
 import { importFromOmp } from './import-omp.mjs';
 import { installProxyFetch } from './proxy-fetch.mjs';
 import { getAdapter } from './adapters/index.mjs';
 import { log, logError } from './redact.mjs';
-import { headerHookSupported } from './custom-logins/kimi-fingerprint.mjs';
 import { USAGE_PROVIDERS, fetchProviderUsage } from './usage.mjs';
 import { loginEnv } from './oauth-clients.mjs';
 import { UsageStats } from './stats.mjs';
@@ -26,9 +26,9 @@ import { validateBaseUrl } from './catalog-safety.mjs';
 import { ensureStatsServer, statsServerStatus, stopStatsServer } from './stats-server.mjs';
 import {
     cancelLogin,
-    customHookSupported,
     describeSession,
     getSession,
+    missingLoginHook,
     startLogin,
     submitCode,
 } from './login-engine.mjs';
@@ -48,6 +48,7 @@ const SERVER_VERSION = (() => {
  * (`standalone.mjs`) passes the bundled mini router and its token check.
  * @typedef {object} PluginHost
  * @property {any} express Express-compatible factory with `.json()`
+ * @property {any} [jsonParser] optional JSON body parser mounted after the client guard
  * @property {(providerId: string) => string} [resolveStSecret] key from the host's own secret store
  * @property {(req: any) => {ok: boolean, reason?: string}} [checkClient] management request guard
  * @property {string} [gatewayHost] interface the gateway binds to
@@ -56,6 +57,7 @@ const SERVER_VERSION = (() => {
 /** @type {Required<PluginHost>} */
 let host = {
     express: null,
+    jsonParser: null,
     resolveStSecret: () => '',
     checkClient: checkTrustedClient,
     gatewayHost: '127.0.0.1',
@@ -94,6 +96,7 @@ function asDomainHttpError(error) {
     if (message === 'Invalid provider id'
         || message === 'This provider has no login flow'
         || message === 'This login does not accept a pasted code'
+        || message.startsWith('This login needs a provider hook OMTP does not ship:')
         || message.startsWith('Unsupported adapter:')) {
         return new HttpError(400, message, 'invalid_request');
     }
@@ -197,6 +200,7 @@ function syntheticProvider(providerId, source = {}) {
         api: 'custom',
         envVars: [],
         authKind: source.authKind || 'api-key',
+        bundled: false,
         stAdapter: null,
         gatewayAdapter: source.adapter || null,
         custom: Boolean(source.custom),
@@ -259,14 +263,9 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
         unreadable,
         keyInvalid: Boolean(authFailure),
         loginKind: provider?.authLogin?.kind || null,
-        // `custom` logins run only when we ship the provider's hook (see
-        // `custom-logins/`); the rest fall back to the OMP import. Header
-        // hooks (fingerprints) and `afterExchange` only enrich the credential,
-        // so they never block the flow.
-        loginNeedsHook: Boolean(
-            (provider?.authLogin?.headersHook && !headerHookSupported(provider.authLogin.headersHook))
-            || (provider?.authLogin?.kind === 'custom' && !customHookSupported(provider.authLogin.hook)),
-        ),
+        // Flows needing a hook or hook-backed URL without a literal fallback
+        // cannot be driven locally and fall back to OMP import.
+        loginNeedsHook: Boolean(missingLoginHook(provider?.authLogin)),
         keyInvalidReason: authFailure?.message ?? null,
         userAgentSpoof: userAgentSpoofEnabled(resolved),
         supportsUserAgentSpoof: Boolean(provider?.requestHeaders?.spoofUserAgent),
@@ -384,7 +383,7 @@ async function probeProvider(resolved, adapter, provider, { model = '', keyStore
             try {
                 rawModels = JSON.parse(text);
             } catch {
-                rawModels = [];
+                return { error: 'Provider returned non-JSON response', httpStatus };
             }
         }
         return { models: describeModels(rawModels), httpStatus };
@@ -561,7 +560,7 @@ function registerProviderRoutes(router) {
         res.json({ ok: true, provider: status });
     }));
 
-    router.delete('/providers/:id/key', asyncHandler(async (req, res) => {
+    router.delete('/providers/:id/key', domainHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         await current.keyStore.clearProviderKey(providerId);
@@ -571,7 +570,6 @@ function registerProviderRoutes(router) {
         const status = await buildProviderStatus(providerId, current.keyStore, current.catalogService);
         res.json({ ok: true, provider: status });
     }));
-
     router.post('/providers/:id/config', domainHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
@@ -588,7 +586,7 @@ function registerProviderRoutes(router) {
             throw new HttpError(400, 'singleMaxTokens must be a boolean', 'invalid_single_max_tokens');
         }
         if (patch.adapter !== undefined && patch.adapter !== null && patch.adapter !== '' && !isSupportedAdapter(patch.adapter)) {
-            throw new HttpError(400, `Unsupported adapter; expected one of ${SUPPORTED_ADAPTERS.join(', ')}`, 'invalid_adapter');
+            throw new HttpError(400, `Unsupported adapter; expected one of ${ADAPTER_IDS.join(', ')}`, 'invalid_adapter');
         }
         if (patch.headers !== undefined && patch.headers !== null && (typeof patch.headers !== 'object' || Array.isArray(patch.headers))) {
             throw new HttpError(400, 'headers must be an object', 'invalid_headers');
@@ -607,8 +605,10 @@ function registerProviderRoutes(router) {
             }
         }
         if (Object.keys(patch).length === 0) throw new HttpError(400, 'No config fields supplied', 'invalid_config');
-        await current.keyStore.setProviderConfig(providerId, patch);
-        // A new endpoint, adapter or header set invalidates the old probe.
+        const catalogProvider = await current.catalogService.getProvider(providerId);
+        await current.keyStore.setProviderConfig(providerId, patch, {
+            fallbackBaseUrl: catalogProvider?.baseUrl || '',
+        });
         clearAuthFailure(providerId);
         await forgetLiveModels(providerId);
         current.catalogService.invalidate();
@@ -736,7 +736,7 @@ function registerStatsRoutes(router) {
                 // Subscription credentials expire: refresh before the quota
                 // call, exactly like the gateway context does. Otherwise the
                 // usage page reports 401 while chat completions still work.
-                const access = await resolveAccessToken(resolved, current.keyStore, fetch, current.root).catch(() => null);
+                const access = await resolveAccessToken(resolved, current.keyStore, fetch, current.root, provider.authLogin || null).catch(() => null);
                 const usageConfig = access?.apiKey ? { ...resolved, apiKey: access.apiKey } : resolved;
                 const spoofUserAgent = provider.requestHeaders?.spoofUserAgent || '';
                 rows.push(await fetchProviderUsage(provider.id, usageConfig, {
@@ -808,7 +808,7 @@ function registerLoginRoutes(router) {
         res.json({ ok: true, canceled: removed });
     }));
 
-    router.post('/providers/:id/logout', asyncHandler(async (req, res) => {
+    router.post('/providers/:id/logout', domainHandler(async (req, res) => {
         const current = requireState();
         const providerId = String(req.params.id || '');
         await current.keyStore.clearProviderKey(providerId);
@@ -921,6 +921,9 @@ function registerRoutes(router) {
         }
         next();
     });
+    if (typeof host.jsonParser === 'function') {
+        router.use(host.jsonParser);
+    }
     registerProviderRoutes(router);
     registerStatsRoutes(router);
     registerLoginRoutes(router);
