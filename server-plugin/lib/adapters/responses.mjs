@@ -1,20 +1,20 @@
 /** OpenAI Responses API gateway adapter. */
 import {
-  authHeaders,
-  createFinishEmitter,
-  hasCredential,
-  invalidMessages,
-  joinUrl,
-  missingApiKey,
-  missingBaseUrl,
-  newCompletionId,
-  normalizeTurns,
-  openAIUsage,
-  resolveBaseUrl,
-  runJsonAdapter,
-  translateFunctionTools,
-  trimSlash,
-  usageFrame,
+    authHeaders,
+    createFinishEmitter,
+    hasCredential,
+    invalidMessages,
+    joinUrl,
+    missingApiKey,
+    missingBaseUrl,
+    newCompletionId,
+    normalizeTurns,
+    openAIUsage,
+    resolveBaseUrl,
+    runJsonAdapter,
+    translateFunctionTools,
+    trimSlash,
+    usageFrame,
 } from './openai.mjs';
 import { openAIChunk } from '../sse.mjs';
 
@@ -23,257 +23,257 @@ export const id = 'responses';
 const EFFORT_MAP = { min: 'minimal', low: 'low', medium: 'medium', high: 'high', max: 'high' };
 
 function translateInput(messages) {
-  const input = [];
-  const { system } = normalizeTurns(messages, {
-    mapText: (text) => ({ type: 'input_text', text }),
-    mapImage: (_part, url) => (url ? { type: 'input_image', image_url: url } : null),
-    mapAssistantText: (text) => ({ type: 'output_text', text }),
-    mapToolCall: (call) => ({
-      type: 'function_call',
-      call_id: call.id,
-      name: call.name,
-      arguments:
-        typeof call.rawArguments === 'string'
-          ? call.rawArguments
-          : JSON.stringify(call.rawArguments ?? {}),
-    }),
-    mapToolResult: ({ toolCallId, content }) => ({
-      type: 'function_call_output',
-      call_id: toolCallId,
-      output: content,
-    }),
-    emitTurn: (role, parts, { isToolResult } = {}) => {
-      if (isToolResult) {
-        input.push(...parts);
-        return;
-      }
-      if (role === 'assistant') {
-        for (const part of parts) {
-          if (part.type === 'output_text') {
-            input.push({ type: 'message', role: 'assistant', content: [part] });
-          } else {
-            input.push(part.call_id ? part : { ...part, call_id: `call_${input.length}` });
-          }
-        }
-        return;
-      }
-      input.push({ type: 'message', role: 'user', content: parts });
-    },
-  });
-  return { instructions: system.join('\n\n'), input };
+    const input = [];
+    const { system } = normalizeTurns(messages, {
+        mapText: (text) => ({ type: 'input_text', text }),
+        mapImage: (_part, url) => (url ? { type: 'input_image', image_url: url } : null),
+        mapAssistantText: (text) => ({ type: 'output_text', text }),
+        mapToolCall: (call) => ({
+            type: 'function_call',
+            call_id: call.id,
+            name: call.name,
+            arguments:
+                typeof call.rawArguments === 'string'
+                    ? call.rawArguments
+                    : JSON.stringify(call.rawArguments ?? {}),
+        }),
+        mapToolResult: ({ toolCallId, content }) => ({
+            type: 'function_call_output',
+            call_id: toolCallId,
+            output: content,
+        }),
+        emitTurn: (role, parts, { isToolResult } = {}) => {
+            if (isToolResult) {
+                input.push(...parts);
+                return;
+            }
+            if (role === 'assistant') {
+                for (const part of parts) {
+                    if (part.type === 'output_text') {
+                        input.push({ type: 'message', role: 'assistant', content: [part] });
+                    } else {
+                        input.push(part.call_id ? part : { ...part, call_id: `call_${input.length}` });
+                    }
+                }
+                return;
+            }
+            input.push({ type: 'message', role: 'user', content: parts });
+        },
+    });
+    return { instructions: system.join('\n\n'), input };
 }
 
 function translateToolChoice(choice) {
-  if (!choice) return undefined;
-  if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
-  if (typeof choice === 'object') {
-    const name = choice.function?.name || choice.name;
-    if (name) return { type: 'function', name };
-  }
-  return undefined;
+    if (!choice) return undefined;
+    if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
+    if (typeof choice === 'object') {
+        const name = choice.function?.name || choice.name;
+        if (name) return { type: 'function', name };
+    }
+    return undefined;
 }
 
 export function buildResponsesBody(req, ctx) {
-  const extra = ctx?.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
-  const { instructions, input } = translateInput(req?.messages);
-  if (input.length === 0) return { error: 'At least one non-system message is required' };
+    const extra = ctx?.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
+    const { instructions, input } = translateInput(req?.messages);
+    if (input.length === 0) return { error: 'At least one non-system message is required' };
 
-  const payload = { model: ctx?.model, input };
-  if (instructions) payload.instructions = instructions;
-  const maxOutput = req?.max_output_tokens ?? req?.max_completion_tokens ?? req?.max_tokens ?? extra.maxTokens;
-  if (maxOutput != null && Number.isFinite(Number(maxOutput))) {
-    payload.max_output_tokens = Math.floor(Number(maxOutput));
-  }
-  if (req?.temperature != null) payload.temperature = Number(req.temperature);
-  if (req?.top_p != null) payload.top_p = Number(req.top_p);
-  payload.stream = Boolean(req?.stream);
+    const payload = { model: ctx?.model, input };
+    if (instructions) payload.instructions = instructions;
+    const maxOutput = req?.max_output_tokens ?? req?.max_completion_tokens ?? req?.max_tokens ?? extra.maxTokens;
+    if (maxOutput != null && Number.isFinite(Number(maxOutput))) {
+        payload.max_output_tokens = Math.floor(Number(maxOutput));
+    }
+    if (req?.temperature != null) payload.temperature = Number(req.temperature);
+    if (req?.top_p != null) payload.top_p = Number(req.top_p);
+    payload.stream = Boolean(req?.stream);
 
-  const tools = translateFunctionTools(req?.tools, 'parameters', { type: 'function' });
-  if (tools.length) {
-    payload.tools = tools;
-    const choice = translateToolChoice(req?.tool_choice);
-    if (choice) payload.tool_choice = choice;
-  }
+    const tools = translateFunctionTools(req?.tools, 'parameters', { type: 'function' });
+    if (tools.length) {
+        payload.tools = tools;
+        const choice = translateToolChoice(req?.tool_choice);
+        if (choice) payload.tool_choice = choice;
+    }
 
-  const supportsReasoning = ctx?.modelInfo ? Boolean(ctx.modelInfo.reasoning) : true;
-  const effort = supportsReasoning ? EFFORT_MAP[req?.reasoning_effort] : undefined;
-  if (effort) payload.reasoning = { effort };
+    const supportsReasoning = ctx?.modelInfo ? Boolean(ctx.modelInfo.reasoning) : true;
+    const effort = supportsReasoning ? EFFORT_MAP[req?.reasoning_effort] : undefined;
+    if (effort) payload.reasoning = { effort };
 
-  if (extra.body && typeof extra.body === 'object' && !Array.isArray(extra.body)) {
-    Object.assign(payload, extra.body);
-  }
-  payload.model = ctx?.model;
-  payload.input = input;
-  payload.stream = Boolean(req?.stream);
-  return payload;
+    if (extra.body && typeof extra.body === 'object' && !Array.isArray(extra.body)) {
+        Object.assign(payload, extra.body);
+    }
+    payload.model = ctx?.model;
+    payload.input = input;
+    payload.stream = Boolean(req?.stream);
+    return payload;
 }
 
 export function translateResponsesCompletion(json, model) {
-  const output = Array.isArray(json?.output) ? json.output : [];
-  let text = '';
-  let reasoning = '';
-  const toolCalls = [];
-  for (const item of output) {
-    if (item?.type === 'message') {
-      for (const content of item.content || []) {
-        if (content?.type === 'output_text' && typeof content.text === 'string') text += content.text;
-        else if (content?.type === 'refusal' && typeof content.refusal === 'string') text += content.refusal;
-      }
-    } else if (item?.type === 'reasoning') {
-      for (const summary of item.summary || []) {
-        if (typeof summary?.text === 'string') reasoning += summary.text;
-      }
-    } else if (item?.type === 'function_call') {
-      toolCalls.push({
-        id: item.call_id || item.id || `call_${toolCalls.length}`,
-        type: 'function',
-        function: { name: item.name, arguments: item.arguments || '{}' },
-      });
+    const output = Array.isArray(json?.output) ? json.output : [];
+    let text = '';
+    let reasoning = '';
+    const toolCalls = [];
+    for (const item of output) {
+        if (item?.type === 'message') {
+            for (const content of item.content || []) {
+                if (content?.type === 'output_text' && typeof content.text === 'string') text += content.text;
+                else if (content?.type === 'refusal' && typeof content.refusal === 'string') text += content.refusal;
+            }
+        } else if (item?.type === 'reasoning') {
+            for (const summary of item.summary || []) {
+                if (typeof summary?.text === 'string') reasoning += summary.text;
+            }
+        } else if (item?.type === 'function_call') {
+            toolCalls.push({
+                id: item.call_id || item.id || `call_${toolCalls.length}`,
+                type: 'function',
+                function: { name: item.name, arguments: item.arguments || '{}' },
+            });
+        }
     }
-  }
-  const message = { role: 'assistant', content: text || (toolCalls.length ? null : '') };
-  if (reasoning) message.reasoning_content = reasoning;
-  if (toolCalls.length) message.tool_calls = toolCalls;
+    const message = { role: 'assistant', content: text || (toolCalls.length ? null : '') };
+    if (reasoning) message.reasoning_content = reasoning;
+    if (toolCalls.length) message.tool_calls = toolCalls;
 
-  const usage = json?.usage || {};
-  const promptTokens = Number(usage.input_tokens) || 0;
-  const completionTokens = Number(usage.output_tokens) || 0;
-  const totalTokens = Number(usage.total_tokens) || promptTokens + completionTokens;
-  // The Responses API reports cached input nested under `input_tokens_details`.
-  const cachedTokens = Number(usage.input_tokens_details?.cached_tokens) || 0;
-  const reasoningTokens = Number(usage.output_tokens_details?.reasoning_tokens) || 0;
+    const usage = json?.usage || {};
+    const promptTokens = Number(usage.input_tokens) || 0;
+    const completionTokens = Number(usage.output_tokens) || 0;
+    const totalTokens = Number(usage.total_tokens) || promptTokens + completionTokens;
+    // The Responses API reports cached input nested under `input_tokens_details`.
+    const cachedTokens = Number(usage.input_tokens_details?.cached_tokens) || 0;
+    const reasoningTokens = Number(usage.output_tokens_details?.reasoning_tokens) || 0;
 
-  let finishReason = 'stop';
-  if (toolCalls.length) finishReason = 'tool_calls';
-  else if (json?.status === 'incomplete' && json?.incomplete_details?.reason === 'max_output_tokens') {
-    finishReason = 'length';
-  } else if (json?.status === 'incomplete') finishReason = 'content_filter';
+    let finishReason = 'stop';
+    if (toolCalls.length) finishReason = 'tool_calls';
+    else if (json?.status === 'incomplete' && json?.incomplete_details?.reason === 'max_output_tokens') {
+        finishReason = 'length';
+    } else if (json?.status === 'incomplete') finishReason = 'content_filter';
 
-  return {
-    id: json?.id || newCompletionId(),
-    object: 'chat.completion',
-    created: Number(json?.created_at) || Math.floor(Date.now() / 1000),
-    model: json?.model || model,
-    choices: [{ index: 0, message, finish_reason: finishReason }],
-    usage: openAIUsage({
-      prompt: promptTokens,
-      completion: completionTokens,
-      cached: cachedTokens,
-      reasoning: reasoningTokens,
-      total: totalTokens,
-    }),
-  };
+    return {
+        id: json?.id || newCompletionId(),
+        object: 'chat.completion',
+        created: Number(json?.created_at) || Math.floor(Date.now() / 1000),
+        model: json?.model || model,
+        choices: [{ index: 0, message, finish_reason: finishReason }],
+        usage: openAIUsage({
+            prompt: promptTokens,
+            completion: completionTokens,
+            cached: cachedTokens,
+            reasoning: reasoningTokens,
+            total: totalTokens,
+        }),
+    };
 }
 
 export function createResponsesStreamHandler(model) {
-  const toolIndexByItem = new Map();
-  let toolIndex = 0;
-  let sawTool = false;
-  let finishReason = null;
-  let usage = null;
+    const toolIndexByItem = new Map();
+    let toolIndex = 0;
+    let sawTool = false;
+    let finishReason = null;
+    let usage = null;
 
-  const finish = createFinishEmitter(
-    () => openAIChunk({}, finishReason || (sawTool ? 'tool_calls' : 'stop')),
-    () => (usage ? usageFrame(usage, model) : null),
-  );
+    const finish = createFinishEmitter(
+        () => openAIChunk({}, finishReason || (sawTool ? 'tool_calls' : 'stop')),
+        () => (usage ? usageFrame(usage, model) : null),
+    );
 
-  return {
-    onStart(emit) {
-      emit(openAIChunk({ role: 'assistant', content: '' }));
-    },
-    onEvent(event, emit) {
-      const type = event?.type;
-      if (type === 'response.output_item.added') {
-        const item = event.item || {};
-        if (item.type === 'function_call') {
-          const index = toolIndex++;
-          sawTool = true;
-          toolIndexByItem.set(item.id || item.call_id, index);
-          emit(
-            openAIChunk({
-              tool_calls: [
-                {
-                  index,
-                  id: item.call_id || item.id || `call_${index}`,
-                  type: 'function',
-                  function: { name: item.name, arguments: '' },
-                },
-              ],
-            }),
-          );
-        }
-        return;
-      }
-      if (type === 'response.output_text.delta') {
-        if (typeof event.delta === 'string' && event.delta) emit(openAIChunk({ content: event.delta }));
-        return;
-      }
-      if (type === 'response.reasoning_summary_text.delta' || type === 'response.reasoning_text.delta') {
-        if (typeof event.delta === 'string' && event.delta) {
-          emit(openAIChunk({ reasoning_content: event.delta }));
-        }
-        return;
-      }
-      if (type === 'response.function_call_arguments.delta') {
-        const index = toolIndexByItem.get(event.item_id) ?? 0;
-        if (typeof event.delta === 'string' && event.delta) {
-          emit(openAIChunk({ tool_calls: [{ index, function: { arguments: event.delta } }] }));
-        }
-        return;
-      }
-      if (type === 'response.completed') {
-        const response = event.response || {};
-        const usageInfo = response.usage || {};
-        const prompt = Number(usageInfo.input_tokens) || 0;
-        const completion = Number(usageInfo.output_tokens) || 0;
-        // Same mapping as the non-streaming path: Responses nests the cache and
-        // reasoning counts under `*_tokens_details`.
-        usage = openAIUsage({
-          prompt,
-          completion,
-          cached: Number(usageInfo.input_tokens_details?.cached_tokens) || 0,
-          reasoning: Number(usageInfo.output_tokens_details?.reasoning_tokens) || 0,
-          total: Number(usageInfo.total_tokens) || prompt + completion,
-        });
-        finishReason = sawTool ? 'tool_calls' : 'stop';
-        return;
-      }
-      if (type === 'response.incomplete') {
-        const reason = event.response?.incomplete_details?.reason;
-        finishReason = reason === 'max_output_tokens' ? 'length' : 'content_filter';
-        return;
-      }
-      if (type === 'response.failed' || type === 'response.error' || type === 'error') {
-        const message =
-          event.response?.error?.message || event.error?.message || event.message || 'Responses API error';
-        throw new Error(message);
-      }
-    },
-    onEnd(emit) {
-      finish(emit);
-    },
-  };
+    return {
+        onStart(emit) {
+            emit(openAIChunk({ role: 'assistant', content: '' }));
+        },
+        onEvent(event, emit) {
+            const type = event?.type;
+            if (type === 'response.output_item.added') {
+                const item = event.item || {};
+                if (item.type === 'function_call') {
+                    const index = toolIndex++;
+                    sawTool = true;
+                    toolIndexByItem.set(item.id || item.call_id, index);
+                    emit(
+                        openAIChunk({
+                            tool_calls: [
+                                {
+                                    index,
+                                    id: item.call_id || item.id || `call_${index}`,
+                                    type: 'function',
+                                    function: { name: item.name, arguments: '' },
+                                },
+                            ],
+                        }),
+                    );
+                }
+                return;
+            }
+            if (type === 'response.output_text.delta') {
+                if (typeof event.delta === 'string' && event.delta) emit(openAIChunk({ content: event.delta }));
+                return;
+            }
+            if (type === 'response.reasoning_summary_text.delta' || type === 'response.reasoning_text.delta') {
+                if (typeof event.delta === 'string' && event.delta) {
+                    emit(openAIChunk({ reasoning_content: event.delta }));
+                }
+                return;
+            }
+            if (type === 'response.function_call_arguments.delta') {
+                const index = toolIndexByItem.get(event.item_id) ?? 0;
+                if (typeof event.delta === 'string' && event.delta) {
+                    emit(openAIChunk({ tool_calls: [{ index, function: { arguments: event.delta } }] }));
+                }
+                return;
+            }
+            if (type === 'response.completed') {
+                const response = event.response || {};
+                const usageInfo = response.usage || {};
+                const prompt = Number(usageInfo.input_tokens) || 0;
+                const completion = Number(usageInfo.output_tokens) || 0;
+                // Same mapping as the non-streaming path: Responses nests the cache and
+                // reasoning counts under `*_tokens_details`.
+                usage = openAIUsage({
+                    prompt,
+                    completion,
+                    cached: Number(usageInfo.input_tokens_details?.cached_tokens) || 0,
+                    reasoning: Number(usageInfo.output_tokens_details?.reasoning_tokens) || 0,
+                    total: Number(usageInfo.total_tokens) || prompt + completion,
+                });
+                finishReason = sawTool ? 'tool_calls' : 'stop';
+                return;
+            }
+            if (type === 'response.incomplete') {
+                const reason = event.response?.incomplete_details?.reason;
+                finishReason = reason === 'max_output_tokens' ? 'length' : 'content_filter';
+                return;
+            }
+            if (type === 'response.failed' || type === 'response.error' || type === 'error') {
+                const message =
+                    event.response?.error?.message || event.error?.message || event.message || 'Responses API error';
+                throw new Error(message);
+            }
+        },
+        onEnd(emit) {
+            finish(emit);
+        },
+    };
 }
 
 export async function chat(req, ctx) {
-  if (!ctx?.baseUrl) return missingBaseUrl();
-  if (!hasCredential(ctx)) return missingApiKey(ctx, 'responses');
+    if (!ctx?.baseUrl) return missingBaseUrl();
+    if (!hasCredential(ctx)) return missingApiKey(ctx, 'responses');
 
-  const payload = buildResponsesBody(req, ctx);
-  if (payload.error) return invalidMessages();
+    const payload = buildResponsesBody(req, ctx);
+    if (payload.error) return invalidMessages();
 
-  return runJsonAdapter({
-    // Avoid `/responses/responses` when the user supplied a full endpoint.
-    url: joinUrl(resolveBaseUrl(ctx.baseUrl, ctx.extraConfig || {}), '/responses'),
-    headers: { 'Content-Type': 'application/json', ...authHeaders(ctx) },
-    payload,
-    label: 'Responses',
-    invalidLabel: 'Responses API response',
-    stream: payload.stream,
-    streamHandler: () => createResponsesStreamHandler(ctx.model),
-    translate: (json) => translateResponsesCompletion(json, ctx.model),
-    ctx,
-  });
+    return runJsonAdapter({
+        // Avoid `/responses/responses` when the user supplied a full endpoint.
+        url: joinUrl(resolveBaseUrl(ctx.baseUrl, ctx.extraConfig || {}), '/responses'),
+        headers: { 'Content-Type': 'application/json', ...authHeaders(ctx) },
+        payload,
+        label: 'Responses',
+        invalidLabel: 'Responses API response',
+        stream: payload.stream,
+        streamHandler: () => createResponsesStreamHandler(ctx.model),
+        translate: (json) => translateResponsesCompletion(json, ctx.model),
+        ctx,
+    });
 }
 
 export default { id, chat };

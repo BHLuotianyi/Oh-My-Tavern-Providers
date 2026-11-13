@@ -1,16 +1,16 @@
 /** Azure OpenAI Responses API gateway adapter. */
 import {
-  hasCredential,
-  invalidMessages,
-  missingApiKey,
-  missingBaseUrl,
-  runJsonAdapter,
-  trimSlash,
+    hasCredential,
+    invalidMessages,
+    missingApiKey,
+    missingBaseUrl,
+    runJsonAdapter,
+    trimSlash,
 } from './openai.mjs';
 import {
-  buildResponsesBody,
-  createResponsesStreamHandler,
-  translateResponsesCompletion,
+    buildResponsesBody,
+    createResponsesStreamHandler,
+    translateResponsesCompletion,
 } from './responses.mjs';
 
 export const id = 'azure-responses';
@@ -18,39 +18,39 @@ export const id = 'azure-responses';
 const DEFAULT_API_VERSION = '2025-04-01-preview';
 
 function responsesUrl(ctx) {
-  const extra = ctx.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
-  const deployment = extra.deployment || ctx.model;
-  const apiVersion = extra.apiVersion || DEFAULT_API_VERSION;
-  const query = `?api-version=${encodeURIComponent(apiVersion)}`;
-  let base = trimSlash(String(ctx.baseUrl || '').split('?')[0]);
-  // A custom URL may already be the full deployment endpoint.
-  if (/\/openai\/deployments\/[^/]+\/responses$/i.test(base)) return `${base}${query}`;
-  if (/\/openai$/.test(base)) base = base.slice(0, -'/openai'.length);
-  return `${base}/openai/deployments/${encodeURIComponent(deployment)}/responses${query}`;
+    const extra = ctx.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
+    const deployment = extra.deployment || ctx.model;
+    const apiVersion = extra.apiVersion || DEFAULT_API_VERSION;
+    const query = `?api-version=${encodeURIComponent(apiVersion)}`;
+    let base = trimSlash(String(ctx.baseUrl || '').split('?')[0]);
+    // A custom URL may already be the full deployment endpoint.
+    if (/\/openai\/deployments\/[^/]+\/responses$/i.test(base)) return `${base}${query}`;
+    if (/\/openai$/.test(base)) base = base.slice(0, -'/openai'.length);
+    return `${base}/openai/deployments/${encodeURIComponent(deployment)}/responses${query}`;
 }
 
 export async function chat(req, ctx) {
-  if (!ctx?.baseUrl) return missingBaseUrl();
-  if (!hasCredential(ctx)) return missingApiKey(ctx, 'azure');
+    if (!ctx?.baseUrl) return missingBaseUrl();
+    if (!hasCredential(ctx)) return missingApiKey(ctx, 'azure');
 
-  const payload = buildResponsesBody(req, ctx);
-  if (payload.error) return invalidMessages();
+    const payload = buildResponsesBody(req, ctx);
+    if (payload.error) return invalidMessages();
 
-  const headers = { 'Content-Type': 'application/json' };
-  if (ctx.apiKey) headers['api-key'] = ctx.apiKey;
-  if (ctx.headers && typeof ctx.headers === 'object') Object.assign(headers, ctx.headers);
+    const headers = { 'Content-Type': 'application/json' };
+    if (ctx.apiKey) headers['api-key'] = ctx.apiKey;
+    if (ctx.headers && typeof ctx.headers === 'object') Object.assign(headers, ctx.headers);
 
-  return runJsonAdapter({
-    url: responsesUrl(ctx),
-    headers,
-    payload,
-    label: 'Azure Responses',
-    invalidLabel: 'Azure Responses API response',
-    stream: payload.stream,
-    streamHandler: () => createResponsesStreamHandler(ctx.model),
-    translate: (json) => translateResponsesCompletion(json, ctx.model),
-    ctx,
-  });
+    return runJsonAdapter({
+        url: responsesUrl(ctx),
+        headers,
+        payload,
+        label: 'Azure Responses',
+        invalidLabel: 'Azure Responses API response',
+        stream: payload.stream,
+        streamHandler: () => createResponsesStreamHandler(ctx.model),
+        translate: (json) => translateResponsesCompletion(json, ctx.model),
+        ctx,
+    });
 }
 
 export default { id, chat };

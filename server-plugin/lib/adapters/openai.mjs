@@ -15,17 +15,17 @@ export const JSON_HEADERS = Object.freeze({ 'Content-Type': 'application/json; c
 const KEYLESS = new Set(KEYLESS_PROVIDERS);
 
 export function trimSlash(value) {
-  return String(value || '').replace(/\/+$/, '');
+    return String(value || '').replace(/\/+$/, '');
 }
 
 /**
  * Resolve `{region}`/`{location}` style placeholders used by catalog base URLs.
  */
 export function resolveBaseUrl(baseUrl, extra = {}) {
-  const region = extra?.region || 'us-east-1';
-  return String(baseUrl || '')
-    .replace(/\{region\}/g, region)
-    .replace(/\{location\}/g, region);
+    const region = extra?.region || 'us-east-1';
+    return String(baseUrl || '')
+        .replace(/\{region\}/g, region)
+        .replace(/\{location\}/g, region);
 }
 
 /**
@@ -33,38 +33,38 @@ export function resolveBaseUrl(baseUrl, extra = {}) {
  * OpenAI-compatible base URLs are expected to include `/v1`.
  */
 export function joinUrl(baseUrl, suffix) {
-  const base = trimSlash(baseUrl);
-  if (!base) return '';
-  const tail = suffix.startsWith('/') ? suffix : `/${suffix}`;
-  if (base.endsWith(tail)) return base;
-  return `${base}${tail}`;
+    const base = trimSlash(baseUrl);
+    if (!base) return '';
+    const tail = suffix.startsWith('/') ? suffix : `/${suffix}`;
+    if (base.endsWith(tail)) return base;
+    return `${base}${tail}`;
 }
 
 export function hasHeader(headers, name) {
-  if (!headers || typeof headers !== 'object') return false;
-  const target = name.toLowerCase();
-  return Object.keys(headers).some((key) => key.toLowerCase() === target && Boolean(headers[key]));
+    if (!headers || typeof headers !== 'object') return false;
+    const target = name.toLowerCase();
+    return Object.keys(headers).some((key) => key.toLowerCase() === target && Boolean(headers[key]));
 }
 
 export function hasCredential(ctx) {
-  if (ctx?.apiKey) return true;
-  return (
-    hasHeader(ctx?.headers, 'authorization') ||
-    hasHeader(ctx?.headers, 'x-api-key') ||
-    hasHeader(ctx?.headers, 'api-key') ||
-    hasHeader(ctx?.headers, 'x-goog-api-key')
-  );
+    if (ctx?.apiKey) return true;
+    return (
+        hasHeader(ctx?.headers, 'authorization') ||
+        hasHeader(ctx?.headers, 'x-api-key') ||
+        hasHeader(ctx?.headers, 'api-key') ||
+        hasHeader(ctx?.headers, 'x-goog-api-key')
+    );
 }
 
 export function isKeyless(ctx) {
-  if (ctx?.extraConfig?.allowNoKey === true) return true;
-  if (KEYLESS.has(ctx?.provider)) return true;
-  try {
-    const host = new URL(ctx?.baseUrl || '').hostname.toLowerCase();
-    return isLoopbackHost(host) || host.endsWith('.localhost');
-  } catch {
-    return false;
-  }
+    if (ctx?.extraConfig?.allowNoKey === true) return true;
+    if (KEYLESS.has(ctx?.provider)) return true;
+    try {
+        const host = new URL(ctx?.baseUrl || '').hostname.toLowerCase();
+        return isLoopbackHost(host) || host.endsWith('.localhost');
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -72,111 +72,111 @@ export function isKeyless(ctx) {
  * config overrides are respected.
  */
 export function authHeaders(ctx, scheme = 'bearer') {
-  const headers = {};
-  if (ctx?.apiKey) {
-    if (scheme === 'x-api-key') headers['x-api-key'] = ctx.apiKey;
-    else if (scheme === 'api-key') headers['api-key'] = ctx.apiKey;
-    else if (scheme === 'x-goog-api-key') headers['x-goog-api-key'] = ctx.apiKey;
-    else headers.Authorization = `Bearer ${ctx.apiKey}`;
-  }
-  return { ...headers, ...(ctx?.headers && typeof ctx.headers === 'object' ? ctx.headers : {}) };
+    const headers = {};
+    if (ctx?.apiKey) {
+        if (scheme === 'x-api-key') headers['x-api-key'] = ctx.apiKey;
+        else if (scheme === 'api-key') headers['api-key'] = ctx.apiKey;
+        else if (scheme === 'x-goog-api-key') headers['x-goog-api-key'] = ctx.apiKey;
+        else headers.Authorization = `Bearer ${ctx.apiKey}`;
+    }
+    return { ...headers, ...(ctx?.headers && typeof ctx.headers === 'object' ? ctx.headers : {}) };
 }
 
 export function errorResponse(
-  message,
-  { status = 500, type = 'omtp_gateway_error', code = null, param = null } = {},
+    message,
+    { status = 500, type = 'omtp_gateway_error', code = null, param = null } = {},
 ) {
-  const error = { message: String(message || 'Unknown error'), type, code };
-  if (param) error.param = param;
-  return new Response(JSON.stringify({ error }), { status, headers: JSON_HEADERS });
+    const error = { message: String(message || 'Unknown error'), type, code };
+    if (param) error.param = param;
+    return new Response(JSON.stringify({ error }), { status, headers: JSON_HEADERS });
 }
 
 /** 400 response for a provider without a usable base URL. */
 export function missingBaseUrl() {
-  return errorResponse('Provider baseUrl is not configured', {
-    status: 400,
-    type: 'invalid_request_error',
-    code: 'missing_base_url',
-  });
+    return errorResponse('Provider baseUrl is not configured', {
+        status: 400,
+        type: 'invalid_request_error',
+        code: 'missing_base_url',
+    });
 }
 
 /** 401 response for a provider whose credentials are absent. */
 export function missingApiKey(ctx, fallback) {
-  return errorResponse(`Missing API key for provider ${ctx?.provider || fallback}`, {
-    status: 401,
-    type: 'authentication_error',
-    code: 'missing_api_key',
-  });
+    return errorResponse(`Missing API key for provider ${ctx?.provider || fallback}`, {
+        status: 401,
+        type: 'authentication_error',
+        code: 'missing_api_key',
+    });
 }
 
 /** 400 response for a request with no user/assistant content. */
 export function invalidMessages() {
-  return errorResponse('At least one non-system message is required', {
-    status: 400,
-    type: 'invalid_request_error',
-    code: 'invalid_messages',
-  });
+    return errorResponse('At least one non-system message is required', {
+        status: 400,
+        type: 'invalid_request_error',
+        code: 'invalid_messages',
+    });
 }
 
 /** 502 response for an upstream body that is not the JSON we expect. */
 export function invalidResponse(label, error) {
-  return errorResponse(`Invalid ${label}: ${error?.message || error}`, {
-    status: 502,
-    type: 'upstream_error',
-    code: 'invalid_response',
-  });
+    return errorResponse(`Invalid ${label}: ${error?.message || error}`, {
+        status: 502,
+        type: 'upstream_error',
+        code: 'invalid_response',
+    });
 }
 
 export function isAbortError(error) {
-  return Boolean(
-    error &&
-      (error.name === 'AbortError' || error.code === 'ABORT_ERR' || error.code === 'ERR_CANCELED'),
-  );
+    return Boolean(
+        error &&
+            (error.name === 'AbortError' || error.code === 'ABORT_ERR' || error.code === 'ERR_CANCELED'),
+    );
 }
 
 export function networkError(error, label = 'Upstream request') {
-  if (isAbortError(error)) {
-    return errorResponse(`${label} aborted`, { status: 499, type: 'aborted', code: 'aborted' });
-  }
-  return errorResponse(`${label} failed: ${error?.message || error}`, {
-    status: 502,
-    type: 'upstream_error',
-    code: 'network_error',
-  });
+    if (isAbortError(error)) {
+        return errorResponse(`${label} aborted`, { status: 499, type: 'aborted', code: 'aborted' });
+    }
+    return errorResponse(`${label} failed: ${error?.message || error}`, {
+        status: 502,
+        type: 'upstream_error',
+        code: 'network_error',
+    });
 }
 
 /** Convert a non-OK upstream response into the OpenAI error envelope. */
 export async function upstreamErrorResponse(upstream) {
-  let text = '';
-  try {
-    text = await upstream.text();
-  } catch {
-    text = '';
-  }
-  let payload = null;
-  try {
-    payload = text ? JSON.parse(text) : null;
-  } catch {
-    payload = null;
-  }
-  const raw = payload?.error;
-  const message =
-    (typeof raw === 'string' ? raw : raw?.message) ||
-    payload?.message ||
-    text.slice(0, 2000) ||
-    `Upstream returned HTTP ${upstream.status}`;
-  const type =
-    raw?.type ||
-    payload?.type ||
-    (upstream.status === 401 || upstream.status === 403 ? 'authentication_error' : 'upstream_error');
-  const code = raw?.code ?? payload?.code ?? upstream.status;
-  return errorResponse(message, { status: upstream.status || 502, type, code });
+    let text = '';
+    try {
+        text = await upstream.text();
+    } catch {
+        text = '';
+    }
+    let payload = null;
+    try {
+        payload = text ? JSON.parse(text) : null;
+    } catch {
+        payload = null;
+    }
+    const raw = payload?.error;
+    const message =
+        (typeof raw === 'string' ? raw : raw?.message) ||
+        payload?.message ||
+        text.slice(0, 2000) ||
+        `Upstream returned HTTP ${upstream.status}`;
+    const type =
+        raw?.type ||
+        payload?.type ||
+        (upstream.status === 401 || upstream.status === 403 ? 'authentication_error' : 'upstream_error');
+    const code = raw?.code ?? payload?.code ?? upstream.status;
+    return errorResponse(message, { status: upstream.status || 502, type, code });
 }
 
 export async function passthroughJson(upstream) {
-  const text = await upstream.text();
-  const contentType = upstream.headers?.get?.('content-type') || JSON_HEADERS['Content-Type'];
-  return new Response(text, { status: upstream.status || 200, headers: { 'Content-Type': contentType } });
+    const text = await upstream.text();
+    const contentType = upstream.headers?.get?.('content-type') || JSON_HEADERS['Content-Type'];
+    return new Response(text, { status: upstream.status || 200, headers: { 'Content-Type': contentType } });
 }
 
 /**
@@ -199,40 +199,40 @@ export async function passthroughJson(upstream) {
  * @param {(payload: any) => string|Uint8Array} [options.serialize] Request body encoder (default JSON).
  */
 export async function runJsonAdapter({
-  url,
-  headers,
-  payload,
-  label,
-  invalidLabel = `${label} response`,
-  stream = false,
-  streamHandler,
-  translate,
-  ctx,
-  model = ctx?.model || '',
-  serialize = JSON.stringify,
+    url,
+    headers,
+    payload,
+    label,
+    invalidLabel = `${label} response`,
+    stream = false,
+    streamHandler,
+    translate,
+    ctx,
+    model = ctx?.model || '',
+    serialize = JSON.stringify,
 }) {
-  const doFetch = ctx?.fetchImpl || fetch;
-  let upstream;
-  try {
-    upstream = await doFetch(url, {
-      method: 'POST',
-      headers,
-      body: serialize(payload),
-      signal: ctx?.signal,
-    });
-  } catch (error) {
-    return networkError(error, `${label} request`);
-  }
+    const doFetch = ctx?.fetchImpl || fetch;
+    let upstream;
+    try {
+        upstream = await doFetch(url, {
+            method: 'POST',
+            headers,
+            body: serialize(payload),
+            signal: ctx?.signal,
+        });
+    } catch (error) {
+        return networkError(error, `${label} request`);
+    }
 
-  if (!upstream.ok) return upstreamErrorResponse(upstream);
-  if (stream) return sseResponse(upstream, streamHandler(), model);
-  let json;
-  try {
-    json = await upstream.json();
-  } catch (error) {
-    return invalidResponse(invalidLabel, error);
-  }
-  return new Response(JSON.stringify(translate(json)), { status: 200, headers: JSON_HEADERS });
+    if (!upstream.ok) return upstreamErrorResponse(upstream);
+    if (stream) return sseResponse(upstream, streamHandler(), model);
+    let json;
+    try {
+        json = await upstream.json();
+    } catch (error) {
+        return invalidResponse(invalidLabel, error);
+    }
+    return new Response(JSON.stringify(translate(json)), { status: 200, headers: JSON_HEADERS });
 }
 
 /**
@@ -241,29 +241,29 @@ export async function runJsonAdapter({
  * multi-line payload joined with `\n`) must not abort the whole stream.
  */
 export function coerceSseEvent(raw) {
-  const parse = (value) => {
-    const text = value.trim();
-    if (!text || text === '[DONE]') return null;
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
+    const parse = (value) => {
+        const text = value.trim();
+        if (!text || text === '[DONE]') return null;
+        try {
+            return JSON.parse(text);
+        } catch {
+            return null;
+        }
+    };
+    if (raw == null) return null;
+    if (typeof raw === 'string') return parse(raw);
+    if (typeof raw === 'object') {
+        if (typeof raw.data === 'string' && raw.type === undefined && raw.candidates === undefined) {
+            return parse(raw.data);
+        }
+        return raw;
     }
-  };
-  if (raw == null) return null;
-  if (typeof raw === 'string') return parse(raw);
-  if (typeof raw === 'object') {
-    if (typeof raw.data === 'string' && raw.type === undefined && raw.candidates === undefined) {
-      return parse(raw.data);
-    }
-    return raw;
-  }
-  return null;
+    return null;
 }
 
 export function errorFrame(error) {
-  const message = error?.message || String(error || 'Upstream stream error');
-  return `data: ${JSON.stringify({ error: { message, type: 'upstream_error' } })}\n\n`;
+    const message = error?.message || String(error || 'Upstream stream error');
+    return `data: ${JSON.stringify({ error: { message, type: 'upstream_error' } })}\n\n`;
 }
 
 /**
@@ -292,7 +292,7 @@ export function openAIUsage({ prompt = 0, completion = 0, cached = 0, cacheWrite
 }
 
 export function usageFrame(usage, model = '') {
-  return `data: ${JSON.stringify({
+    return `data: ${JSON.stringify({
     id: `chatcmpl-${globalThis.crypto?.randomUUID?.() || Date.now()}`,
     object: 'chat.completion.chunk',
     created: Math.floor(Date.now() / 1000),
@@ -303,7 +303,7 @@ export function usageFrame(usage, model = '') {
 }
 
 export function newCompletionId() {
-  return `chatcmpl-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+    return `chatcmpl-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
 }
 
 /**
@@ -314,57 +314,57 @@ export function newCompletionId() {
  * that is serialized into a data frame.
  */
 export function sseResponse(upstream, handler, model = '') {
-  const encoder = new TextEncoder();
-  // Every chunk of one response must share id/created. Individual frame
-  // builders use Date.now()/randomUUID(), so normalize them centrally here
-  // instead of touching every adapter's handler.
-  const responseId = newCompletionId();
-  const created = Math.floor(Date.now() / 1000);
-  const body = new ReadableStream({
-    async start(controller) {
-      const emit = (frame) => {
-        if (frame == null) return;
-        let text = typeof frame === 'string' ? frame : `data: ${JSON.stringify(frame)}\n\n`;
-        if (!text) return;
-        if (text.includes('"chat.completion.chunk"')) {
-          text = text
-            .replace(/"id":"(?:[^"\\]|\\.)*"/, `"id":${JSON.stringify(responseId)}`)
-            .replace(/"created":\d+/, `"created":${created}`);
-          if (model) {
-            text = text.replace(/"model":"(?:[^"\\]|\\.)*"/, `"model":${JSON.stringify(model)}`);
-          }
-        }
-        controller.enqueue(encoder.encode(text));
-      };
-      try {
-        handler?.onStart?.(emit);
-        for await (const raw of parseSse(upstream.body)) {
-          const event = coerceSseEvent(raw);
-          if (!event) continue;
-          await handler?.onEvent?.(event, emit);
-        }
-        await handler?.onEnd?.(emit);
-        emit(done());
-      } catch (error) {
-        if (!isAbortError(error)) emit(errorFrame(error));
-      } finally {
-        try {
-          controller.close();
-        } catch {
-          /* stream already closed */
-        }
-      }
-    },
-    cancel(reason) {
-      try {
-        const result = upstream.body?.cancel?.(reason);
-        if (result && typeof result.catch === 'function') result.catch(() => {});
-      } catch {
-        /* ignore cancel errors */
-      }
-    },
-  });
-  return new Response(body, { status: 200, headers: sseHeaders() });
+    const encoder = new TextEncoder();
+    // Every chunk of one response must share id/created. Individual frame
+    // builders use Date.now()/randomUUID(), so normalize them centrally here
+    // instead of touching every adapter's handler.
+    const responseId = newCompletionId();
+    const created = Math.floor(Date.now() / 1000);
+    const body = new ReadableStream({
+        async start(controller) {
+            const emit = (frame) => {
+                if (frame == null) return;
+                let text = typeof frame === 'string' ? frame : `data: ${JSON.stringify(frame)}\n\n`;
+                if (!text) return;
+                if (text.includes('"chat.completion.chunk"')) {
+                    text = text
+                        .replace(/"id":"(?:[^"\\]|\\.)*"/, `"id":${JSON.stringify(responseId)}`)
+                        .replace(/"created":\d+/, `"created":${created}`);
+                    if (model) {
+                        text = text.replace(/"model":"(?:[^"\\]|\\.)*"/, `"model":${JSON.stringify(model)}`);
+                    }
+                }
+                controller.enqueue(encoder.encode(text));
+            };
+            try {
+                handler?.onStart?.(emit);
+                for await (const raw of parseSse(upstream.body)) {
+                    const event = coerceSseEvent(raw);
+                    if (!event) continue;
+                    await handler?.onEvent?.(event, emit);
+                }
+                await handler?.onEnd?.(emit);
+                emit(done());
+            } catch (error) {
+                if (!isAbortError(error)) emit(errorFrame(error));
+            } finally {
+                try {
+                    controller.close();
+                } catch {
+                    /* stream already closed */
+                }
+            }
+        },
+        cancel(reason) {
+            try {
+                const result = upstream.body?.cancel?.(reason);
+                if (result && typeof result.catch === 'function') result.catch(() => {});
+            } catch {
+                /* ignore cancel errors */
+            }
+        },
+    });
+    return new Response(body, { status: 200, headers: sseHeaders() });
 }
 
 /**
@@ -374,30 +374,30 @@ export function sseResponse(upstream, handler, model = '') {
  * @param {() => any} buildUsageFrame Returns a frame, or null when there is no usage.
  */
 export function createFinishEmitter(buildFinishChunk, buildUsageFrame) {
-  let finished = false;
-  return (emit) => {
-    if (finished) return;
-    finished = true;
-    emit(buildFinishChunk());
-    const usage = buildUsageFrame();
-    if (usage) emit(usage);
-  };
+    let finished = false;
+    return (emit) => {
+        if (finished) return;
+        finished = true;
+        emit(buildFinishChunk());
+        const usage = buildUsageFrame();
+        if (usage) emit(usage);
+    };
 }
 
 export function contentToText(content) {
-  if (content == null) return '';
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (typeof part === 'string') return part;
-        if (part && typeof part.text === 'string') return part.text;
-        return '';
-      })
-      .join('');
-  }
-  if (typeof content === 'object' && typeof content.text === 'string') return content.text;
-  return '';
+    if (content == null) return '';
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+        return content
+            .map((part) => {
+                if (typeof part === 'string') return part;
+                if (part && typeof part.text === 'string') return part.text;
+                return '';
+            })
+            .join('');
+    }
+    if (typeof content === 'object' && typeof content.text === 'string') return content.text;
+    return '';
 }
 
 /**
@@ -406,19 +406,19 @@ export function contentToText(content) {
  * @returns {{mimeType: string, data: string}|null}
  */
 export function parseDataUrl(url) {
-  const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(url || '');
-  return match ? { mimeType: match[1], data: match[2] } : null;
+    const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(url || '');
+    return match ? { mimeType: match[1], data: match[2] } : null;
 }
 
 export function parseJsonObject(value) {
-  if (value == null || value === '') return {};
-  if (typeof value === 'object') return Array.isArray(value) ? {} : value;
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
+    if (value == null || value === '') return {};
+    if (typeof value === 'object') return Array.isArray(value) ? {} : value;
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+        return {};
+    }
 }
 
 /**
@@ -429,30 +429,30 @@ export function parseJsonObject(value) {
  * @param {Record<string, any>} [extra] Leading fields such as `{ type: 'function' }`.
  */
 export function translateFunctionTools(tools, schemaKey, extra = {}) {
-  if (!Array.isArray(tools)) return [];
-  const out = [];
-  for (const tool of tools) {
-    const fn = tool?.function || tool;
-    if (!fn?.name) continue;
-    const entry = { ...extra, name: fn.name };
-    if (fn.description) entry.description = fn.description;
-    entry[schemaKey] =
-      fn.parameters && typeof fn.parameters === 'object' ? fn.parameters : { type: 'object', properties: {} };
-    out.push(entry);
-  }
-  return out;
+    if (!Array.isArray(tools)) return [];
+    const out = [];
+    for (const tool of tools) {
+        const fn = tool?.function || tool;
+        if (!fn?.name) continue;
+        const entry = { ...extra, name: fn.name };
+        if (fn.description) entry.description = fn.description;
+        entry[schemaKey] =
+            fn.parameters && typeof fn.parameters === 'object' ? fn.parameters : { type: 'object', properties: {} };
+        out.push(entry);
+    }
+    return out;
 }
 
 /** Append content blocks to a role message, merging consecutive same-role turns. */
 export function pushContent(list, role, parts) {
-  if (!parts || parts.length === 0) return;
-  const last = list[list.length - 1];
-  if (last && last.role === role) {
-    if (Array.isArray(last.content)) last.content.push(...parts);
-    else last.content = parts;
-  } else {
-    list.push({ role, content: parts });
-  }
+    if (!parts || parts.length === 0) return;
+    const last = list[list.length - 1];
+    if (last && last.role === role) {
+        if (Array.isArray(last.content)) last.content.push(...parts);
+        else last.content = parts;
+    } else {
+        list.push({ role, content: parts });
+    }
 }
 
 /**
@@ -472,193 +472,193 @@ export function pushContent(list, role, parts) {
  * @returns {{ system: any[], turns: any[] }}
  */
 export function normalizeTurns(
-  messages,
-  {
-    mapSystem,
-    mapText,
-    mapImage,
-    mapAssistantText,
-    mapToolCall,
-    mapToolResult,
-    emitTurn,
-    assistantRole = 'assistant',
-    partsKey = 'content',
-  },
+    messages,
+    {
+        mapSystem,
+        mapText,
+        mapImage,
+        mapAssistantText,
+        mapToolCall,
+        mapToolResult,
+        emitTurn,
+        assistantRole = 'assistant',
+        partsKey = 'content',
+    },
 ) {
-  const system = [];
-  const turns = [];
-  const emit = emitTurn || ((role, parts) => {
-    if (!parts || parts.length === 0) return;
-    const last = turns[turns.length - 1];
-    if (last && last.role === role) {
-      if (Array.isArray(last[partsKey])) last[partsKey].push(...parts);
-      else last[partsKey] = parts;
-    } else {
-      turns.push({ role, [partsKey]: parts });
-    }
-  });
-
-  for (const message of Array.isArray(messages) ? messages : []) {
-    if (!message || typeof message !== 'object') continue;
-    const role = message.role;
-    if (role === 'system' || role === 'developer') {
-      const text = contentToText(message.content);
-      if (text) system.push(mapSystem ? mapSystem(text) : text);
-      continue;
-    }
-    if (role === 'tool' || role === 'function') {
-      const block = mapToolResult({
-        toolCallId: message.tool_call_id || message.name || '',
-        name: message.name || '',
-        content: contentToText(message.content),
-        raw: message,
-      });
-      if (block) emit('user', [block], { isToolResult: true });
-      continue;
-    }
-    if (role === 'assistant') {
-      const parts = [];
-      const text = contentToText(message.content);
-      if (text) parts.push((mapAssistantText || mapText)(text));
-      for (const call of message.tool_calls || []) {
-        const fn = call.function || call;
-        const rawArguments = fn.arguments ?? call.arguments;
-        const item = mapToolCall(
-          {
-            id: call.id || '',
-            name: fn.name || call.name || 'tool',
-            rawArguments,
-            args: parseJsonObject(rawArguments),
-          },
-          parts.length,
-        );
-        if (item) parts.push(item);
-      }
-      if (parts.length) emit(assistantRole, parts, { isToolResult: false });
-      continue;
-    }
-    const parts = [];
-    if (Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (typeof part === 'string') {
-          parts.push(mapText(part));
-        } else if (part?.type === 'text' && typeof part.text === 'string') {
-          parts.push(mapText(part.text));
-        } else if ((part?.type === 'image_url' || part?.type === 'image') && mapImage) {
-          const url = part.image_url?.url || part.image_url || part.url;
-          const block = mapImage(part, url);
-          if (block) parts.push(block);
+    const system = [];
+    const turns = [];
+    const emit = emitTurn || ((role, parts) => {
+        if (!parts || parts.length === 0) return;
+        const last = turns[turns.length - 1];
+        if (last && last.role === role) {
+            if (Array.isArray(last[partsKey])) last[partsKey].push(...parts);
+            else last[partsKey] = parts;
+        } else {
+            turns.push({ role, [partsKey]: parts });
         }
-      }
-    } else {
-      const text = contentToText(message.content);
-      if (text) parts.push(mapText(text));
+    });
+
+    for (const message of Array.isArray(messages) ? messages : []) {
+        if (!message || typeof message !== 'object') continue;
+        const role = message.role;
+        if (role === 'system' || role === 'developer') {
+            const text = contentToText(message.content);
+            if (text) system.push(mapSystem ? mapSystem(text) : text);
+            continue;
+        }
+        if (role === 'tool' || role === 'function') {
+            const block = mapToolResult({
+                toolCallId: message.tool_call_id || message.name || '',
+                name: message.name || '',
+                content: contentToText(message.content),
+                raw: message,
+            });
+            if (block) emit('user', [block], { isToolResult: true });
+            continue;
+        }
+        if (role === 'assistant') {
+            const parts = [];
+            const text = contentToText(message.content);
+            if (text) parts.push((mapAssistantText || mapText)(text));
+            for (const call of message.tool_calls || []) {
+                const fn = call.function || call;
+                const rawArguments = fn.arguments ?? call.arguments;
+                const item = mapToolCall(
+                    {
+                        id: call.id || '',
+                        name: fn.name || call.name || 'tool',
+                        rawArguments,
+                        args: parseJsonObject(rawArguments),
+                    },
+                    parts.length,
+                );
+                if (item) parts.push(item);
+            }
+            if (parts.length) emit(assistantRole, parts, { isToolResult: false });
+            continue;
+        }
+        const parts = [];
+        if (Array.isArray(message.content)) {
+            for (const part of message.content) {
+                if (typeof part === 'string') {
+                    parts.push(mapText(part));
+                } else if (part?.type === 'text' && typeof part.text === 'string') {
+                    parts.push(mapText(part.text));
+                } else if ((part?.type === 'image_url' || part?.type === 'image') && mapImage) {
+                    const url = part.image_url?.url || part.image_url || part.url;
+                    const block = mapImage(part, url);
+                    if (block) parts.push(block);
+                }
+            }
+        } else {
+            const text = contentToText(message.content);
+            if (text) parts.push(mapText(text));
+        }
+        if (parts.length) emit('user', parts, { isToolResult: false });
     }
-    if (parts.length) emit('user', parts, { isToolResult: false });
-  }
-  return { system, turns };
+    return { system, turns };
 }
 
 export async function chat(req, ctx) {
-  if (!ctx?.baseUrl) return missingBaseUrl();
-  if (!hasCredential(ctx) && !isKeyless(ctx)) return missingApiKey(ctx, 'unknown');
+    if (!ctx?.baseUrl) return missingBaseUrl();
+    if (!hasCredential(ctx) && !isKeyless(ctx)) return missingApiKey(ctx, 'unknown');
 
-  const extra = ctx.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
-  const body = { ...(req || {}) };
+    const extra = ctx.extraConfig && typeof ctx.extraConfig === 'object' ? ctx.extraConfig : {};
+    const body = { ...(req || {}) };
 
-  if (extra.omitReasoningEffort) delete body.reasoning_effort;
-  if (extra.maxCompletionTokens && body.max_completion_tokens === undefined && body.max_tokens !== undefined) {
-    body.max_completion_tokens = body.max_tokens;
-    delete body.max_tokens;
-  }
-  // Some upstreams (Volcengine Ark plans) reject a request carrying both limits.
-  if (extra.singleMaxTokens && body.max_tokens != null && body.max_completion_tokens != null) {
-    delete body.max_completion_tokens;
-  }
-  if (extra.body && typeof extra.body === 'object' && !Array.isArray(extra.body)) {
-    Object.assign(body, extra.body);
-  }
-  body.model = ctx.model || body.model;
-  body.stream = Boolean(req?.stream);
+    if (extra.omitReasoningEffort) delete body.reasoning_effort;
+    if (extra.maxCompletionTokens && body.max_completion_tokens === undefined && body.max_tokens !== undefined) {
+        body.max_completion_tokens = body.max_tokens;
+        delete body.max_tokens;
+    }
+    // Some upstreams (Volcengine Ark plans) reject a request carrying both limits.
+    if (extra.singleMaxTokens && body.max_tokens != null && body.max_completion_tokens != null) {
+        delete body.max_completion_tokens;
+    }
+    if (extra.body && typeof extra.body === 'object' && !Array.isArray(extra.body)) {
+        Object.assign(body, extra.body);
+    }
+    body.model = ctx.model || body.model;
+    body.stream = Boolean(req?.stream);
 
-  // Ask streaming OpenAI-compatible upstreams for the trailing usage chunk so
-  // gateway token stats work consistently across providers. Only inject when
-  // the caller did not specify `include_usage`, and retry once without it if
-  // the upstream rejects `stream_options` with 400/422.
-  let injectedStreamOptions = false;
-  let createdStreamOptions = false;
-  if (body.stream && body.stream_options?.include_usage === undefined) {
-    createdStreamOptions = !body.stream_options || typeof body.stream_options !== 'object';
-    body.stream_options = {
-      ...(createdStreamOptions ? {} : body.stream_options),
-      include_usage: true,
-    };
-    injectedStreamOptions = true;
-  }
+    // Ask streaming OpenAI-compatible upstreams for the trailing usage chunk so
+    // gateway token stats work consistently across providers. Only inject when
+    // the caller did not specify `include_usage`, and retry once without it if
+    // the upstream rejects `stream_options` with 400/422.
+    let injectedStreamOptions = false;
+    let createdStreamOptions = false;
+    if (body.stream && body.stream_options?.include_usage === undefined) {
+        createdStreamOptions = !body.stream_options || typeof body.stream_options !== 'object';
+        body.stream_options = {
+            ...(createdStreamOptions ? {} : body.stream_options),
+            include_usage: true,
+        };
+        injectedStreamOptions = true;
+    }
 
-  const url = joinUrl(resolveBaseUrl(ctx.baseUrl, extra), '/chat/completions');
-  const doFetch = ctx.fetchImpl || fetch;
-  const headers = { 'Content-Type': 'application/json', ...authHeaders(ctx) };
-  const send = () =>
-    doFetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: ctx.signal,
-    });
+    const url = joinUrl(resolveBaseUrl(ctx.baseUrl, extra), '/chat/completions');
+    const doFetch = ctx.fetchImpl || fetch;
+    const headers = { 'Content-Type': 'application/json', ...authHeaders(ctx) };
+    const send = () =>
+        doFetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal: ctx.signal,
+        });
 
-  let upstream;
-  try {
-    upstream = await send();
-  } catch (error) {
-    return networkError(error);
-  }
-
-  if (!upstream.ok && injectedStreamOptions && (upstream.status === 400 || upstream.status === 422)) {
-    let text = '';
+    let upstream;
     try {
-      text = await upstream.text();
-    } catch {
-      text = '';
-    }
-    if (/stream_options|include_usage/i.test(text)) {
-      if (createdStreamOptions) delete body.stream_options;
-      else delete body.stream_options.include_usage;
-      try {
         upstream = await send();
-      } catch (error) {
+    } catch (error) {
         return networkError(error);
-      }
-      if (!upstream.ok) return upstreamErrorResponse(upstream);
-    } else {
-      return upstreamErrorResponse(new Response(text, { status: upstream.status, headers: upstream.headers || {} }));
     }
-  }
 
-  if (!upstream.ok) return upstreamErrorResponse(upstream);
-  if (body.stream) return new Response(upstream.body, { status: 200, headers: sseHeaders() });
-  return passthroughJson(upstream);
+    if (!upstream.ok && injectedStreamOptions && (upstream.status === 400 || upstream.status === 422)) {
+        let text = '';
+        try {
+            text = await upstream.text();
+        } catch {
+            text = '';
+        }
+        if (/stream_options|include_usage/i.test(text)) {
+            if (createdStreamOptions) delete body.stream_options;
+            else delete body.stream_options.include_usage;
+            try {
+                upstream = await send();
+            } catch (error) {
+                return networkError(error);
+            }
+            if (!upstream.ok) return upstreamErrorResponse(upstream);
+        } else {
+            return upstreamErrorResponse(new Response(text, { status: upstream.status, headers: upstream.headers || {} }));
+        }
+    }
+
+    if (!upstream.ok) return upstreamErrorResponse(upstream);
+    if (body.stream) return new Response(upstream.body, { status: 200, headers: sseHeaders() });
+    return passthroughJson(upstream);
 }
 
 export async function listModels(ctx) {
-  const baseUrl = trimSlash(ctx?.baseUrl);
-  if (!baseUrl) return [];
-  const modelsUrl = /\/v\d+$/.test(baseUrl) ? `${baseUrl}/models` : `${baseUrl}/v1/models`;
-  const doFetch = ctx?.fetchImpl || fetch;
-  const response = await doFetch(modelsUrl, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json', ...authHeaders(ctx) },
-    signal: ctx?.signal,
-  });
-  if (!response.ok) {
-    throw new Error(`OpenAI listModels failed: HTTP ${response.status}`);
-  }
-  const json = await response.json();
-  const list = [json?.data, json?.models, json].find(Array.isArray) || [];
-  return list.map((item) => ({
-    id: typeof item === 'string' ? item : item.id,
-    name: typeof item === 'string' ? item : item.name || item.id,
-  }));
+    const baseUrl = trimSlash(ctx?.baseUrl);
+    if (!baseUrl) return [];
+    const modelsUrl = /\/v\d+$/.test(baseUrl) ? `${baseUrl}/models` : `${baseUrl}/v1/models`;
+    const doFetch = ctx?.fetchImpl || fetch;
+    const response = await doFetch(modelsUrl, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(ctx) },
+        signal: ctx?.signal,
+    });
+    if (!response.ok) {
+        throw new Error(`OpenAI listModels failed: HTTP ${response.status}`);
+    }
+    const json = await response.json();
+    const list = [json?.data, json?.models, json].find(Array.isArray) || [];
+    return list.map((item) => ({
+        id: typeof item === 'string' ? item : item.id,
+        name: typeof item === 'string' ? item : item.name || item.id,
+    }));
 }
 
 export default { id, chat, listModels };

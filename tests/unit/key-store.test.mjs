@@ -6,239 +6,239 @@ import path from 'node:path';
 import { KeyStore, KeyStoreUnreadableError } from '../../server-plugin/lib/key-store.mjs';
 
 function tempRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'omtp-keystore-'));
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'omtp-keystore-'));
 }
 
 test('key store encrypts provider configs and round-trips them', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({ root, resolveStSecret: () => '' });
-  await store.setProviderConfig('mock', {
-    label: 'Mock',
-    adapter: 'openai',
-    baseUrl: 'http://127.0.0.1:4199/v1',
-    apiKey: 'secret-value',
-    custom: true,
-    models: [{ id: 'echo', name: 'Echo' }],
-  });
+    const root = tempRoot();
+    const store = new KeyStore({ root, resolveStSecret: () => '' });
+    await store.setProviderConfig('mock', {
+        label: 'Mock',
+        adapter: 'openai',
+        baseUrl: 'http://127.0.0.1:4199/v1',
+        apiKey: 'secret-value',
+        custom: true,
+        models: [{ id: 'echo', name: 'Echo' }],
+    });
 
-  const raw = fs.readFileSync(path.join(root, 'providers.json'), 'utf8');
-  assert.ok(!raw.includes('secret-value'));
-  assert.match(raw, /enc:v1:/);
-  assert.equal(fs.statSync(path.join(root, 'master.key')).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(path.join(root, 'providers.json')).mode & 0o777, 0o600);
+    const raw = fs.readFileSync(path.join(root, 'providers.json'), 'utf8');
+    assert.ok(!raw.includes('secret-value'));
+    assert.match(raw, /enc:v1:/);
+    assert.equal(fs.statSync(path.join(root, 'master.key')).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(path.join(root, 'providers.json')).mode & 0o777, 0o600);
 
-  const config = await store.getProviderConfig('mock');
-  assert.equal(config.apiKey, 'secret-value');
-  assert.equal(config.label, 'Mock');
-  assert.equal(config.models[0].id, 'echo');
+    const config = await store.getProviderConfig('mock');
+    assert.equal(config.apiKey, 'secret-value');
+    assert.equal(config.label, 'Mock');
+    assert.equal(config.models[0].id, 'echo');
 });
 
 test('key store reports unreadable ciphertext without corrupting it', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({ root, resolveStSecret: () => '' });
-  await store.setProviderConfig('mock', { apiKey: 'first' });
-  const file = path.join(root, 'providers.json');
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-  raw.providers.mock = 'enc:v1:AA==:BB==:CC==';
-  fs.writeFileSync(file, JSON.stringify(raw));
-  const result = await store.getConfigSafe('mock');
-  assert.equal(result.unreadable, true);
-  assert.deepEqual(result.config, {});
-  assert.ok(fs.readFileSync(file, 'utf8').includes('enc:v1:AA=='));
+    const root = tempRoot();
+    const store = new KeyStore({ root, resolveStSecret: () => '' });
+    await store.setProviderConfig('mock', { apiKey: 'first' });
+    const file = path.join(root, 'providers.json');
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    raw.providers.mock = 'enc:v1:AA==:BB==:CC==';
+    fs.writeFileSync(file, JSON.stringify(raw));
+    const result = await store.getConfigSafe('mock');
+    assert.equal(result.unreadable, true);
+    assert.deepEqual(result.config, {});
+    assert.ok(fs.readFileSync(file, 'utf8').includes('enc:v1:AA=='));
 });
 
 test('key resolution order prefers OMTP store over ST and env', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({
-    root,
-    resolveStSecret: (id) => (id === 'env-only' ? '' : 'st-key'),
-    env: { MOCK_API_KEY: 'env-key' },
-  });
-  const provider = { id: 'mock', gatewayAdapter: 'openai', baseUrl: 'http://x/v1', authKind: 'api-key', models: [] };
-  let resolved = await store.resolveProvider(provider);
-  assert.equal(resolved.apiKey, 'st-key');
-  assert.equal(resolved.keySource, 'st');
-  await store.setProviderConfig('mock', { apiKey: 'omtp-key' });
-  resolved = await store.resolveProvider(provider);
-  assert.equal(resolved.apiKey, 'omtp-key');
-  assert.equal(resolved.keySource, 'omtp');
+    const root = tempRoot();
+    const store = new KeyStore({
+        root,
+        resolveStSecret: (id) => (id === 'env-only' ? '' : 'st-key'),
+        env: { MOCK_API_KEY: 'env-key' },
+    });
+    const provider = { id: 'mock', gatewayAdapter: 'openai', baseUrl: 'http://x/v1', authKind: 'api-key', models: [] };
+    let resolved = await store.resolveProvider(provider);
+    assert.equal(resolved.apiKey, 'st-key');
+    assert.equal(resolved.keySource, 'st');
+    await store.setProviderConfig('mock', { apiKey: 'omtp-key' });
+    resolved = await store.resolveProvider(provider);
+    assert.equal(resolved.apiKey, 'omtp-key');
+    assert.equal(resolved.keySource, 'omtp');
 
-  const envOnly = { ...provider, id: 'env-only', envVars: ['MOCK_API_KEY'] };
-  resolved = await store.resolveProvider(envOnly);
-  assert.equal(resolved.apiKey, 'env-key');
-  assert.equal(resolved.keySource, 'env');
+    const envOnly = { ...provider, id: 'env-only', envVars: ['MOCK_API_KEY'] };
+    resolved = await store.resolveProvider(envOnly);
+    assert.equal(resolved.apiKey, 'env-key');
+    assert.equal(resolved.keySource, 'env');
 });
 
 test('signing out also drops the key inherited from SillyTavern secrets', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({ root, resolveStSecret: () => 'st-key' });
-  const provider = { id: 'deepseek', gatewayAdapter: 'openai', baseUrl: 'http://x/v1', authKind: 'api-key', models: [] };
+    const root = tempRoot();
+    const store = new KeyStore({ root, resolveStSecret: () => 'st-key' });
+    const provider = { id: 'deepseek', gatewayAdapter: 'openai', baseUrl: 'http://x/v1', authKind: 'api-key', models: [] };
 
-  // No OMTP config at all: the key is read straight from SillyTavern.
-  let resolved = await store.resolveProvider(provider);
-  assert.equal(resolved.keySource, 'st');
-  assert.equal(resolved.available, true);
+    // No OMTP config at all: the key is read straight from SillyTavern.
+    let resolved = await store.resolveProvider(provider);
+    assert.equal(resolved.keySource, 'st');
+    assert.equal(resolved.available, true);
 
-  await store.clearProviderKey('deepseek');
+    await store.clearProviderKey('deepseek');
 
-  resolved = await store.resolveProvider(provider);
-  assert.equal(resolved.keySource, 'none');
-  assert.equal(resolved.apiKey, '');
-  assert.equal(resolved.available, false);
+    resolved = await store.resolveProvider(provider);
+    assert.equal(resolved.keySource, 'none');
+    assert.equal(resolved.apiKey, '');
+    assert.equal(resolved.available, false);
 
-  // Saving a key in OMTP restores normal behaviour for a later sign-out.
-  await store.setProviderConfig('deepseek', { apiKey: 'omtp-key', ignoreStSecret: false });
-  await store.clearProviderKey('deepseek');
-  resolved = await store.resolveProvider(provider);
-  assert.equal(resolved.keySource, 'none');
+    // Saving a key in OMTP restores normal behaviour for a later sign-out.
+    await store.setProviderConfig('deepseek', { apiKey: 'omtp-key', ignoreStSecret: false });
+    await store.clearProviderKey('deepseek');
+    resolved = await store.resolveProvider(provider);
+    assert.equal(resolved.keySource, 'none');
 });
 
 test('concurrent writes keep every provider', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({ root, resolveStSecret: () => '' });
-  await store.setProviderConfig('seed', { apiKey: 'seed-key' });
+    const root = tempRoot();
+    const store = new KeyStore({ root, resolveStSecret: () => '' });
+    await store.setProviderConfig('seed', { apiKey: 'seed-key' });
 
-  const [alpha, beta] = await Promise.all([
-    store.setProviderConfig('alpha', { apiKey: 'alpha-key' }),
-    store.setProviderConfig('beta', { apiKey: 'beta-key' }),
-  ]);
-  assert.equal(alpha.hasKey, true);
-  assert.equal(beta.hasKey, true);
+    const [alpha, beta] = await Promise.all([
+        store.setProviderConfig('alpha', { apiKey: 'alpha-key' }),
+        store.setProviderConfig('beta', { apiKey: 'beta-key' }),
+    ]);
+    assert.equal(alpha.hasKey, true);
+    assert.equal(beta.hasKey, true);
 
-  const stored = JSON.parse(fs.readFileSync(path.join(root, 'providers.json'), 'utf8'));
-  assert.deepEqual(Object.keys(stored.providers).sort(), ['alpha', 'beta', 'seed']);
-  assert.equal((await store.getProviderConfig('seed')).apiKey, 'seed-key');
-  assert.equal((await store.getProviderConfig('alpha')).apiKey, 'alpha-key');
-  assert.equal((await store.getProviderConfig('beta')).apiKey, 'beta-key');
+    const stored = JSON.parse(fs.readFileSync(path.join(root, 'providers.json'), 'utf8'));
+    assert.deepEqual(Object.keys(stored.providers).sort(), ['alpha', 'beta', 'seed']);
+    assert.equal((await store.getProviderConfig('seed')).apiKey, 'seed-key');
+    assert.equal((await store.getProviderConfig('alpha')).apiKey, 'alpha-key');
+    assert.equal((await store.getProviderConfig('beta')).apiKey, 'beta-key');
 });
 
 test('a concurrent write cannot resurrect a signed-out key', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({ root, resolveStSecret: () => '' });
-  await store.setProviderConfig('mock', { apiKey: 'mock-key' });
+    const root = tempRoot();
+    const store = new KeyStore({ root, resolveStSecret: () => '' });
+    await store.setProviderConfig('mock', { apiKey: 'mock-key' });
 
-  await Promise.all([
-    store.clearProviderKey('mock'),
-    store.setProviderConfig('other', { apiKey: 'other-key' }),
-  ]);
+    await Promise.all([
+        store.clearProviderKey('mock'),
+        store.setProviderConfig('other', { apiKey: 'other-key' }),
+    ]);
 
-  const mock = await store.getProviderConfig('mock');
-  assert.equal(mock.apiKey, undefined);
-  assert.equal((await store.getProviderConfig('other')).apiKey, 'other-key');
+    const mock = await store.getProviderConfig('mock');
+    assert.equal(mock.apiKey, undefined);
+    assert.equal((await store.getProviderConfig('other')).apiKey, 'other-key');
 });
 
 test('concurrent first writes share one master key', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({ root, resolveStSecret: () => '' });
+    const root = tempRoot();
+    const store = new KeyStore({ root, resolveStSecret: () => '' });
 
-  await Promise.all([
-    store.setProviderConfig('alpha', { apiKey: 'alpha-key' }),
-    store.setProviderConfig('beta', { apiKey: 'beta-key' }),
-  ]);
+    await Promise.all([
+        store.setProviderConfig('alpha', { apiKey: 'alpha-key' }),
+        store.setProviderConfig('beta', { apiKey: 'beta-key' }),
+    ]);
 
-  const masterKey = fs.readFileSync(path.join(root, 'master.key'), 'utf8').trim();
-  assert.match(masterKey, /^[0-9a-f]{64}$/);
-  assert.equal((await store.getProviderConfig('alpha')).apiKey, 'alpha-key');
-  assert.equal((await store.getProviderConfig('beta')).apiKey, 'beta-key');
+    const masterKey = fs.readFileSync(path.join(root, 'master.key'), 'utf8').trim();
+    assert.match(masterKey, /^[0-9a-f]{64}$/);
+    assert.equal((await store.getProviderConfig('alpha')).apiKey, 'alpha-key');
+    assert.equal((await store.getProviderConfig('beta')).apiKey, 'beta-key');
 });
 
 test('saving refuses to overwrite unreadable ciphertext', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({ root, resolveStSecret: () => '' });
-  await store.setProviderConfig('mock', { apiKey: 'first' });
-  const file = path.join(root, 'providers.json');
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-  raw.providers.mock = 'enc:v1:AA==:BB==:CC==';
-  fs.writeFileSync(file, JSON.stringify(raw));
-  const before = fs.readFileSync(file, 'utf8');
+    const root = tempRoot();
+    const store = new KeyStore({ root, resolveStSecret: () => '' });
+    await store.setProviderConfig('mock', { apiKey: 'first' });
+    const file = path.join(root, 'providers.json');
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    raw.providers.mock = 'enc:v1:AA==:BB==:CC==';
+    fs.writeFileSync(file, JSON.stringify(raw));
+    const before = fs.readFileSync(file, 'utf8');
 
-  await assert.rejects(store.setProviderConfig('mock', { apiKey: 'second' }), KeyStoreUnreadableError);
-  assert.equal(fs.readFileSync(file, 'utf8'), before);
+    await assert.rejects(store.setProviderConfig('mock', { apiKey: 'second' }), KeyStoreUnreadableError);
+    assert.equal(fs.readFileSync(file, 'utf8'), before);
 });
 
 test('a corrupt providers.json is never overwritten', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({ root, resolveStSecret: () => '' });
-  await store.setProviderConfig('mock', { apiKey: 'first' });
-  const file = path.join(root, 'providers.json');
-  fs.writeFileSync(file, '{ not json');
+    const root = tempRoot();
+    const store = new KeyStore({ root, resolveStSecret: () => '' });
+    await store.setProviderConfig('mock', { apiKey: 'first' });
+    const file = path.join(root, 'providers.json');
+    fs.writeFileSync(file, '{ not json');
 
-  await assert.rejects(store.setProviderConfig('mock', { apiKey: 'second' }), KeyStoreUnreadableError);
-  assert.equal(fs.readFileSync(file, 'utf8'), '{ not json');
+    await assert.rejects(store.setProviderConfig('mock', { apiKey: 'second' }), KeyStoreUnreadableError);
+    assert.equal(fs.readFileSync(file, 'utf8'), '{ not json');
 });
 
 test('userAgentSpoof round-trips and clears back to the catalog default', async () => {
-  const store = new KeyStore({ root: tempRoot(), resolveStSecret: () => '' });
-  await store.setProviderConfig('opencode-go', { userAgentSpoof: false });
-  assert.equal((await store.getProviderConfig('opencode-go')).userAgentSpoof, false);
-  const resolved = await store.resolveProvider({
-    id: 'opencode-go',
-    gatewayAdapter: 'openai',
-    baseUrl: 'https://opencode.ai/inference/go/v1',
-    models: [],
-  });
-  assert.equal(resolved.userAgentSpoof, false);
+    const store = new KeyStore({ root: tempRoot(), resolveStSecret: () => '' });
+    await store.setProviderConfig('opencode-go', { userAgentSpoof: false });
+    assert.equal((await store.getProviderConfig('opencode-go')).userAgentSpoof, false);
+    const resolved = await store.resolveProvider({
+        id: 'opencode-go',
+        gatewayAdapter: 'openai',
+        baseUrl: 'https://opencode.ai/inference/go/v1',
+        models: [],
+    });
+    assert.equal(resolved.userAgentSpoof, false);
 
-  await store.setProviderConfig('opencode-go', { userAgentSpoof: null });
-  assert.equal('userAgentSpoof' in (await store.getProviderConfig('opencode-go')), false);
-  const cleared = await store.resolveProvider({
-    id: 'opencode-go',
-    gatewayAdapter: 'openai',
-    baseUrl: 'https://opencode.ai/inference/go/v1',
-    models: [],
-  });
-  assert.equal(cleared.userAgentSpoof, true);
+    await store.setProviderConfig('opencode-go', { userAgentSpoof: null });
+    assert.equal('userAgentSpoof' in (await store.getProviderConfig('opencode-go')), false);
+    const cleared = await store.resolveProvider({
+        id: 'opencode-go',
+        gatewayAdapter: 'openai',
+        baseUrl: 'https://opencode.ai/inference/go/v1',
+        models: [],
+    });
+    assert.equal(cleared.userAgentSpoof, true);
 });
 
 test('M3: overriding baseUrl drops stored apiKey and blocks ST/env secret fallback', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({
-    root,
-    resolveStSecret: () => 'st-secret',
-    env: { OPENAI_API_KEY: 'env-secret' },
-  });
-  const catalogProvider = {
-    id: 'openai',
-    gatewayAdapter: 'openai',
-    baseUrl: 'https://api.openai.com/v1',
-    envVars: ['OPENAI_API_KEY'],
-    authKind: 'api-key',
-    models: [],
-  };
+    const root = tempRoot();
+    const store = new KeyStore({
+        root,
+        resolveStSecret: () => 'st-secret',
+        env: { OPENAI_API_KEY: 'env-secret' },
+    });
+    const catalogProvider = {
+        id: 'openai',
+        gatewayAdapter: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        envVars: ['OPENAI_API_KEY'],
+        authKind: 'api-key',
+        models: [],
+    };
 
-  // Same-origin path change keeps stored key.
-  await store.setProviderConfig('openai', { apiKey: 'stored-key' }, { fallbackBaseUrl: catalogProvider.baseUrl });
-  await store.setProviderConfig('openai', { baseUrl: 'https://api.openai.com/v2' }, { fallbackBaseUrl: catalogProvider.baseUrl });
-  assert.equal((await store.getProviderConfig('openai')).apiKey, 'stored-key');
+    // Same-origin path change keeps stored key.
+    await store.setProviderConfig('openai', { apiKey: 'stored-key' }, { fallbackBaseUrl: catalogProvider.baseUrl });
+    await store.setProviderConfig('openai', { baseUrl: 'https://api.openai.com/v2' }, { fallbackBaseUrl: catalogProvider.baseUrl });
+    assert.equal((await store.getProviderConfig('openai')).apiKey, 'stored-key');
 
-  // Foreign-origin baseUrl override without apiKey drops stored key and blocks ST/env fallback.
-  await store.setProviderConfig('openai', { baseUrl: 'https://evil.example/v1' }, { fallbackBaseUrl: catalogProvider.baseUrl });
-  assert.equal((await store.getProviderConfig('openai')).apiKey, undefined);
+    // Foreign-origin baseUrl override without apiKey drops stored key and blocks ST/env fallback.
+    await store.setProviderConfig('openai', { baseUrl: 'https://evil.example/v1' }, { fallbackBaseUrl: catalogProvider.baseUrl });
+    assert.equal((await store.getProviderConfig('openai')).apiKey, undefined);
 
-  const resolved = await store.resolveProvider(catalogProvider);
-  assert.equal(resolved.baseUrl, 'https://evil.example/v1');
-  assert.equal(resolved.apiKey, '');
-  assert.equal(resolved.keySource, 'none');
-  assert.equal(resolved.available, false);
+    const resolved = await store.resolveProvider(catalogProvider);
+    assert.equal(resolved.baseUrl, 'https://evil.example/v1');
+    assert.equal(resolved.apiKey, '');
+    assert.equal(resolved.keySource, 'none');
+    assert.equal(resolved.available, false);
 });
 
 test('clearProviderKey validates providerId and prototype keys do not leak', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({ root, resolveStSecret: () => '' });
-  for (const badId of ['', '../bad', '__proto__', 'a/b']) {
-    await assert.rejects(() => store.clearProviderKey(badId), /Invalid provider id/);
-  }
-  assert.equal(await store.deleteProviderConfig('toString'), false);
-  assert.deepEqual(await store.getProviderConfig('constructor'), {});
+    const root = tempRoot();
+    const store = new KeyStore({ root, resolveStSecret: () => '' });
+    for (const badId of ['', '../bad', '__proto__', 'a/b']) {
+        await assert.rejects(() => store.clearProviderKey(badId), /Invalid provider id/);
+    }
+    assert.equal(await store.deleteProviderConfig('toString'), false);
+    assert.deepEqual(await store.getProviderConfig('constructor'), {});
 });
 
 test('external edits to providers.json are seen despite read cache', async () => {
-  const root = tempRoot();
-  const store = new KeyStore({ root, resolveStSecret: () => '' });
-  await store.setProviderConfig('mock', { apiKey: 'v1' });
-  assert.equal((await store.getProviderConfig('mock')).apiKey, 'v1');
+    const root = tempRoot();
+    const store = new KeyStore({ root, resolveStSecret: () => '' });
+    await store.setProviderConfig('mock', { apiKey: 'v1' });
+    assert.equal((await store.getProviderConfig('mock')).apiKey, 'v1');
 
-  const store2 = new KeyStore({ root, resolveStSecret: () => '' });
-  await store2.setProviderConfig('mock', { apiKey: 'v2' });
-  assert.equal((await store.getProviderConfig('mock')).apiKey, 'v2');
+    const store2 = new KeyStore({ root, resolveStSecret: () => '' });
+    await store2.setProviderConfig('mock', { apiKey: 'v2' });
+    assert.equal((await store.getProviderConfig('mock')).apiKey, 'v2');
 });
