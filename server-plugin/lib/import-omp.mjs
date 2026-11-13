@@ -14,7 +14,7 @@ const AUTH_QUERY = "SELECT provider, credential_type, data FROM auth_credentials
 
 async function queryAuthCredentialsFallback(dbPath) {
     try {
-        const { stdout } = await execFileAsync('sqlite3', ['-json', dbPath, AUTH_QUERY], { timeout: 10000 });
+        const { stdout } = await execFileAsync('sqlite3', ['-readonly', '-json', dbPath, AUTH_QUERY], { timeout: 10000 });
         const parsed = JSON.parse(stdout || '[]');
         if (Array.isArray(parsed)) return parsed;
     } catch {
@@ -23,7 +23,7 @@ async function queryAuthCredentialsFallback(dbPath) {
 
     for (const py of ['python3', 'python']) {
         try {
-            const script = 'import sqlite3, json, sys\nconn = sqlite3.connect(sys.argv[1])\nconn.row_factory = sqlite3.Row\nc = conn.cursor()\nc.execute(sys.argv[2])\nrows = [dict(r) for r in c.fetchall()]\nprint(json.dumps(rows))';
+            const script = 'import pathlib, sqlite3, json, sys\nuri = pathlib.Path(sys.argv[1]).resolve().as_uri() + "?mode=ro"\nconn = sqlite3.connect(uri, uri=True)\nconn.row_factory = sqlite3.Row\nc = conn.cursor()\nc.execute(sys.argv[2])\nrows = [dict(r) for r in c.fetchall()]\nprint(json.dumps(rows))';
             const { stdout } = await execFileAsync(py, ['-c', script, dbPath, AUTH_QUERY], { timeout: 10000 });
             const parsed = JSON.parse(stdout || '[]');
             if (Array.isArray(parsed)) return parsed;
@@ -128,16 +128,16 @@ function credentialPatch(row) {
  * sessions for providers the gateway knows how to drive. Disabled rows are
  * skipped. The `omp` binary is never executed.
  *
- * @param {{keyStore:any, homeDir?:string}} options
- * @returns {Promise<{available:boolean, imported:number, providers:string[], error?:string}>}
+ * @param {{keyStore:any, homeDir?:string, _forceFallback?:boolean}} options
+ * @returns {Promise<{available:boolean, imported:number, providers:string[], skipped:Array<{provider:string, reason:string}>, error?:string}>}
  */
 export async function importOmpCredentials({ keyStore, homeDir = os.homedir(), _forceFallback = false }) {
     const dbPath = path.join(homeDir, '.omp', 'agent', 'agent.db');
     try {
         const stat = await fs.promises.stat(dbPath);
-        if (!stat.isFile()) return { available: false, imported: 0, providers: [] };
+        if (!stat.isFile()) return { available: false, imported: 0, providers: [], skipped: [] };
     } catch {
-        return { available: false, imported: 0, providers: [] };
+        return { available: false, imported: 0, providers: [], skipped: [] };
     }
 
     /** @type {any[]} */
@@ -158,22 +158,29 @@ export async function importOmpCredentials({ keyStore, homeDir = os.homedir(), _
         } else {
             const fallbackRows = await queryAuthCredentialsFallback(dbPath);
             if (fallbackRows === null) {
-                return { available: false, imported: 0, providers: [], error: 'SQLite reader unavailable (node:sqlite, sqlite3 CLI, or python3 required)' };
+                return { available: false, imported: 0, providers: [], skipped: [], error: 'SQLite reader unavailable (node:sqlite, sqlite3 CLI, or python3 required)' };
             }
             rows = fallbackRows;
         }
         const imported = new Set();
+        /** @type {Array<{provider:string, reason:string}>} */
+        const skipped = [];
         for (const row of rows) {
             const patch = credentialPatch(row);
             if (!patch) continue;
-            await keyStore.setProviderConfig(patch.provider, { apiKey: patch.apiKey });
-            imported.add(patch.provider);
+            try {
+                await keyStore.setProviderConfig(patch.provider, { apiKey: patch.apiKey });
+                imported.add(patch.provider);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                skipped.push({ provider: patch.provider, reason: message });
+            }
         }
-        return { available: true, imported: imported.size, providers: [...imported].sort() };
+        return { available: true, imported: imported.size, providers: [...imported].sort(), skipped };
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logError('failed to import OMP credentials', error);
-        return { available: true, imported: 0, providers: [], error: message };
+        return { available: true, imported: 0, providers: [], skipped: [], error: message };
     } finally {
         try {
             db?.close?.();
@@ -251,6 +258,7 @@ export async function importFromOmp(options = {}) {
             result.credentials = credentials.imported;
             result.credentialsAvailable = credentials.available;
             result.credentialProviders = credentials.providers;
+            if (credentials.skipped?.length) result.credentialSkipped = credentials.skipped;
             if (credentials.error) result.credentialError = credentials.error;
         }
     }
