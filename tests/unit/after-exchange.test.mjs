@@ -138,17 +138,17 @@ test('zai-mint-key provisions the durable key through the business APIs', async 
         throw new Error(`unexpected ${href}`);
     };
 
-    const enriched = await applyAfterExchange('zai-mint-key', credential(), {
+    const enriched = await applyAfterExchange('zai-mint-key', credential({ expires: 12345 }), {
         provider: 'zai-coding-plan',
         fetch: doFetch,
         env: {},
     });
 
     assert.equal(enriched.access, 'key-1.secret-1');
-    assert.equal(enriched.refresh, 'refresh-token');
+    assert.equal(enriched.refresh, undefined);
+    assert.equal(enriched.expires, undefined);
     const login = calls.find((call) => call.url.endsWith('/api/auth/z/login'));
     assert.deepEqual(JSON.parse(login.body), { token: 'access-token' });
-    // The minted sequence authenticates with the business token, never the
     // short-lived OAuth access token.
     for (const call of calls.slice(1)) {
         assert.equal(call.authorization, 'Bearer biz-token');
@@ -195,7 +195,7 @@ test('muse-code-key attaches the subscription key and reuses an existing one', a
         calls.push({ url: String(url), headers: init.headers, body: init.body });
         return json({ api_key: 'muse-key', user_email: 'User@Example.com', user_id: 'u-1', is_subs_active: true });
     };
-    const credentialValue = credential({ access: 'oauth-token' });
+    const credentialValue = credential({ access: 'oauth-token', expires: 12345 });
     const enriched = await applyAfterExchange('muse-code-key', credentialValue, { fetch: doFetch });
 
     // `access` must be the request bearer; the Meta token is preserved beside it.
@@ -203,7 +203,8 @@ test('muse-code-key attaches the subscription key and reuses an existing one', a
     assert.equal(enriched.oauthAccessToken, 'oauth-token');
     assert.equal(enriched.accountId, 'u-1');
     assert.equal(enriched.email, 'user@example.com');
-    assert.equal(calls.length, 1);
+    assert.equal(enriched.refresh, undefined);
+    assert.equal(enriched.expires, undefined);
     assert.equal(calls[0].url, 'https://api.meta.ai/muse-code/key');
     assert.equal(calls[0].headers['x-api-version'], '1.0.0');
     assert.equal(calls[0].headers.Authorization, 'Bearer oauth-token');
@@ -217,12 +218,14 @@ test('muse-code-key attaches the subscription key and reuses an existing one', a
 });
 
 test('muse-code-key normalizes an OMP-shaped stored credential without re-minting', async () => {
-    const ompShape = credential({ access: JSON.stringify({ oauthAccessToken: 'oauth-token', apiKey: 'muse-key' }) });
+    const ompShape = credential({ access: JSON.stringify({ oauthAccessToken: 'oauth-token', apiKey: 'muse-key' }), expires: 12345 });
     const normalized = await applyAfterExchange('muse-code-key', ompShape, {
         fetch: async () => { throw new Error('must not call the network'); },
     });
     assert.equal(normalized.access, 'muse-key');
     assert.equal(normalized.oauthAccessToken, 'oauth-token');
+    assert.equal(normalized.refresh, undefined);
+    assert.equal(normalized.expires, undefined);
 });
 
 test('muse-code-key explains an inactive subscription', async () => {
