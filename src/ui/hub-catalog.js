@@ -1,21 +1,23 @@
 /**
  * Catalog loading, entry registry and provider grouping for the hub.
  */
-import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
-
-const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
 import { Fuse } from '../../../../../../lib.js';
 import * as catalogApi from '../catalog.js';
 import * as engine from '../switch-engine.js';
 import { loadPersonality, personalityFor } from '../personality.js';
 import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
 import { LAB_PROVIDERS, MAINSTREAM_PROVIDERS, PROFILE_PROVIDER_ID } from '../constants.js';
-import { apiBase, apiHeaders } from '../backend.js';
 import { tr } from './dom.js';
 import { notify } from './helpers.js';
 import { state } from './hub-state.js';
 import { entryKey, refKey, settings } from './hub-utils.js';
 import { refreshSelectionUI, renderAll } from './hub-quick.js';
+
+let lastBaseEntries = null;
+let cachedModelEntries = [];
+let availabilityVersion = 0;
+let lastAvailabilityVersion = -1;
+let lastProfileKeys = [];
 
 /**
  * Load the catalog through catalog.js, or force a re-fetch when asked.
@@ -71,16 +73,13 @@ export async function loadCatalogOnce(force = false) {
  */
 export async function loadProviderAvailability() {
     try {
-        const response = await fetch(`${apiBase()}/providers`, {
-            headers: getRequestHeaders(),
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        const list = Array.isArray(data?.providers) ? data.providers : [];
-        state.providerAvailability = new Map(list.map((provider) => [String(provider.id), provider]));
-        catalogApi.setProviderAvailability(state.providerAvailability);
+        await catalogApi.refreshProviderAvailability({ force: true });
+        state.providerAvailability = catalogApi.getProviderAvailability();
     } catch {
         state.providerAvailability = new Map();
+        catalogApi.setProviderAvailability(state.providerAvailability);
+    } finally {
+        availabilityVersion += 1;
     }
 }
 
@@ -91,20 +90,61 @@ export function rebuildEntries() {
     if (!state.initialized || state.isCleaningUp) {
         return;
     }
-    let list = [];
+    let baseList = [];
+    let fullList = [];
     try {
-        list = catalogApi.getEntries() ?? [];
+        baseList = catalogApi.getEntries({ profiles: [] }) ?? [];
+        fullList = catalogApi.getEntries() ?? baseList;
     } catch (error) {
         console.warn('[omtp] getEntries failed', error);
     }
-    state.entries = Array.isArray(list) ? list.filter(Boolean).map((entry) => {
-        const next = {
+    const safeBase = Array.isArray(baseList) ? baseList : [];
+    const safeFull = Array.isArray(fullList) ? fullList : safeBase;
+    const profileEntries = safeFull.length > safeBase.length
+        ? safeFull.slice(safeBase.length).filter(Boolean).map((entry) => ({
             ...entry,
             key: entry.key || `${entry.kind}/${entry.provider}/${entry.model}`,
-        };
-        return catalogApi.withProviderAvailability(next);
-    }) : [];
-    rebuildFuse();
+        }))
+        : [];
+
+    const catalogChanged = !state.entries.length
+        || safeBase !== lastBaseEntries
+        || availabilityVersion !== lastAvailabilityVersion;
+
+    if (catalogChanged) {
+        cachedModelEntries = safeBase.filter(Boolean).map((entry) => {
+            const next = {
+                ...entry,
+                key: entry.key || `${entry.kind}/${entry.provider}/${entry.model}`,
+            };
+            return catalogApi.withProviderAvailability(next);
+        });
+        lastBaseEntries = safeBase;
+        lastAvailabilityVersion = availabilityVersion;
+        const map = new Map();
+        for (const entry of cachedModelEntries) {
+            map.set(entry.key, entry);
+        }
+        state.entryByKey = map;
+    } else if (state.entryByKey) {
+        for (const oldKey of lastProfileKeys) {
+            state.entryByKey.delete(oldKey);
+        }
+    }
+
+    const nextProfileKeys = [];
+    for (const entry of profileEntries) {
+        state.entryByKey.set(entry.key, entry);
+        nextProfileKeys.push(entry.key);
+    }
+    lastProfileKeys = nextProfileKeys;
+    state.entries = profileEntries.length
+        ? cachedModelEntries.concat(profileEntries)
+        : cachedModelEntries;
+
+    if (catalogChanged) {
+        rebuildFuse();
+    }
     if (state.isOpen) {
         renderAll();
     }
@@ -199,7 +239,7 @@ export function resolveRef(ref) {
     // The local list already carries live provider availability; the catalog
     // module's copy is the raw, optimistic one.
     const key = refKey(ref);
-    const local = state.entries.find((entry) => entryKey(entry) === key);
+    const local = state.entryByKey.get(key);
     if (local) {
         return local;
     }
@@ -237,7 +277,7 @@ export function getCurrentRef() {
  */
 export function getSelectedEntry() {
     if (state.selectedEntryKey) {
-        const found = state.entries.find((entry) => entryKey(entry) === state.selectedEntryKey);
+        const found = state.entryByKey.get(state.selectedEntryKey);
         if (found) {
             return found;
         }

@@ -8,6 +8,8 @@ export const state = {
     /** @type {Array<object>} */
     entries: [],
     /** @type {Map<string, object>} */
+    entryByKey: new Map(),
+    /** @type {Map<string, object>} */
     providerGroups: new Map(),
     /** @type {object|null} Fuse index over the visible entries. */
     fuse: null,
@@ -23,6 +25,8 @@ export const state = {
     selectedProvider: null,
     /** @type {string|null} */
     selectedEntryKey: null,
+    /** @type {string|null} Entry key last rendered in the details pane. */
+    detailsKey: null,
     searchQuery: '',
     /** @type {ReturnType<typeof setTimeout>|null} */
     searchTimer: null,

@@ -19,6 +19,7 @@ import { describeError, tr, trf } from './dom.js';
 import { el, notify } from './helpers.js';
 import { state } from './hub-state.js';
 import {
+    cssEscape,
     entryKey,
     formatNumber,
     isFavoriteEntry,
@@ -34,7 +35,7 @@ import {
 import { getSelectedEntry, providerLabel, rebuildEntries } from './hub-catalog.js';
 import { renderList } from './hub-list.js';
 import { revealLoginRow, renderProviderList } from './hub-sidebar.js';
-import { renderProfileDetails } from './hub-profiles.js';
+import { renderProfileDetails } from './hub-profile-pane.js';
 import { armQuickSlot, syncTabs } from './hub-quick.js';
 import {
     copySelector,
@@ -246,7 +247,7 @@ function renderReasoningControl(entry, key) {
     const supportsReasoning = Boolean(entry.reasoning) || (Array.isArray(entry.efforts) && entry.efforts.length > 0);
     reasoningSelect.disabled = !supportsReasoning;
     if (!supportsReasoning) {
-        reasoningSelect.title = 'This model does not expose reasoning effort';
+        reasoningSelect.title = tr('omtp_reasoning_unsupported', 'This model does not expose reasoning effort');
     }
     reasoningSelect.value = settings().reasoningByEntry?.[key] || 'auto';
     reasoningSelect.addEventListener('change', () => setReasoning(entry, reasoningSelect.value));
@@ -263,7 +264,7 @@ function renderUnavailableWarning(entry) {
     const status = state.providerAvailability.get(String(entry.providerId || entry.provider));
     const warnBox = el('div', 'omtp-unavail-warning-box');
     warnBox.textContent = status?.keyInvalid
-        ? trf('omtp_provider_key_rejected', '⚠️ The stored key was rejected (${0}). Replace it below.', status.keyInvalidReason || 'auth error')
+        ? trf('omtp_provider_key_rejected', '⚠️ The stored key was rejected (${0}). Replace it below.', status.keyInvalidReason || tr('omtp_auth_error', 'auth error'))
         : tr('omtp_provider_needs_key', '⚠️ This provider has no API key or login. Add credentials below to use it.');
     return warnBox;
 }
@@ -272,20 +273,16 @@ function renderUnavailableWarning(entry) {
  * Action bar for a selected entry.
  * @param {object} entry
  * @param {object} ref
- * @param {HTMLElement} details
- * @returns {HTMLElement}
+ * @returns {{bar: HTMLElement, warning: HTMLElement|null}}
  */
-function renderDetailsActions(entry, ref, details) {
+function renderDetailsActions(entry, ref) {
     const actions = el('div', 'omtp-details-actions');
 
     const useButton = actionButton('omtp-use-model', tr('omtp_use_model', 'Use model'), () => useEntry(entry), 'omtp-wide');
     useButton.disabled = entry.available === false;
     actions.append(useButton);
 
-    if (entry.available === false) {
-        details.append(renderUnavailableWarning(entry));
-    }
-
+    const warning = entry.available === false ? renderUnavailableWarning(entry) : null;
     const favorite = isFavoriteEntry(entry);
     actions.append(actionButton(
         'omtp-fav-toggle',
@@ -325,7 +322,7 @@ function renderDetailsActions(entry, ref, details) {
 
     actions.append(actionButton('omtp-copy-selector', tr('omtp_copy_selector', 'Copy selector'), () => copySelector(entry)));
 
-    return actions;
+    return { bar: actions, warning };
 }
 
 /** @param {{keyInvalid?: boolean}} [status] @param {object} entry */
@@ -359,8 +356,8 @@ export function renderDetails() {
     if (!details) {
         return;
     }
+    const prevScrollTop = details.scrollTop;
     details.replaceChildren();
-    details.scrollTop = 0;
     // Only visible in the narrow-screen sheet: the way back to the list.
     const back = el('button', 'omtp-details-back menu_button', `‹ ${tr('omtp_back_to_list', 'Back to list')}`);
     back.type = 'button';
@@ -368,19 +365,25 @@ export function renderDetails() {
     details.append(back);
     const entry = getSelectedEntry();
     if (!entry) {
+        state.detailsKey = null;
+        details.scrollTop = 0;
         details.append(el('div', 'omtp-empty-state', tr('omtp_details_empty', 'Select a model to see its details.')));
         return;
     }
+
+    const key = entryKey(entry);
+    const sameEntry = state.detailsKey === key;
+    state.detailsKey = key;
 
     // Profiles are saved connections, not models: they get their own pane with
     // apply / edit / duplicate / delete instead of model capabilities.
     if (entry.kind === 'profile') {
         renderProfileDetails(entry, details);
+        details.scrollTop = sameEntry ? prevScrollTop : 0;
         return;
     }
 
     const ref = refOf(entry);
-    const key = entryKey(entry);
     details.append(el('h3', null, entry.modelLabel || entry.model));
     details.append(el('div', 'omtp-details-id', entry.model));
     details.append(el('span', `omtp-badge omtp-badge-${sourceOf(entry).toLowerCase()}`, sourceLabel(entry)));
@@ -398,8 +401,13 @@ export function renderDetails() {
     }
 
     details.append(renderReasoningControl(entry, key));
-    details.append(renderDetailsActions(entry, ref, details));
+    const { bar, warning } = renderDetailsActions(entry, ref);
+    if (warning) {
+        details.append(warning);
+    }
+    details.append(bar);
     renderInHubProviderCard(entry, details);
+    details.scrollTop = sameEntry ? prevScrollTop : 0;
 }
 
 /**
@@ -476,14 +484,13 @@ export function toggleFavorite(entry) {
         : [ref, ...favorites].slice(0, MAX_FAVORITES);
     persist({ favorites: next });
     if (state.isOpen) {
-        // renderList() rebuilds every row; keep the list where the user was,
-        // otherwise starring a model deep in the list jumps back to the top.
-        const listElement = document.getElementById('omtp-model-list');
-        const scrollTop = listElement?.scrollTop ?? 0;
-        renderList();
-        if (listElement) {
-            listElement.scrollTop = scrollTop;
-        }
+        const nowFavorite = !exists;
+        const title = nowFavorite ? tr('omtp_unfavorite', 'Unfavorite') : tr('omtp_favorite', 'Favorite');
+        document.querySelectorAll(`#omtp-model-list .omtp-model-row[data-key="${cssEscape(key)}"] .omtp-star`).forEach((star) => {
+            star.classList.toggle('omtp-on', nowFavorite);
+            star.title = title;
+            star.setAttribute('aria-label', title);
+        });
         renderDetails();
     }
 }

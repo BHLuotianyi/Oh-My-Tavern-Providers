@@ -137,7 +137,7 @@ export async function useEntry(entry, { throwOnError = false } = {}) {
 /**
  * Reveal SillyTavern's Connection Profiles panel.
  *
- * The hub edits profiles itself (see hub-profiles.js); this shortcut stays for
+ * The hub edits profiles itself (see hub-profile-pane.js); this shortcut stays for
  * the settings SillyTavern owns beyond the profile fields (API presets, prompt
  * managers) and for users who prefer the native panel.
  */

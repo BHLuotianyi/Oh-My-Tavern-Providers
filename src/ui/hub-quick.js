@@ -24,7 +24,7 @@ import {
     visibleEntries,
 } from './hub-catalog.js';
 import { renderDetails } from './hub-details.js';
-import { renderList } from './hub-list.js';
+import { ensureRowRendered, renderList } from './hub-list.js';
 import { renderProviderList } from './hub-sidebar.js';
 import { getEffectiveBinding, useEntry } from './hub-actions.js';
 
@@ -188,6 +188,7 @@ function focusEntry(entry) {
  * @param {string} key
  */
 function scrollToEntryRow(key) {
+    ensureRowRendered(key);
     const row = document.querySelector(`#omtp-model-list .omtp-model-row[data-key="${cssEscape(key)}"]`);
     if (!row) {
         return;
@@ -216,9 +217,9 @@ function quickSlotTitle(entry, ref, index) {
         return `${entry.providerLabel || entry.provider} / ${entry.model} — ${position}`;
     }
     if (ref) {
-        return `Unavailable quick slot ${position}`;
+        return trf('omtp_quick_slot_unavailable', 'Unavailable quick slot ${0}', position);
     }
-    return `Empty quick slot ${position}`;
+    return trf('omtp_quick_slot_empty', 'Empty quick slot ${0}', position);
 }
 
 /**
@@ -361,7 +362,7 @@ export function refreshSelectionUI() {
         if (entry.kind === 'omp') {
             label = `${label} · OMTP`;
         } else if (entry.kind === 'profile') {
-            label = `${label} · Profile`;
+            label = `${label} · ${tr('omtp_source_profile', 'Profile')}`;
         }
     } else if (ref) {
         label = `${ref.provider}/${ref.model}`;
