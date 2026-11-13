@@ -17,7 +17,7 @@ import { log, logError } from './redact.mjs';
 import { getAdapter } from './adapters/index.mjs';
 import { createUsageTap, tokensFromOpenAIUsage } from './stats.mjs';
 import { acquireGatewayPort } from './gateway-ports.mjs';
-import { isLoopbackHost } from './catalog-safety.mjs';
+import { isLoopbackHostHeader } from './net-hosts.mjs';
 
 const GATEWAY_VERSION = (() => {
     try {
@@ -231,7 +231,6 @@ export class GatewayServer {
         const express = this.express;
         const app = express();
         app.disable('x-powered-by');
-        app.use(express.json({ limit: '50mb' }));
 
         app.get('/health', asyncHandler(async (req, res) => {
             let catalogVersion = 'unknown';
@@ -250,9 +249,9 @@ export class GatewayServer {
         }));
 
         app.use('/v1', this._authMiddleware());
+        app.use('/v1', express.json({ limit: '50mb' }));
         app.get('/v1/models', asyncHandler((req, res) => this._handleModels(req, res)));
         app.post('/v1/chat/completions', asyncHandler((req, res) => this._handleChat(req, res)));
-
         app.use((req, res) => {
             res.status(404).json(openAIErrorEnvelope('Not found', 'invalid_request_error', 'not_found'));
         });
@@ -409,6 +408,15 @@ export class GatewayServer {
                 resolved, this.keyStore, ref.model, controller.signal, catalogProvider, modelInfo,
                 { chatId, stUserAgent },
             );
+            if (ctx.refreshError && Number(ctx.credential?.expires) > 0 && Number(ctx.credential.expires) <= Date.now()) {
+                const reason = ctx.refreshError instanceof Error ? ctx.refreshError.message : String(ctx.refreshError);
+                res.status(401).json(openAIErrorEnvelope(
+                    `OAuth credential refresh failed: ${reason}`,
+                    'authentication_error',
+                    'token_refresh_failed',
+                ));
+                return;
+            }
             const upstream = await adapter.chat({ ...req.body, model: ref.model }, ctx);
             if (!(upstream instanceof Response)) {
                 throw Object.assign(new Error('Adapter returned an invalid response'), { status: 502, type: 'gateway_error' });
@@ -435,16 +443,15 @@ export class GatewayServer {
                 },
                 { isStream: String(upstream.headers.get('content-type') || '').includes('text/event-stream') },
             );
-            if (upstream.body) {
-                pipeUpstream(upstream, res, controller, usageTap);
-            } else {
-                await sendUpstreamText(upstream, res, usageTap);
-            }
+            pipeUpstream(upstream, res, controller, usageTap);
         } catch (error) {
             if (controller.signal.aborted) return;
+            const status = Number(/** @type {any} */ (error)?.status) || 502;
+            const type = /** @type {any} */ (error)?.type || 'gateway_error';
+            const code = /** @type {any} */ (error)?.code || 'upstream_error';
             const message = error instanceof Error ? error.message : 'Gateway error';
             if (!res.headersSent) {
-                res.status(502).json(openAIErrorEnvelope(message, 'gateway_error', 'upstream_error'));
+                res.status(status).json(openAIErrorEnvelope(message, type, code));
             } else {
                 res.end();
             }
@@ -452,19 +459,26 @@ export class GatewayServer {
     }
 }
 
-/**
- * @param {unknown} host raw `Host` header
- * @returns {boolean}
- */
-function isLoopbackHostHeader(host) {
-    if (typeof host !== 'string' || !host) return false;
-    try {
-        return isLoopbackHost(new URL(`http://${host}`).hostname);
-    } catch {
-        return false;
+/** @type {WeakMap<object, any>} */
+const fallbackPriceCache = new WeakMap();
+function fallbackProviderPrice(catalogProvider) {
+    if (!catalogProvider || typeof catalogProvider !== 'object') return null;
+    if (fallbackPriceCache.has(catalogProvider)) return fallbackPriceCache.get(catalogProvider);
+    const priced = (catalogProvider.models || [])
+        .filter((model) => model?.cost && Number.isFinite(Number(model.cost.output)));
+    let result = null;
+    if (priced.length) {
+        const byDefault = priced.find((model) => model.id === catalogProvider.defaultModel);
+        if (byDefault) {
+            result = byDefault.cost;
+        } else {
+            const sorted = [...priced].sort((a, b) => Number(a.cost.output) - Number(b.cost.output));
+            result = sorted[Math.floor(sorted.length / 2)].cost;
+        }
     }
+    fallbackPriceCache.set(catalogProvider, result);
+    return result;
 }
-
 /**
  * Live-discovered models have no catalog price. Rather than silently booking
  * them as $0 (which makes the dashboard lie), fall back to the provider's
@@ -476,13 +490,7 @@ function isLoopbackHostHeader(host) {
  */
 function priceForModel(catalogProvider, modelInfo) {
     if (modelInfo?.cost && Object.keys(modelInfo.cost).length) return modelInfo.cost;
-    const priced = (catalogProvider?.models || [])
-        .filter((model) => model?.cost && Number.isFinite(Number(model.cost.output)));
-    if (!priced.length) return null;
-    const byDefault = priced.find((model) => model.id === catalogProvider?.defaultModel);
-    if (byDefault) return byDefault.cost;
-    const sorted = [...priced].sort((a, b) => Number(a.cost.output) - Number(b.cost.output));
-    return sorted[Math.floor(sorted.length / 2)].cost;
+    return fallbackProviderPrice(catalogProvider);
 }
 
 /**
@@ -512,8 +520,12 @@ function createUsageTransform(tap, onFinish) {
  * @param {any} usageTap
  */
 function pipeUpstream(upstream, res, controller, usageTap) {
+    if (!upstream.body) {
+        usageTap.end();
+        res.end();
+        return;
+    }
     const nodeStream = Readable.fromWeb(/** @type {any} */ (upstream.body));
-    // tap.end() records usage and must run exactly once. A destroyed stream
     // never reaches Transform.flush(), so an aborted/errored response used to
     // lose the tokens that had already been generated and billed upstream.
     let finished = false;
@@ -541,19 +553,6 @@ function pipeUpstream(upstream, res, controller, usageTap) {
         if (!nodeStream.destroyed) nodeStream.destroy();
     });
     nodeStream.pipe(createUsageTransform(usageTap, finish)).pipe(res);
-}
-
-/**
- * Forward a non-streamed upstream body after feeding the usage tap.
- * @param {Response} upstream
- * @param {import('express').Response} res
- * @param {any} usageTap
- */
-async function sendUpstreamText(upstream, res, usageTap) {
-    const text = await upstream.text();
-    usageTap.push(text);
-    usageTap.end();
-    res.end(text);
 }
 
 /**
@@ -617,9 +616,10 @@ export async function buildGatewayContext(
     modelInfo = null,
     requestContext = {},
 ) {
-    const { apiKey, credential } = await resolveAccessToken(resolved, keyStore, globalThis.fetch, '', catalogProvider?.authLogin || null);
+    const { apiKey, credential, refreshError } = await resolveAccessToken(resolved, keyStore, globalThis.fetch, '', catalogProvider?.authLogin || null);
     const ctx = buildProviderContext({ ...resolved, apiKey }, model, signal, catalogProvider, modelInfo);
     ctx.credential = credential;
+    ctx.refreshError = refreshError || null;
     if (credential) {
         // The stored credential built auth headers from its JSON blob; adapters
         // spread `ctx.headers` last, so drop them and let the adapter rebuild
