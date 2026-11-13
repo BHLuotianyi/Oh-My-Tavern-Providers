@@ -18,6 +18,9 @@ import {
 
 export { DEFAULT_SETTINGS };
 
+/** Live `extension_settings.omtp` reference that has already been normalized. */
+let normalizedSettingsRef = null;
+
 function isPlainObject(value) {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -190,7 +193,8 @@ export function loadSettings() {
     if (!isPlainObject(settings)) {
         settings = clone(DEFAULT_SETTINGS);
         root[SETTINGS_NAMESPACE] = settings;
-        return normalizeSettings(settings);
+        normalizedSettingsRef = normalizeSettings(settings);
+        return normalizedSettingsRef;
     }
 
     for (const [key, defaultValue] of Object.entries(DEFAULT_SETTINGS)) {
@@ -199,7 +203,8 @@ export function loadSettings() {
         }
     }
 
-    return normalizeSettings(settings);
+    normalizedSettingsRef = normalizeSettings(settings);
+    return normalizedSettingsRef;
 }
 
 /** Persist settings via SillyTavern's debounced saver. */
@@ -209,8 +214,13 @@ export function saveSettings() {
     }
 }
 
-/** Live settings object (created and normalized on first access). */
+/** Live settings object (created and normalized on load or update). */
 export function getSettings() {
+    const root = settingsRoot();
+    const settings = root[SETTINGS_NAMESPACE];
+    if (isPlainObject(settings) && settings === normalizedSettingsRef) {
+        return settings;
+    }
     return loadSettings();
 }
 
@@ -232,7 +242,7 @@ export function updateSettings(patch) {
         }
     }
 
-    normalizeSettings(settings);
+    normalizedSettingsRef = normalizeSettings(settings);
     saveSettings();
     return settings;
 }

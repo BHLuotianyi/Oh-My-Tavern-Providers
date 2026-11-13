@@ -6,9 +6,6 @@
  * the bundled snapshot so native selection keeps working without the plugin.
  */
 
-import { getRequestHeaders as stRequestHeaders } from '../../../../../script.js';
-
-const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
 import { extension_settings } from '../../../../extensions.js';
 import {
     CATALOG_SCHEMA_VERSION,
@@ -16,7 +13,7 @@ import {
     PROFILE_PROVIDER_ID,
 } from './constants.js';
 import { getNativeAdapter } from './adapters/native.js';
-import { apiBase, apiHeaders, hasServerBackend } from './backend.js';
+import { apiBase, hasServerBackend, requestHeaders } from './backend.js';
 import { gatewayUnavailableText, tr } from './ui/dom.js';
 
 const EMPTY_CATALOG = Object.freeze({
@@ -28,13 +25,35 @@ const EMPTY_CATALOG = Object.freeze({
 });
 
 const NATIVE_PROVIDER_SET = new Set(NATIVE_PROVIDER_IDS);
+const MANAGEMENT_TIMEOUT_MS = 8000;
+const PROVIDER_AVAILABILITY_TTL_MS = 5000;
 
 let activeCatalog = EMPTY_CATALOG;
 let catalogSource = 'none';
 let catalogError = null;
 let entriesCache = null;
+let catalogIndex = null;
+let cachedProfilesSource = null;
+let cachedProfilesLength = -1;
+let cachedProfilesSignature = '';
+let cachedProfileEntries = null;
+let cachedProfileIndex = null;
+let cachedCombinedEntries = null;
 const nativeSupportCache = new Map();
 
+// ST 1.19 stores saved native keys in secrets.js's module-level `secret_state`
+// (reassigned on read/write). Keep the module namespace object so reads see
+// the live binding; TauriTavern may not ship secrets.js, so load dynamically.
+let secretsModule = null;
+let secretsUnavailable = false;
+const secretsReady = import('../../../../secrets.js')
+    .then((mod) => {
+        secretsModule = mod;
+        invalidateNativeCache();
+    })
+    .catch(() => {
+        secretsUnavailable = true;
+    });
 function isPlainObject(value) {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -87,9 +106,9 @@ function setCatalog(catalog, source) {
  * Fetch the bundled catalog shipped with the extension.
  * Throws when the bundled file cannot be read.
  */
-export async function loadBundledCatalog() {
+async function loadBundledCatalog() {
     const url = new URL('../catalog/omtp-catalog.json', import.meta.url);
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(MANAGEMENT_TIMEOUT_MS) });
     if (!response.ok) {
         throw new Error(`Failed to load bundled catalog: ${response.status} ${response.statusText}`);
     }
@@ -103,7 +122,8 @@ export async function loadBundledCatalog() {
 async function fetchServerCatalog() {
     try {
         const response = await fetch(`${apiBase()}/catalog`, {
-            headers: getRequestHeaders(),
+            headers: requestHeaders(),
+            signal: AbortSignal.timeout(MANAGEMENT_TIMEOUT_MS),
         });
         if (!response.ok) {
             throw new Error(`Catalog request failed: ${response.status} ${response.statusText}`);
@@ -138,11 +158,11 @@ async function fetchBundledCatalogSafe() {
  * @returns {Promise<object>}
  */
 export async function loadCatalog(options = {}) {
+    await secretsReady;
     const force = options.force === true;
     if (!force && hasActiveCatalog()) {
         return activeCatalog;
     }
-
     const serverCatalog = await fetchServerCatalog();
     if (serverCatalog) {
         setCatalog(serverCatalog, 'server');
@@ -312,21 +332,94 @@ export function mergeCatalog(base, overlay) {
 
 const KEYLESS_PROVIDERS = Object.freeze(new Set(['local', 'ollama', 'pollinations', 'yolo-auto']));
 const providerAvailabilityCache = new Map();
+let providerAvailabilityAt = 0;
+let providerAvailabilityGeneration = 0;
+let providerAvailabilityInFlight = null;
 const liveModelsCache = new Map();
 
 export function setProviderAvailability(mapOrList) {
     // Replace instead of merge: a provider that disappears (disabled server
     // plugin, removed key) must not keep its stale availability forever.
+    providerAvailabilityGeneration += 1;
     if (mapOrList instanceof Map) {
         providerAvailabilityCache.clear();
-        for (const [k, v] of mapOrList.entries()) providerAvailabilityCache.set(k, v);
+        for (const [k, v] of mapOrList.entries()) providerAvailabilityCache.set(String(k), v);
     } else if (Array.isArray(mapOrList)) {
         providerAvailabilityCache.clear();
-        for (const p of mapOrList) if (p?.id) providerAvailabilityCache.set(p.id, p);
+        for (const p of mapOrList) if (p?.id) providerAvailabilityCache.set(String(p.id), p);
     }
+    providerAvailabilityAt = Date.now();
     invalidateNativeCache();
 }
 
+/** Current cached gateway provider availability map. */
+export function getProviderAvailability() {
+    return new Map(providerAvailabilityCache);
+}
+
+/** Mark the cached gateway provider availability as stale so the next refresh probes the server. */
+export function invalidateProviderAvailability() {
+    providerAvailabilityGeneration += 1;
+    providerAvailabilityAt = 0;
+    providerAvailabilityInFlight = null;
+}
+
+/**
+ * Fetch `/providers` availability from the server plugin (5s TTL, 8s timeout).
+ * Never throws; returns null on failure and clears the shared cache so UI and
+ * switch engine never diverge.
+ * @param {{force?: boolean}} [options]
+ * @returns {Promise<Map<string, object>|null>}
+ */
+export async function refreshProviderAvailability({ force = false } = {}) {
+    if (!force && providerAvailabilityAt > 0 && Date.now() - providerAvailabilityAt < PROVIDER_AVAILABILITY_TTL_MS) {
+        return new Map(providerAvailabilityCache);
+    }
+    if (!force && providerAvailabilityInFlight) {
+        return providerAvailabilityInFlight;
+    }
+    const generation = ++providerAvailabilityGeneration;
+    const promise = (async () => {
+        try {
+            const response = await fetch(`${apiBase()}/providers`, {
+                headers: requestHeaders({ omitContentType: true }),
+                signal: AbortSignal.timeout(MANAGEMENT_TIMEOUT_MS),
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            const list = Array.isArray(data?.providers) ? data.providers : [];
+            if (generation !== providerAvailabilityGeneration) {
+                return providerAvailabilityInFlight && providerAvailabilityInFlight !== promise
+                    ? await providerAvailabilityInFlight
+                    : new Map(providerAvailabilityCache);
+            }
+            providerAvailabilityCache.clear();
+            for (const provider of list) {
+                if (provider?.id) {
+                    providerAvailabilityCache.set(String(provider.id), provider);
+                }
+            }
+            providerAvailabilityAt = Date.now();
+            invalidateNativeCache();
+            return new Map(providerAvailabilityCache);
+        } catch {
+            if (generation === providerAvailabilityGeneration) {
+                providerAvailabilityCache.clear();
+                providerAvailabilityAt = 0;
+                invalidateNativeCache();
+            }
+            return null;
+        } finally {
+            if (providerAvailabilityInFlight === promise) {
+                providerAvailabilityInFlight = null;
+            }
+        }
+    })();
+    providerAvailabilityInFlight = promise;
+    return promise;
+}
 /**
  * Overlay live gateway availability onto a catalog entry.
  *
@@ -359,40 +452,38 @@ export function withProviderAvailability(entry) {
 
 /**
  * Whether SillyTavern currently holds a non-empty value for one of its own
- * secret fields. Probes the DOM control, the secret stores and the legacy
- * settings objects in that order.
+ * secret fields. Returns `null` when no secret store is reachable (e.g.
+ * TauriTavern without `secrets.js`) so native entries stay selectable.
  * @param {string} keyName
- * @returns {boolean}
+ * @returns {boolean|null}
  */
 function readSecret(keyName) {
     try {
         if (document.getElementById(keyName)?.value?.trim()) return true;
     } catch {}
     try {
-        if (globalThis.secret_state?.[keyName]) return true;
+        const state = secretsModule?.secret_state;
+        if (state && typeof state === 'object') {
+            const value = state[keyName];
+            return Array.isArray(value) ? value.length > 0 : Boolean(value);
+        }
     } catch {}
-    try {
-        const context = globalThis.SillyTavern?.getContext?.();
-        if (context?.secret_state?.[keyName]) return true;
-    } catch {}
-    try {
-        if (globalThis.oai_settings?.[keyName]) return true;
-        if (globalThis.textgenerationwebui_settings?.[keyName]) return true;
-    } catch {}
+    if (secretsUnavailable || !secretsModule) {
+        return null;
+    }
     return false;
 }
 
-export function hasProviderCredentials(providerId, stAdapter = null, provider = null, { includeGateway = true } = {}) {
+function hasProviderCredentials(providerId, stAdapter = null, provider = null, { includeGateway = true } = {}) {
     if (KEYLESS_PROVIDERS.has(providerId) || provider?.authKind === 'none') {
         return true;
     }
-    if (stAdapter?.requiresKey && readSecret(stAdapter.requiresKey)) {
-        return true;
+    if (stAdapter?.requiresKey) {
+        const secretFound = readSecret(stAdapter.requiresKey);
+        if (secretFound !== false) {
+            return true;
+        }
     }
-    try {
-        const omtpSettings = extension_settings?.omtp;
-        if (omtpSettings?.customProviders?.[providerId]?.apiKey) return true;
-    } catch {}
     if (includeGateway && providerAvailabilityCache.has(providerId)) {
         const status = providerAvailabilityCache.get(providerId);
         if (status?.hasKey || status?.available) return true;
@@ -431,8 +522,11 @@ export async function fetchLiveModelsForProvider(providerId, force = false) {
     let error = null;
     let needsCredentials = false;
     try {
-        const headers = getRequestHeaders ? getRequestHeaders({ omitContentType: true }) : {};
-        const res = await fetch(`${apiBase()}/providers/${encodeURIComponent(providerId)}/models?refresh=${force ? 'true' : 'false'}`, { headers });
+        const headers = requestHeaders({ omitContentType: true });
+        const res = await fetch(`${apiBase()}/providers/${encodeURIComponent(providerId)}/models?refresh=${force ? 'true' : 'false'}`, {
+            headers,
+            signal: AbortSignal.timeout(MANAGEMENT_TIMEOUT_MS),
+        });
         if (res.ok) {
             const data = await res.json();
             if (data.ok && Array.isArray(data.models) && data.models.length > 0) {
@@ -510,7 +604,19 @@ function entryBase(provider, providerLabel, model, id) {
     };
 }
 
-function isObsoleteModel(id) {
+/**
+ * Filter legacy completions and retired/superseded dated snapshots from the
+ * static catalog. Kept client-side because the bundled catalog is imported
+ * verbatim from OMP (whose upstream source is not in this repo).
+ *
+ * Dated 2023/2024 snapshots (`-YYYYMMDD` or `-YYYY-MM-DD`, optionally before
+ * `-vN:0`) are only hidden when the same provider also offers the undated base
+ * id, so providers that only serve dated ids (e.g. `amazon-bedrock`, `nanogpt`)
+ * keep their canonical models.
+ */
+function isObsoleteModel(model, providerIds) {
+    if (model?.retired === true) return true;
+    const id = typeof model?.id === 'string' ? model.id : '';
     if (!id) return false;
     const lower = id.toLowerCase();
     if (/^(?:text-davinci|text-curie|text-babbage|text-ada|code-davinci)/i.test(lower)) return true;
@@ -518,7 +624,8 @@ function isObsoleteModel(id) {
     if (/^gpt-4-(?:0314|0613|32k-0314|32k-0613|1106-preview|0125-preview)/i.test(lower)) return true;
     if (/^gemini-1\.0-/i.test(lower)) return true;
     if (/^claude-(?:1|2|instant)/i.test(lower)) return true;
-    if (/-(?:2023\d{4}|20240[1-9]\d{2}|20241[01]\d{2})/i.test(lower)) return true;
+    const undated = id.replace(/(?:-(?:2023\d{4}|2024\d{4}|2023-\d{2}-\d{2}|2024-\d{2}-\d{2}))(?=-v\d+:\d+$|$)/, '');
+    if (undated !== id && providerIds?.has(undated)) return true;
     return false;
 }
 
@@ -535,11 +642,17 @@ function liveModelsFor(providerId) {
  */
 function modelsForProvider(provider, liveList) {
     if (liveList && liveList.length > 0) {
+        const existingById = new Map();
+        for (const model of provider.models || []) {
+            if (model && typeof model.id === 'string') {
+                existingById.set(model.id, model);
+            }
+        }
         const liveMap = new Map(liveList.map((model) => (
             typeof model === 'string' ? [model, { id: model, name: model }] : [model.id, model]
         )));
         return Array.from(liveMap.values()).map((liveModel) => {
-            const existing = (provider.models || []).find((model) => model.id === liveModel.id);
+            const existing = existingById.get(liveModel.id);
             if (existing) {
                 return { ...existing, isLive: true };
             }
@@ -558,8 +671,14 @@ function modelsForProvider(provider, liveList) {
         });
     }
 
-    const models = Array.isArray(provider.models) ? [...provider.models] : [];
-    return models.filter((model) => !isObsoleteModel(model.id));
+    const models = Array.isArray(provider.models) ? provider.models : [];
+    const providerIds = new Set();
+    for (const model of models) {
+        if (typeof model?.id === 'string' && model.id) {
+            providerIds.add(model.id);
+        }
+    }
+    return models.filter((model) => !isObsoleteModel(model, providerIds));
 }
 
 /** Adapters and credential state shared by every model of one provider. */
@@ -743,6 +862,62 @@ function buildProfileEntries(profiles) {
     return entries;
 }
 
+function buildEntryIndex(entries, { includeLegacySt = false } = {}) {
+    const byKey = new Map();
+    const byLowerKey = new Map();
+    const byLegacyStKey = includeLegacySt ? new Map() : null;
+    for (const entry of entries) {
+        if (!entry || typeof entry.key !== 'string') continue;
+        if (!byKey.has(entry.key)) {
+            byKey.set(entry.key, entry);
+        }
+        const lower = entry.key.toLowerCase();
+        if (!byLowerKey.has(lower)) {
+            byLowerKey.set(lower, entry);
+        }
+        if (byLegacyStKey && entry.kind === 'st') {
+            const legacyKey = `st/${String(entry.providerKey || '').toLowerCase()}/${String(entry.model || '').toLowerCase()}`;
+            if (!byLegacyStKey.has(legacyKey)) {
+                byLegacyStKey.set(legacyKey, entry);
+            }
+        }
+    }
+    return { byKey, byLowerKey, byLegacyStKey };
+}
+
+function ensureCatalogCache() {
+    if (!entriesCache) {
+        entriesCache = buildEntries();
+        catalogIndex = buildEntryIndex(entriesCache, { includeLegacySt: true });
+        cachedCombinedEntries = null;
+    }
+}
+
+function profileSignature(profiles) {
+    return profiles
+        .map((profile) => (isPlainObject(profile) ? `${profile.id ?? ''}\u0000${profile.name ?? ''}` : ''))
+        .join('\u0001');
+}
+
+function ensureProfileCache(profiles) {
+    const sig = profileSignature(profiles);
+    if (
+        cachedProfilesSource === profiles
+        && cachedProfilesLength === profiles.length
+        && cachedProfilesSignature === sig
+        && cachedProfileEntries
+        && cachedProfileIndex
+    ) {
+        return;
+    }
+    cachedProfilesSource = profiles;
+    cachedProfilesLength = profiles.length;
+    cachedProfilesSignature = sig;
+    cachedProfileEntries = buildProfileEntries(profiles);
+    cachedProfileIndex = buildEntryIndex(cachedProfileEntries);
+    cachedCombinedEntries = null;
+}
+
 /**
  * All catalog entries (native, gateway and unsupported). Built once per
  * catalog/availability change. Connection Profile entries are appended when
@@ -750,18 +925,19 @@ function buildProfileEntries(profiles) {
  * settings when it is enabled.
  */
 export function getEntries(options = {}) {
-    if (!entriesCache) {
-        entriesCache = buildEntries();
-    }
+    ensureCatalogCache();
     const profiles = Array.isArray(options.profiles) ? options.profiles : discoverProfiles();
     if (profiles.length === 0) {
         return entriesCache;
     }
-    const profileEntries = buildProfileEntries(profiles);
-    if (profileEntries.length === 0) {
+    ensureProfileCache(profiles);
+    if (cachedProfileEntries.length === 0) {
         return entriesCache;
     }
-    return entriesCache.concat(profileEntries);
+    if (!cachedCombinedEntries) {
+        cachedCombinedEntries = entriesCache.concat(cachedProfileEntries);
+    }
+    return cachedCombinedEntries;
 }
 
 /** Resolve an EntryRef (or entry key) against the active entry list. */
@@ -770,22 +946,39 @@ export function resolveEntry(ref, options = {}) {
     if (!key) {
         return null;
     }
-    const entries = getEntries(options);
-    const direct = entries.find((entry) => entry.key === key);
+    ensureCatalogCache();
+    const profiles = Array.isArray(options.profiles) ? options.profiles : discoverProfiles();
+    if (profiles.length > 0) {
+        ensureProfileCache(profiles);
+    }
+    const direct = catalogIndex.byKey.get(key)
+        ?? (profiles.length > 0 ? cachedProfileIndex.byKey.get(key) : undefined);
     if (direct) {
         return direct;
     }
     const needle = key.toLowerCase();
-    const byKey = entries.find((entry) => entry.key.toLowerCase() === needle);
+    const byKey = catalogIndex.byLowerKey.get(needle)
+        ?? (profiles.length > 0 ? cachedProfileIndex.byLowerKey.get(needle) : undefined);
     if (byKey) {
         return byKey;
     }
     // Legacy fallback for `st/<stAdapter.key>/<model>` refs.
     if (needle.startsWith('st/')) {
-        return entries.find((entry) => entry.kind === 'st'
-            && `st/${String(entry.providerKey || '').toLowerCase()}/${String(entry.model || '').toLowerCase()}` === needle) ?? null;
+        return catalogIndex.byLegacyStKey.get(needle) ?? null;
     }
     return null;
+}
+
+/**
+ * Clear cached Connection Profile entries so profile updates rebuild on next read.
+ */
+export function invalidateProfileCache() {
+    cachedProfilesSource = null;
+    cachedProfilesLength = -1;
+    cachedProfilesSignature = '';
+    cachedProfileEntries = null;
+    cachedProfileIndex = null;
+    cachedCombinedEntries = null;
 }
 
 /**
@@ -795,4 +988,6 @@ export function resolveEntry(ref, options = {}) {
 export function invalidateNativeCache() {
     nativeSupportCache.clear();
     entriesCache = null;
+    catalogIndex = null;
+    cachedCombinedEntries = null;
 }

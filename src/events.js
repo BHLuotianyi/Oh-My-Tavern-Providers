@@ -4,14 +4,11 @@
  * Listeners are registered after APP_READY (the event emitter replays
  * APP_READY when it already fired, so late initialization still starts).
  * Availability-related events are debounced into a single rebuild.
- *
- * Callbacks are optional: `refreshChip`, `refreshHub` and `onChatChanged`
- * default to the hub's own functions, while the generation and catalog
- * callbacks default to null so `initEvents()` works with no arguments.
  */
 import { eventSource, event_types } from '../../../../events.js';
-import { EVENTS, ST_EVENTS } from './constants.js';
-import { invalidateNativeCache } from './catalog.js';
+import { ST_EVENTS } from './constants.js';
+import { invalidateNativeCache, invalidateProfileCache } from './catalog.js';
+import { invalidateGatewayCaches } from './switch-engine.js';
 import { refreshHub, refreshSelectionUI } from './ui/hub.js';
 import { onChatChanged } from './ui/bindings.js';
 
@@ -22,9 +19,6 @@ let listeners = [];
 let initialized = false;
 let started = false;
 let refreshTimer = null;
-/** @type {Record<string, Function|null>} */
-let callbacks = {};
-
 /**
  * Resolve a SillyTavern event name, preferring the runtime event_types map and
  * falling back to the constants snapshot when the event module is unavailable.
@@ -39,8 +33,7 @@ function warn(message, error) {
     console.warn(`[omtp] ${message}`, error);
 }
 
-function invoke(name, ...args) {
-    const fn = callbacks[name];
+function runSafe(name, fn, ...args) {
     if (typeof fn !== 'function') {
         return;
     }
@@ -67,8 +60,8 @@ function subscribe(name, handler) {
 }
 
 function runRefresh() {
-    invoke('refreshChip');
-    invoke('refreshHub');
+    runSafe('refreshSelectionUI', refreshSelectionUI);
+    runSafe('refreshHub', refreshHub);
 }
 
 function scheduleRefresh() {
@@ -97,13 +90,14 @@ function start() {
     }
     started = true;
 
-    subscribe(eventName('CHAT_CHANGED'), () => invoke('onChatChanged'));
+    subscribe(eventName('CHAT_CHANGED'), () => runSafe('onChatChanged', onChatChanged));
 
     const onAvailabilityChanged = () => {
         try {
             invalidateNativeCache();
+            invalidateGatewayCaches();
         } catch (error) {
-            warn('could not invalidate the native support cache', error);
+            warn('could not invalidate availability caches', error);
         }
         scheduleRefresh();
     };
@@ -121,50 +115,39 @@ function start() {
         subscribe(eventName(key), onAvailabilityChanged);
     }
 
+    const onProfilesChanged = () => {
+        try {
+            invalidateProfileCache();
+        } catch (error) {
+            warn('could not invalidate profile cache', error);
+        }
+        scheduleRefresh();
+    };
+
     for (const key of [
         'CONNECTION_PROFILE_LOADED',
         'CONNECTION_PROFILE_CREATED',
         'CONNECTION_PROFILE_UPDATED',
         'CONNECTION_PROFILE_DELETED',
     ]) {
-        subscribe(eventName(key), scheduleRefresh);
+        subscribe(eventName(key), onProfilesChanged);
     }
-
-    subscribe(eventName('GENERATION_STARTED'), () => invoke('onGenerationStarted'));
-    subscribe(eventName('GENERATION_ENDED'), () => invoke('onGenerationEnded'));
-
-    // The hub rebuilds its own DOM on this event; external subscribers can
-    // still react through the optional callback.
-    subscribe(EVENTS.CATALOG_CHANGED, () => invoke('onCatalogChanged'));
 }
 
 function onAppReady() {
     start();
-    invoke('onChatChanged');
+    runSafe('onChatChanged', onChatChanged);
 }
 
 /**
  * Install the event listeners. Safe to call multiple times; cleanupEvents()
  * must be called before re-initializing after a disable.
- * @param {{refreshChip?: Function, refreshHub?: Function, onChatChanged?: Function,
- *          onGenerationStarted?: Function, onGenerationEnded?: Function,
- *          onCatalogChanged?: Function}} [options]
  */
-export function initEvents(options = {}) {
+export function initEvents() {
     if (initialized) {
         return;
     }
     initialized = true;
-
-    callbacks = {
-        refreshChip: refreshSelectionUI,
-        refreshHub: () => refreshHub(),
-        onChatChanged,
-        onGenerationStarted: null,
-        onGenerationEnded: null,
-        onCatalogChanged: null,
-        ...(options && typeof options === 'object' ? options : {}),
-    };
 
     if (!eventSource?.on) {
         return;
@@ -192,7 +175,6 @@ export function cleanupEvents() {
     } catch (error) {
         warn('extra body cleanup failed', error);
     }
-    callbacks = {};
     initialized = false;
     started = false;
 }

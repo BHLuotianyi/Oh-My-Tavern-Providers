@@ -6,9 +6,10 @@
  *   standalone companion (`server-plugin/standalone.mjs`) at an address the
  *   user enters in the settings, authorised by its token.
  *
- * Every management call goes through `apiBase()` + `apiHeaders()`.
+ * Every management call goes through `apiBase()` + `apiHeaders()` / `requestHeaders()`.
  */
 import { extension_settings } from '../../../../extensions.js';
+import { getRequestHeaders as stRequestHeaders } from '../../../../../script.js';
 import { API_BASE, withClientHeader } from './constants.js';
 
 /** Header carrying the companion token (see server-plugin/standalone.mjs). */
@@ -64,6 +65,16 @@ export function apiHeaders(headers = {}) {
     const target = companion();
     if (target?.token) result[COMPANION_TOKEN_HEADER] = target.token;
     return result;
+}
+
+/**
+ * Request headers for an OMTP management call: SillyTavern's CSRF/auth
+ * headers wrapped with the OMTP client marker and companion token.
+ * @param {Parameters<typeof stRequestHeaders>[0]} [options]
+ * @returns {Record<string, any>}
+ */
+export function requestHeaders(options) {
+    return apiHeaders(stRequestHeaders(options));
 }
 
 /**

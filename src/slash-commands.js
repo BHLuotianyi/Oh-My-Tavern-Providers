@@ -17,11 +17,8 @@ import { SlashCommand } from '../../../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../../../slash-commands/SlashCommandArgument.js';
 import { SlashCommandParser } from '../../../../slash-commands/SlashCommandParser.js';
 import { oai_settings } from '../../../../openai.js';
-import { getRequestHeaders as stRequestHeaders } from '../../../../../script.js';
-
-const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
 import { REASONING_LEVELS } from './constants.js';
-import { apiBase, apiHeaders } from './backend.js';
+import { apiBase, requestHeaders } from './backend.js';
 import { EFFORT_ALIASES, normalizeEffortList } from './reasoning.js';
 import { getEntries, resolveEntry, withProviderAvailability } from './catalog.js';
 import { switchToSelector } from './public-api.js';
@@ -41,7 +38,7 @@ let openHubFn = null;
 /**
  * Commands replaced at registration time (SillyTavern ships its own `/model`),
  * keyed by owned name, so teardown can restore them.
- * @type {Map<string, {command: object|null, helpString: string|undefined}>}
+ * @type {Map<string, object|null>}
  */
 let previousCommands = new Map();
 
@@ -66,7 +63,10 @@ async function openStatsDashboard() {
     if (chat) params.set('chat', chat);
     if (lang) params.set('lang', lang);
     const query = params.toString() ? `?${params}` : '';
-    const response = await fetch(`${apiBase()}/stats/server${query}`, { headers: getRequestHeaders() });
+    const response = await fetch(`${apiBase()}/stats/server${query}`, {
+        headers: requestHeaders(),
+        signal: AbortSignal.timeout(8000),
+    });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data?.url) {
         throw new Error(tr('omtp_stats_server_failed', 'Could not start the stats dashboard.'));
@@ -225,8 +225,10 @@ function setGlobalLevel(requested) {
  * @returns {string}
  */
 function setLevel(entry, level) {
-    applyReasoning(entry, level);
-    return trf('omtp_effort_set', 'Thinking set to ${0}.', level);
+    const { applied } = applyReasoning(entry, level);
+    return applied
+        ? trf('omtp_effort_set', 'Thinking set to ${0}.', level)
+        : trf('omtp_effort_idle', 'Thinking level ${0} saved. It applies once an OpenAI-compatible connection is active.', level);
 }
 
 /**
@@ -262,13 +264,9 @@ async function applySelector(rawSelector, persist) {
  */
 function snapshotOwnedCommands() {
     const commands = SlashCommandParser.commands;
-    const helpStrings = SlashCommandParser.helpStrings;
     previousCommands = new Map();
     for (const name of OWNED) {
-        previousCommands.set(name, {
-            command: commands?.[name] ?? null,
-            helpString: helpStrings?.[name],
-        });
+        previousCommands.set(name, commands?.[name] ?? null);
     }
 }
 
@@ -440,7 +438,6 @@ export function teardownSlashCommands() {
     registered = false;
     openHubFn = null;
     const commands = SlashCommandParser.commands;
-    const helpStrings = SlashCommandParser.helpStrings;
     for (const name of OWNED) {
         const command = commands?.[name];
         if (command) {
@@ -451,15 +448,8 @@ export function teardownSlashCommands() {
             }
         }
         const previous = previousCommands.get(name);
-        if (previous?.command) {
-            commands[name] = previous.command;
-        }
-        if (helpStrings) {
-            if (previous?.helpString !== undefined) {
-                helpStrings[name] = previous.helpString;
-            } else {
-                delete helpStrings[name];
-            }
+        if (previous) {
+            commands[name] = previous;
         }
     }
     previousCommands = new Map();
