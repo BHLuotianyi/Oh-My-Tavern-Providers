@@ -1,3 +1,4 @@
+import { ADAPTER_IDS } from './adapter-ids.mjs';
 import { KEYLESS_PROVIDERS } from './provider-config.mjs';
 import { providerEnvPrefix } from './oauth-clients.mjs';
 import { normalizeRequestHeaders } from './request-headers.mjs';
@@ -321,7 +322,7 @@ export function validateCatalog(catalog, { expectedProviders = CATALOG_EXPECTATI
         if (!provider.id || provider.id !== provider.id.toLowerCase()) errors.push(`invalid provider id: ${provider.id}`);
         if (!provider.label) errors.push(`${provider.id}: missing label`);
         if (!provider.baseUrl && provider.gatewayAdapter) errors.push(`${provider.id}: gateway provider missing baseUrl`);
-        if (provider.gatewayAdapter && !['openai', 'anthropic', 'google', 'google-vertex', 'antigravity', 'responses', 'azure-responses', 'bedrock', 'ollama'].includes(provider.gatewayAdapter)) {
+        if (provider.gatewayAdapter && !ADAPTER_IDS.includes(provider.gatewayAdapter)) {
             errors.push(`${provider.id}: unknown gateway adapter ${provider.gatewayAdapter}`);
         }
         if (provider.stAdapter && keys && !keys.has(provider.stAdapter)) {

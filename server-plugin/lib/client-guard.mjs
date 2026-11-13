@@ -13,13 +13,12 @@
  * It is opt-in because reverse-proxy deployments use a public Host name.
  */
 
+import { isLoopbackHostHeader } from './net-hosts.mjs';
+
 /** Header every OMTP client request must carry. */
 export const CLIENT_HEADER = 'x-omtp-client';
 /** Value of {@link CLIENT_HEADER}. */
 export const CLIENT_HEADER_VALUE = 'omtp-web';
-
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-
 /**
  * @param {any} req Express-like request
  * @param {string} name lower-case header name
@@ -68,17 +67,30 @@ export function checkTrustedClient(req, options = {}) {
 
     const strictHost = options.strictHost ?? env.OMTP_STRICT_HOST === '1';
     if (strictHost) {
-        const allowed = new Set(LOOPBACK_HOSTS);
-        for (const entry of (env.OMTP_ALLOWED_HOSTS || '').split(',')) {
-            const name = entry.trim().toLowerCase();
-            if (name) allowed.add(name);
-        }
-        for (const name of options.allowedHosts || []) {
-            if (name) allowed.add(String(name).trim().toLowerCase());
-        }
-        const host = header(req, 'host').toLowerCase().replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
-        if (!host || !allowed.has(host)) {
+        const rawHost = header(req, 'host');
+        if (!rawHost) {
             return { ok: false, reason: 'host_not_allowed' };
+        }
+        if (!isLoopbackHostHeader(rawHost)) {
+            const allowed = new Set();
+            for (const entry of (env.OMTP_ALLOWED_HOSTS || '').split(',')) {
+                const name = entry.trim().toLowerCase();
+                if (name) allowed.add(name);
+            }
+            for (const name of options.allowedHosts || []) {
+                if (name) allowed.add(String(name).trim().toLowerCase());
+            }
+            let hostname = '';
+            try {
+                if (!/[\s/@?#\\]/.test(rawHost)) {
+                    hostname = new URL(`http://${rawHost}`).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+                }
+            } catch {
+                hostname = '';
+            }
+            if (!hostname || !allowed.has(hostname)) {
+                return { ok: false, reason: 'host_not_allowed' };
+            }
         }
     }
 

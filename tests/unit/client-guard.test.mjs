@@ -45,4 +45,7 @@ test('strict host mode pins the Host header (DNS rebinding)', () => {
 
     const allowed = { ...clientHeader, host: 'st.example.com' };
     assert.equal(checkTrustedClient(request(allowed), options).ok, true);
+
+    const spoofedLoopback = { ...clientHeader, host: '127.evil.tld:8000' };
+    assert.equal(checkTrustedClient(request(spoofedLoopback), options).reason, 'host_not_allowed');
 });
