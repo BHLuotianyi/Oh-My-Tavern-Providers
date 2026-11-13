@@ -14,11 +14,12 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
 
@@ -34,8 +35,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          git archive --format=zip --prefix=omtp-model-hub/ -o "dist/omtp-$GITHUB_REF_NAME.zip" HEAD
-
+          stage="$(mktemp -d)"
+          trap 'rm -rf "$stage"' EXIT
+          git archive --format=tar --prefix=omtp-model-hub/ HEAD | tar -xf - -C "$stage"
+          node -e '
+            const fs = require("node:fs");
+            for (const file of process.argv.slice(1)) {
+              fs.writeFileSync(file, JSON.stringify(JSON.parse(fs.readFileSync(file, "utf8"))));
+            }
+          ' "$stage/omtp-model-hub/catalog/omtp-catalog.json" \
+            "$stage/omtp-model-hub/server-plugin/catalog/omtp-catalog.json"
+          out="$PWD/dist/omtp-$GITHUB_REF_NAME.zip"
+          (cd "$stage" && zip -9 -rq "$out" omtp-model-hub)
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
