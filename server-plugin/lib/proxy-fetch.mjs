@@ -19,9 +19,10 @@ import net from 'node:net';
 import https from 'node:https';
 import tls from 'node:tls';
 import zlib from 'node:zlib';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 
 import { log, logError } from './redact.mjs';
+import { isPrivateHost } from './net-hosts.mjs';
 
 /** @type {WeakSet<object>} */
 const wrapped = new WeakSet();
@@ -38,6 +39,8 @@ const PROXY_PROTOCOLS = new Set(['http:', 'https:', ...SOCKS_PROTOCOLS]);
 
 /** How long a read of the OS proxy settings stays valid. */
 const SYSTEM_PROXY_TTL_MS = 10_000;
+const TLS_HANDSHAKE_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 300_000;
 
 /** @type {Set<number>} */
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
@@ -91,7 +94,7 @@ export function proxyFor(target, env = process.env) {
     }
     // Loopback and private targets never need a proxy, and tunnelling them
     // through one breaks local services (Ollama, the gateway itself).
-    if (isLocalHost(host)) return null;
+    if (isPrivateHost(host)) return null;
 
     const candidates = target.protocol === 'https:'
         ? [env.HTTPS_PROXY, env.https_proxy, env.ALL_PROXY, env.all_proxy, env.HTTP_PROXY, env.http_proxy]
@@ -113,20 +116,6 @@ export function proxyFor(target, env = process.env) {
 }
 
 /**
- * @param {string} host
- * @returns {boolean}
- */
-function isLocalHost(host) {
-    if (host === 'localhost' || host === '::1' || host === '[::1]') return true;
-    if (/^127\./.test(host)) return true;
-    if (/^10\./.test(host)) return true;
-    if (/^192\.168\./.test(host)) return true;
-    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
-    if (/^169\.254\./.test(host)) return true;
-    return host === '0.0.0.0';
-}
-
-/**
  * Open a CONNECT tunnel and return the raw socket.
  *
  * @param {URL} proxy
@@ -135,8 +124,8 @@ function isLocalHost(host) {
  * @param {AbortSignal|undefined} signal
  * @returns {Promise<import('node:net').Socket>}
  */
-function openTunnel(proxy, host, port, signal) {
-    if (SOCKS_PROTOCOLS.has(proxy.protocol)) return openSocksTunnel(proxy, host, port, signal);
+function openTunnel(proxy, host, port, signal, timeoutMs = TLS_HANDSHAKE_TIMEOUT_MS) {
+    if (SOCKS_PROTOCOLS.has(proxy.protocol)) return openSocksTunnel(proxy, host, port, signal, timeoutMs);
     return new Promise((resolve, reject) => {
         const secureProxy = proxy.protocol === 'https:';
         const headers = { host: `${host}:${port}` };
@@ -151,7 +140,7 @@ function openTunnel(proxy, host, port, signal) {
             path: `${host}:${port}`,
             headers,
             signal,
-            timeout: 30_000,
+            timeout: timeoutMs,
         });
         request.once('connect', (response, socket) => {
             if (response.statusCode !== 200) {
@@ -178,7 +167,7 @@ function openTunnel(proxy, host, port, signal) {
  * @param {AbortSignal|undefined} signal
  * @returns {Promise<import('node:net').Socket>}
  */
-function openSocksTunnel(proxy, host, port, signal) {
+function openSocksTunnel(proxy, host, port, signal, timeoutMs = TLS_HANDSHAKE_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
         const socket = net.connect(Number(proxy.port) || 1080, proxy.hostname);
         let buffer = Buffer.alloc(0);
@@ -218,7 +207,7 @@ function openSocksTunnel(proxy, host, port, signal) {
         socket.on('data', onData);
         socket.once('error', fail);
         socket.once('close', onClose);
-        socket.setTimeout(30_000, () => fail(new Error('SOCKS proxy timed out')));
+        socket.setTimeout(timeoutMs, () => fail(new Error('SOCKS proxy timed out')));
         signal?.addEventListener('abort', onAbort, { once: true });
 
         socket.once('connect', async () => {
@@ -371,19 +360,57 @@ function nodeStreamToWeb(source, decoder) {
  * @param {RequestInit} init
  * @returns {Promise<Response>}
  */
-async function tunnelRequest(target, proxy, init) {
+async function tunnelRequest(target, proxy, init, { handshakeTimeoutMs = TLS_HANDSHAKE_TIMEOUT_MS, requestTimeoutMs = REQUEST_TIMEOUT_MS } = {}) {
     const secure = target.protocol === 'https:';
     const port = Number(target.port) || (secure ? 443 : 80);
     const signal = init.signal || undefined;
     if (signal?.aborted) throw signal.reason || new Error('aborted');
 
-    const tunnel = await openTunnel(proxy, target.hostname, port, signal);
+    const tunnel = await openTunnel(proxy, target.hostname, port, signal, handshakeTimeoutMs);
+    if (signal?.aborted) {
+        tunnel.destroy();
+        throw signal.reason || new Error('aborted');
+    }
     let socket = tunnel;
     if (secure) {
         socket = tls.connect({ socket: tunnel, servername: target.hostname });
         await new Promise((resolve, reject) => {
-            socket.once('secureConnect', resolve);
-            socket.once('error', reject);
+            let timer = null;
+            const cleanup = () => {
+                clearTimeout(timer);
+                socket.off('secureConnect', onConnect);
+                socket.off('error', onError);
+                socket.off('close', onClose);
+                signal?.removeEventListener('abort', onAbort);
+            };
+            const abortSocket = (reason) => {
+                cleanup();
+                // Keep a no-op error listener so destroying an active TLS
+                // socket never surfaces an unhandled 'error' event.
+                socket.on('error', () => {});
+                socket.destroy();
+                reject(reason);
+            };
+            const onConnect = () => {
+                cleanup();
+                resolve(undefined);
+            };
+            const onError = (error) => {
+                abortSocket(error);
+            };
+            const onClose = () => {
+                abortSocket(new Error('proxy TLS handshake closed'));
+            };
+            const onAbort = () => {
+                abortSocket(signal?.reason || new Error('aborted'));
+            };
+            timer = setTimeout(() => {
+                abortSocket(new Error('proxy TLS handshake timed out'));
+            }, handshakeTimeoutMs);
+            socket.once('secureConnect', onConnect);
+            socket.once('error', onError);
+            socket.once('close', onClose);
+            signal?.addEventListener('abort', onAbort, { once: true });
         });
     }
 
@@ -396,13 +423,15 @@ async function tunnelRequest(target, proxy, init) {
     let body = init.body;
     if (body instanceof URLSearchParams) body = body.toString();
     if (body === null) body = undefined;
+    if (body !== undefined && headers['content-length'] === undefined && headers['transfer-encoding'] === undefined) {
+        headers['content-length'] = String(typeof body === 'string' ? Buffer.byteLength(body) : body.byteLength);
+    }
 
     // A one-shot agent hands the already-open socket to Node: the request must
     // never resolve the target hostname itself (only the proxy may do that).
     const agent = new (secure ? https.Agent : http.Agent)({ keepAlive: false, maxSockets: 1 });
     agent.createConnection = () => socket;
 
-    let wrote = false;
     const response = await new Promise((resolve, reject) => {
         const request = (secure ? https : http).request({
             host: target.hostname,
@@ -412,19 +441,18 @@ async function tunnelRequest(target, proxy, init) {
             headers,
             signal,
             agent,
+            timeout: requestTimeoutMs,
         });
         request.once('response', resolve);
+        request.once('timeout', () => request.destroy(new Error('proxy request timed out')));
         request.once('error', (error) => {
             // From here on the origin may have seen the request, so a replay
             // is not safe and the caller must surface the failure.
-            if (wrote && error && typeof error === 'object') error[REQUEST_SENT] = true;
+            if (error && typeof error === 'object') error[REQUEST_SENT] = true;
             reject(error);
         });
-        if (body !== undefined) request.write(body);
-        wrote = true;
-        request.end();
+        request.end(body);
     });
-
     try {
         return toFetchResponse(response, init.method || 'GET');
     } catch (error) {
@@ -489,7 +517,7 @@ function toFetchResponse(response, method) {
  *        `env` may be a function, re-evaluated per request.
  * @returns {typeof fetch}
  */
-export function createProxyFetch({ env = process.env, base = globalThis.fetch } = {}) {
+export function createProxyFetch({ env = process.env, base = globalThis.fetch, handshakeTimeoutMs, requestTimeoutMs } = {}) {
     /** @type {Set<string>} */
     const reported = new Set();
     const proxyFetch = async (input, init = {}) => {
@@ -504,13 +532,16 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch } 
                 target = null;
             }
             const proxy = target ? proxyFor(target, typeof env === 'function' ? env() : env) : null;
+            const canHandleRedirects = Boolean(target) && !(current instanceof Request) && isReplayableBody(currentInit?.body);
+            const directInit = canHandleRedirects ? { ...currentInit, redirect: 'manual' } : currentInit;
             let response;
-            if (!target || !proxy || !isReplayableBody(currentInit?.body) || current instanceof Request) {
-                response = await base(current, currentInit);
+            if (!canHandleRedirects || !proxy) {
+                response = await base(current, directInit);
             } else {
                 try {
-                    response = await tunnelRequest(target, proxy, currentInit);
+                    response = await tunnelRequest(target, proxy, currentInit, { handshakeTimeoutMs, requestTimeoutMs });
                 } catch (error) {
+                    if (currentInit.signal?.aborted) throw error;
                     // The tunnel may already have delivered the request; a
                     // direct replay could bill a chat completion twice.
                     if (error && error[REQUEST_SENT]) throw error;
@@ -520,7 +551,7 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch } 
                         logError(`proxy ${proxy.host} failed; using a direct connection`, error);
                     }
                     try {
-                        response = await base(current, currentInit);
+                        response = await base(current, directInit);
                     } catch (directError) {
                         // Both paths failed; the proxy error is the actionable one.
                         if (directError && typeof directError === 'object') {
@@ -531,16 +562,17 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch } 
                 }
             }
 
+            if (currentInit.redirect === 'manual' || !canHandleRedirects) {
+                return response;
+            }
+            if (currentInit.redirect === 'error' && REDIRECT_STATUS.has(response.status)) {
+                if (response.body) {
+                    try { await response.body.cancel(); } catch { /* ignore */ }
+                }
+                throw new TypeError(`Unexpected redirect (status ${response.status}) for ${target.href}`);
+            }
             const location = response.headers.get('location');
-            if (
-                hop >= 5
-                || currentInit.redirect === 'manual'
-                || current instanceof Request
-                || !target
-                || !location
-                || !REDIRECT_STATUS.has(response.status)
-                || !isReplayableBody(currentInit.body)
-            ) {
+            if (hop >= 5 || !location || !REDIRECT_STATUS.has(response.status)) {
                 return response;
             }
             let next;
@@ -661,6 +693,59 @@ function runCommand(file, args) {
 }
 
 /**
+ * @param {string} file
+ * @param {string[]} args
+ * @returns {Promise<string>}
+ */
+function runCommandAsync(file, args) {
+    return new Promise((resolve, reject) => {
+        execFile(file, args, {
+            encoding: 'utf8',
+            timeout: 1500,
+            windowsHide: true,
+        }, (error, stdout) => {
+            if (error) reject(error);
+            else resolve(String(stdout || ''));
+        });
+    });
+}
+
+function parseSystemProxyCommands(platform, run) {
+    if (platform === 'win32') {
+        const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+        return Promise.resolve(run('reg', ['query', key, '/v', 'ProxyEnable'])).then((enabled) => {
+            if (!/ProxyEnable\s+REG_DWORD\s+0x1/i.test(enabled)) return {};
+            return Promise.resolve(run('reg', ['query', key, '/v', 'ProxyServer'])).then((server) => {
+                const match = server.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
+                return match ? parseWindowsProxyServer(match[1].trim()) : {};
+            });
+        });
+    }
+    if (platform === 'darwin') {
+        return Promise.resolve(run('scutil', ['--proxy'])).then(parseScutilProxy);
+    }
+    if (platform === 'linux') {
+        const read = (schema, key) => Promise.resolve(run('gsettings', ['get', schema, key]))
+            .then((out) => String(out || '').trim().replace(/^'|'$/g, ''));
+        return read('org.gnome.system.proxy', 'mode').then(async (mode) => {
+            if (mode !== 'manual') return {};
+            /** @type {{http?: string, https?: string}} */
+            const out = {};
+            const [httpHost, httpPort, httpsHost, httpsPort] = await Promise.all([
+                read('org.gnome.system.proxy.http', 'host'),
+                read('org.gnome.system.proxy.http', 'port'),
+                read('org.gnome.system.proxy.https', 'host'),
+                read('org.gnome.system.proxy.https', 'port'),
+            ]);
+            if (httpHost) out.http = `http://${httpHost}${httpPort ? `:${httpPort}` : ''}`;
+            if (httpsHost) out.https = `http://${httpsHost}${httpsPort ? `:${httpsPort}` : ''}`;
+            return out;
+        });
+    }
+    return Promise.resolve({});
+}
+
+/**
  * Read the operating system's proxy settings.
  *
  * A system proxy (Clash, v2ray, corporate agents) is usually configured in the
@@ -703,6 +788,19 @@ export function detectSystemProxy({ platform = process.platform, run = runComman
     return {};
 }
 
+/**
+ * Async variant of `detectSystemProxy` using non-blocking `execFile`.
+ *
+ * @param {{platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string|Promise<string>}} [options]
+ * @returns {Promise<{http?: string, https?: string, all?: string}>}
+ */
+export async function detectSystemProxyAsync({ platform = process.platform, run = runCommandAsync } = {}) {
+    try {
+        return await parseSystemProxyCommands(platform, run);
+    } catch {
+        return {};
+    }
+}
 /**
  * Merge OS proxy settings into an env map without overriding explicit values.
  * @param {Record<string, string|undefined>} env
@@ -761,29 +859,60 @@ export function installProxyFetch({ env = process.env, force = false, system = t
     const probe = new URL('https://example.com');
     let systemProxy = {};
     let readAt = -Infinity;
+    /** @type {Promise<void>|null} */
+    let refreshing = null;
     let announced;
-    const resolveEnv = () => {
-        // `env` is read live: SillyTavern's requestProxy sets `all_proxy` at runtime.
-        let effective = env;
-        let source = 'environment';
-        if (system && !proxyFor(probe, env)) {
-            if (now() - readAt >= SYSTEM_PROXY_TTL_MS) {
-                systemProxy = detectSystemProxy({ platform, run });
-                readAt = now();
-            }
-            effective = withSystemProxy(env, systemProxy);
-            source = 'system';
-        }
+
+    const announce = (effective, source) => {
         const proxy = proxyFor(probe, effective);
         const label = proxy ? `${source} proxy ${proxy.protocol}//${proxy.host}` : '';
         if (label !== announced) {
             announced = label;
             log(proxy ? `outbound requests use the ${label}` : 'no outbound proxy configured; requests connect directly');
         }
+    };
+
+    const triggerRefresh = () => {
+        if (!system || refreshing) return;
+        // Update readAt eagerly so concurrent calls don't re-trigger while
+        // the probe is in flight or immediately after a failure.
+        readAt = now();
+        refreshing = detectSystemProxyAsync({ platform, run })
+            .then((next) => {
+                systemProxy = next;
+                readAt = now();
+                if (!proxyFor(probe, env)) {
+                    announce(withSystemProxy(env, systemProxy), 'system');
+                }
+            })
+            .catch(() => {})
+            .finally(() => {
+                refreshing = null;
+            });
+    };
+
+    const resolveEnv = () => {
+        // `env` is read live: SillyTavern's requestProxy sets `all_proxy` at runtime.
+        let effective = env;
+        let source = 'environment';
+        if (system && !proxyFor(probe, env)) {
+            if (now() - readAt >= SYSTEM_PROXY_TTL_MS) {
+                triggerRefresh();
+            }
+            effective = withSystemProxy(env, systemProxy);
+            source = 'system';
+        }
+        announce(effective, source);
         return effective;
     };
+
+    // Pre-warm system proxy in the background without blocking startup.
+    if (system && !proxyFor(probe, env)) {
+        triggerRefresh();
+    }
+
     const proxyFetch = createProxyFetch({ env: resolveEnv, base: current });
     wrapped.add(proxyFetch);
     globalThis.fetch = proxyFetch;
-    return Boolean(proxyFor(probe, resolveEnv()));
+    return Boolean(proxyFor(probe, env));
 }
