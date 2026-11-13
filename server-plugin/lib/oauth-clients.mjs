@@ -3,10 +3,10 @@
  *
  * Installed-app `clientId` values are public identifiers and their
  * `clientSecret`s are explicitly non-confidential (RFC 8252 §8.1). The bundled
- * catalog therefore ships the public pair for providers whose sign-in must work
+ * catalog therefore ships the public pair for most providers so sign-in works
  * out of the box (e.g. `google-antigravity`); `catalog-normalize.mjs` scrubs
- * every other provider to env-var references. Values resolve from, in order:
- *
+ * `LOCAL_ONLY_CLIENTS` (`google-gemini-cli`) to env-var references. Values
+ * resolve from, in order:
  *   1. the process environment (any name the catalog references), and
  *   2. `<OMTP data dir>/oauth-clients.json`:
  *        { "google-antigravity": { "clientId": "…", "clientSecret": "…" },
