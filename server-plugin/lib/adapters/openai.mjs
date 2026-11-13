@@ -6,6 +6,7 @@
  */
 import { parseSse, done, sseHeaders } from '../sse.mjs';
 import { KEYLESS_PROVIDERS } from '../provider-config.mjs';
+import { isLoopbackHost } from '../net-hosts.mjs';
 
 export const id = 'openai';
 
@@ -60,14 +61,7 @@ export function isKeyless(ctx) {
   if (KEYLESS.has(ctx?.provider)) return true;
   try {
     const host = new URL(ctx?.baseUrl || '').hostname.toLowerCase();
-    return (
-      host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host === '0.0.0.0' ||
-      host === '::1' ||
-      host === '[::1]' ||
-      host.endsWith('.localhost')
-    );
+    return isLoopbackHost(host) || host.endsWith('.localhost');
   } catch {
     return false;
   }
@@ -214,6 +208,7 @@ export async function runJsonAdapter({
   streamHandler,
   translate,
   ctx,
+  model = ctx?.model || '',
   serialize = JSON.stringify,
 }) {
   const doFetch = ctx?.fetchImpl || fetch;
@@ -230,7 +225,7 @@ export async function runJsonAdapter({
   }
 
   if (!upstream.ok) return upstreamErrorResponse(upstream);
-  if (stream) return sseResponse(upstream, streamHandler());
+  if (stream) return sseResponse(upstream, streamHandler(), model);
   let json;
   try {
     json = await upstream.json();
@@ -318,7 +313,7 @@ export function newCompletionId() {
  * `emit` accepts either an already-formatted SSE frame (string) or an object
  * that is serialized into a data frame.
  */
-export function sseResponse(upstream, handler) {
+export function sseResponse(upstream, handler, model = '') {
   const encoder = new TextEncoder();
   // Every chunk of one response must share id/created. Individual frame
   // builders use Date.now()/randomUUID(), so normalize them centrally here
@@ -335,6 +330,9 @@ export function sseResponse(upstream, handler) {
           text = text
             .replace(/"id":"(?:[^"\\]|\\.)*"/, `"id":${JSON.stringify(responseId)}`)
             .replace(/"created":\d+/, `"created":${created}`);
+          if (model) {
+            text = text.replace(/"model":"(?:[^"\\]|\\.)*"/, `"model":${JSON.stringify(model)}`);
+          }
         }
         controller.enqueue(encoder.encode(text));
       };
@@ -457,6 +455,110 @@ export function pushContent(list, role, parts) {
   }
 }
 
+/**
+ * Normalize OpenAI-style `messages` into system prompts and adapter turns/items.
+ *
+ * @param {any[]} messages
+ * @param {object} hooks
+ * @param {(text: string) => any} [hooks.mapSystem]
+ * @param {(text: string) => any} hooks.mapText
+ * @param {(part: any, url: string) => any} [hooks.mapImage]
+ * @param {(text: string) => any} [hooks.mapAssistantText]
+ * @param {(call: {id:string, name:string, rawArguments:any, args:any}, index:number) => any} hooks.mapToolCall
+ * @param {(msg: {toolCallId:string, name:string, content:string, raw:any}) => any} hooks.mapToolResult
+ * @param {(role: string, parts: any[], meta?: {isToolResult?: boolean}) => void} [hooks.emitTurn]
+ * @param {string} [hooks.assistantRole='assistant']
+ * @param {string} [hooks.partsKey='content']
+ * @returns {{ system: any[], turns: any[] }}
+ */
+export function normalizeTurns(
+  messages,
+  {
+    mapSystem,
+    mapText,
+    mapImage,
+    mapAssistantText,
+    mapToolCall,
+    mapToolResult,
+    emitTurn,
+    assistantRole = 'assistant',
+    partsKey = 'content',
+  },
+) {
+  const system = [];
+  const turns = [];
+  const emit = emitTurn || ((role, parts) => {
+    if (!parts || parts.length === 0) return;
+    const last = turns[turns.length - 1];
+    if (last && last.role === role) {
+      if (Array.isArray(last[partsKey])) last[partsKey].push(...parts);
+      else last[partsKey] = parts;
+    } else {
+      turns.push({ role, [partsKey]: parts });
+    }
+  });
+
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (!message || typeof message !== 'object') continue;
+    const role = message.role;
+    if (role === 'system' || role === 'developer') {
+      const text = contentToText(message.content);
+      if (text) system.push(mapSystem ? mapSystem(text) : text);
+      continue;
+    }
+    if (role === 'tool' || role === 'function') {
+      const block = mapToolResult({
+        toolCallId: message.tool_call_id || message.name || '',
+        name: message.name || '',
+        content: contentToText(message.content),
+        raw: message,
+      });
+      if (block) emit('user', [block], { isToolResult: true });
+      continue;
+    }
+    if (role === 'assistant') {
+      const parts = [];
+      const text = contentToText(message.content);
+      if (text) parts.push((mapAssistantText || mapText)(text));
+      for (const call of message.tool_calls || []) {
+        const fn = call.function || call;
+        const rawArguments = fn.arguments ?? call.arguments;
+        const item = mapToolCall(
+          {
+            id: call.id || '',
+            name: fn.name || call.name || 'tool',
+            rawArguments,
+            args: parseJsonObject(rawArguments),
+          },
+          parts.length,
+        );
+        if (item) parts.push(item);
+      }
+      if (parts.length) emit(assistantRole, parts, { isToolResult: false });
+      continue;
+    }
+    const parts = [];
+    if (Array.isArray(message.content)) {
+      for (const part of message.content) {
+        if (typeof part === 'string') {
+          parts.push(mapText(part));
+        } else if (part?.type === 'text' && typeof part.text === 'string') {
+          parts.push(mapText(part.text));
+        } else if ((part?.type === 'image_url' || part?.type === 'image') && mapImage) {
+          const url = part.image_url?.url || part.image_url || part.url;
+          const block = mapImage(part, url);
+          if (block) parts.push(block);
+        }
+      }
+    } else {
+      const text = contentToText(message.content);
+      if (text) parts.push(mapText(text));
+    }
+    if (parts.length) emit('user', parts, { isToolResult: false });
+  }
+  return { system, turns };
+}
+
 export async function chat(req, ctx) {
   if (!ctx?.baseUrl) return missingBaseUrl();
   if (!hasCredential(ctx) && !isKeyless(ctx)) return missingApiKey(ctx, 'unknown');
@@ -478,18 +580,59 @@ export async function chat(req, ctx) {
   }
   body.model = ctx.model || body.model;
   body.stream = Boolean(req?.stream);
+
+  // Ask streaming OpenAI-compatible upstreams for the trailing usage chunk so
+  // gateway token stats work consistently across providers. Only inject when
+  // the caller did not specify `include_usage`, and retry once without it if
+  // the upstream rejects `stream_options` with 400/422.
+  let injectedStreamOptions = false;
+  let createdStreamOptions = false;
+  if (body.stream && body.stream_options?.include_usage === undefined) {
+    createdStreamOptions = !body.stream_options || typeof body.stream_options !== 'object';
+    body.stream_options = {
+      ...(createdStreamOptions ? {} : body.stream_options),
+      include_usage: true,
+    };
+    injectedStreamOptions = true;
+  }
+
   const url = joinUrl(resolveBaseUrl(ctx.baseUrl, extra), '/chat/completions');
   const doFetch = ctx.fetchImpl || fetch;
-  let upstream;
-  try {
-    upstream = await doFetch(url, {
+  const headers = { 'Content-Type': 'application/json', ...authHeaders(ctx) };
+  const send = () =>
+    doFetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders(ctx) },
+      headers,
       body: JSON.stringify(body),
       signal: ctx.signal,
     });
+
+  let upstream;
+  try {
+    upstream = await send();
   } catch (error) {
     return networkError(error);
+  }
+
+  if (!upstream.ok && injectedStreamOptions && (upstream.status === 400 || upstream.status === 422)) {
+    let text = '';
+    try {
+      text = await upstream.text();
+    } catch {
+      text = '';
+    }
+    if (/stream_options|include_usage/i.test(text)) {
+      if (createdStreamOptions) delete body.stream_options;
+      else delete body.stream_options.include_usage;
+      try {
+        upstream = await send();
+      } catch (error) {
+        return networkError(error);
+      }
+      if (!upstream.ok) return upstreamErrorResponse(upstream);
+    } else {
+      return upstreamErrorResponse(new Response(text, { status: upstream.status, headers: upstream.headers || {} }));
+    }
   }
 
   if (!upstream.ok) return upstreamErrorResponse(upstream);

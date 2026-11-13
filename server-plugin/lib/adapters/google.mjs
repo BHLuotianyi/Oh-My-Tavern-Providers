@@ -1,16 +1,14 @@
 /** Google Generative Language (Gemini) gateway adapter. */
 import {
-  contentToText,
   createFinishEmitter,
   hasCredential,
   invalidMessages,
   missingApiKey,
   missingBaseUrl,
   newCompletionId,
+  normalizeTurns,
   openAIUsage,
   parseDataUrl,
-  parseJsonObject,
-  pushContent,
   resolveBaseUrl,
   runJsonAdapter,
   trimSlash,
@@ -57,60 +55,22 @@ function imagePart(url) {
 }
 
 function buildContents(messages) {
-  const system = [];
-  const contents = [];
-  for (const message of Array.isArray(messages) ? messages : []) {
-    if (!message || typeof message !== 'object') continue;
-    const role = message.role;
-    if (role === 'system' || role === 'developer') {
-      const text = contentToText(message.content);
-      if (text) system.push(text);
-      continue;
-    }
-    if (role === 'tool' || role === 'function') {
-      pushContent(contents, 'user', [
-        {
-          functionResponse: {
-            name: message.name || message.tool_call_id || 'tool',
-            response: { content: contentToText(message.content) },
-          },
-        },
-      ]);
-      continue;
-    }
-    if (role === 'assistant') {
-      const parts = [];
-      const text = contentToText(message.content);
-      if (text) parts.push({ text });
-      for (const call of message.tool_calls || []) {
-        const fn = call.function || call;
-        parts.push({
-          functionCall: {
-            name: fn.name || call.name || 'tool',
-            args: parseJsonObject(fn.arguments ?? call.arguments),
-          },
-        });
-      }
-      if (parts.length) pushContent(contents, 'model', parts);
-      continue;
-    }
-    const parts = [];
-    if (Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (typeof part === 'string') parts.push({ text: part });
-        else if (part?.type === 'text' && typeof part.text === 'string') parts.push({ text: part.text });
-        else if (part?.type === 'image_url' || part?.type === 'image') {
-          const block = imagePart(part.image_url?.url || part.image_url || part.url);
-          if (block) parts.push(block);
-        }
-      }
-    } else {
-      const text = contentToText(message.content);
-      if (text) parts.push({ text });
-    }
-    if (parts.length) pushContent(contents, 'user', parts);
-  }
-  return { system: system.join('\n\n'), contents };
+  const { system, turns } = normalizeTurns(messages, {
+    assistantRole: 'model',
+    partsKey: 'parts',
+    mapText: (text) => ({ text }),
+    mapImage: (_part, url) => imagePart(url),
+    mapToolCall: (call) => ({
+      functionCall: { name: call.name, args: call.args },
+    }),
+    mapToolResult: ({ name, toolCallId, content }) => ({
+      functionResponse: {
+        name: name || toolCallId || 'tool',
+        response: { content },
+      },
+    }),
+  });
+  return { system: system.join('\n\n'), contents: turns };
 }
 
 function translateTools(tools) {
@@ -339,6 +299,7 @@ export async function chat(req, ctx) {
     payload,
     label: 'Google',
     stream,
+    model,
     streamHandler: () => createGoogleStreamHandler(model),
     translate: (json) => translateGoogleCompletion(json, model),
     ctx,

@@ -18,11 +18,11 @@
 import { randomUUID } from 'node:crypto';
 import {
   JSON_HEADERS,
-  contentToText,
   errorResponse,
   hasCredential,
   networkError,
   newCompletionId,
+  normalizeTurns,
   parseJsonObject,
   sseResponse,
   translateFunctionTools,
@@ -90,77 +90,63 @@ function requiresFirstCallSignature(model) {
  * @returns {{systemParts: {text: string}[], contents: {role: string, parts: any[]}[]}}
  */
 function convertMessagesToCCA(messages, model) {
-  const systemParts = [];
   const contents = [];
   const toolNames = new Map();
   // Claude routes on CCA pair calls with responses through function-part ids.
   const includeIds = /claude/i.test(model);
   const needsSignature = requiresFirstCallSignature(model);
 
-  const append = (role, parts) => {
-    if (parts.length === 0) return;
-    const prev = contents[contents.length - 1];
-    if (prev && prev.role === role) prev.parts.push(...parts);
-    else contents.push({ role, parts });
-  };
-
-  // Cloud Code Assist requires all function responses in one contiguous user turn.
-  const appendToolResponse = (part) => {
-    const prev = contents[contents.length - 1];
-    if (prev && prev.role === 'user' && prev.parts.some((item) => item.functionResponse)) {
-      prev.parts.push(part);
-    } else {
-      contents.push({ role: 'user', parts: [part] });
-    }
-  };
-
-  for (const message of Array.isArray(messages) ? messages : []) {
-    if (!message || typeof message !== 'object') continue;
-    if (message.role === 'system' || message.role === 'developer') {
-      const text = contentToText(message.content);
-      if (text) systemParts.push({ text });
-      continue;
-    }
-    if (message.role === 'tool' || message.role === 'function') {
-      const callId = message.tool_call_id || message.name;
-      appendToolResponse({
+  const { system } = normalizeTurns(messages, {
+    assistantRole: 'model',
+    mapSystem: (text) => ({ text }),
+    mapText: (text) => ({ text }),
+    mapToolCall: (call) => {
+      if (call.id) toolNames.set(call.id, call.name);
+      return {
+        functionCall: {
+          name: call.name,
+          args: call.args,
+          ...(includeIds && call.id ? { id: call.id } : {}),
+        },
+      };
+    },
+    mapToolResult: ({ raw, content }) => {
+      const callId = raw.tool_call_id || raw.name;
+      return {
         functionResponse: {
-          name: toolNames.get(callId) || message.name || message.tool_call_id || 'tool',
-          response: { output: contentToText(message.content) },
+          name: toolNames.get(callId) || raw.name || raw.tool_call_id || 'tool',
+          response: { output: content },
           ...(includeIds && callId ? { id: callId } : {}),
         },
-      });
-      continue;
-    }
-    if (message.role === 'assistant') {
-      const parts = [];
-      const text = contentToText(message.content);
-      if (text) parts.push({ text });
-      for (const call of message.tool_calls || []) {
-        const fn = call.function || call;
-        const name = fn.name || call.name || 'tool';
-        if (call.id) toolNames.set(call.id, name);
-        parts.push({
-          functionCall: {
-            name,
-            args: parseJsonObject(fn.arguments ?? call.arguments),
-            ...(includeIds && call.id ? { id: call.id } : {}),
-          },
-        });
+      };
+    },
+    emitTurn: (role, parts, { isToolResult } = {}) => {
+      if (isToolResult) {
+        // Cloud Code Assist requires all function responses in one contiguous user turn.
+        const prev = contents[contents.length - 1];
+        if (prev && prev.role === 'user' && prev.parts.some((item) => item.functionResponse)) {
+          prev.parts.push(...parts);
+        } else {
+          contents.push({ role: 'user', parts });
+        }
+        return;
       }
-      // Replayed calls carry no signature, so the bypass sentinel is required
-      // on the first call of the turn (secondary parallel calls stay bare).
-      const firstCall = parts.findIndex((part) => part.functionCall);
-      if (needsSignature && firstCall !== -1) {
-        parts[firstCall].thoughtSignature = SKIP_THOUGHT_SIGNATURE;
+      const nonEmpty = role === 'user' ? parts.filter((part) => part.text !== '') : parts;
+      if (!nonEmpty.length) return;
+      if (role === 'model' && needsSignature) {
+        // Replayed calls carry no signature, so the bypass sentinel is required
+        // on the first call of the turn (secondary parallel calls stay bare).
+        const firstCall = nonEmpty.findIndex((part) => part.functionCall);
+        if (firstCall !== -1) {
+          nonEmpty[firstCall].thoughtSignature = SKIP_THOUGHT_SIGNATURE;
+        }
       }
-      append('model', parts);
-      continue;
-    }
-    const text = contentToText(message.content);
-    if (text) append('user', [{ text }]);
-  }
-  return { systemParts, contents };
+      const prev = contents[contents.length - 1];
+      if (prev && prev.role === role) prev.parts.push(...nonEmpty);
+      else contents.push({ role, parts: nonEmpty });
+    },
+  });
+  return { systemParts: system, contents };
 }
 
 /** Wrap OpenAI tool definitions as one Gemini `tools` entry. */
@@ -379,7 +365,7 @@ export async function chat(req, ctx) {
   if (!upstream.ok) return upstreamErrorResponse(upstream);
 
   const model = String(ctx?.model || req?.model || 'gemini-3.1-pro');
-  if (req?.stream) return sseResponse(upstream, createCcaStreamHandler(model));
+  if (req?.stream) return sseResponse(upstream, createCcaStreamHandler(model), model);
 
   const { text, reasoning, lastResponse } = parseCcaBody(await upstream.text());
   const translated = lastResponse
@@ -411,7 +397,10 @@ async function fetchAvailableModels(endpoints, headers, doFetch, signal) {
         signal,
       });
       lastStatus = response.status;
-      if (!response.ok) continue;
+      if (!response.ok) {
+        try { await response.body?.cancel?.(); } catch { /* body already consumed */ }
+        continue;
+      }
       return await response.json();
     } catch {
       /* try next endpoint */

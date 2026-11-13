@@ -185,6 +185,7 @@ export async function chat(req, ctx) {
     payload,
     label: 'Google Vertex',
     stream,
+    model,
     streamHandler: () => createGoogleStreamHandler(model),
     translate: (json) => translateGoogleCompletion(json, model),
     ctx,

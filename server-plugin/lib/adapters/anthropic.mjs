@@ -1,17 +1,15 @@
 /** Anthropic Messages API gateway adapter. */
 import {
   authHeaders,
-  contentToText,
   createFinishEmitter,
   hasCredential,
   invalidMessages,
   missingApiKey,
   missingBaseUrl,
   newCompletionId,
+  normalizeTurns,
   openAIUsage,
   parseDataUrl,
-  parseJsonObject,
-  pushContent,
   runJsonAdapter,
   translateFunctionTools,
   trimSlash,
@@ -56,61 +54,22 @@ function imageBlock(part) {
 }
 
 function translateMessages(messages) {
-  const system = [];
-  const out = [];
-  for (const message of Array.isArray(messages) ? messages : []) {
-    if (!message || typeof message !== 'object') continue;
-    const role = message.role;
-    if (role === 'system' || role === 'developer') {
-      const text = contentToText(message.content);
-      if (text) system.push(text);
-      continue;
-    }
-    if (role === 'tool' || role === 'function') {
-      pushContent(out, 'user', [
-        {
-          type: 'tool_result',
-          tool_use_id: message.tool_call_id || message.name || '',
-          content: contentToText(message.content),
-        },
-      ]);
-      continue;
-    }
-    if (role === 'assistant') {
-      const blocks = [];
-      const text = contentToText(message.content);
-      if (text) blocks.push({ type: 'text', text });
-      for (const call of message.tool_calls || []) {
-        const fn = call.function || call;
-        blocks.push({
-          type: 'tool_use',
-          id: call.id || `toolu_${blocks.length}`,
-          name: fn.name || call.name || 'tool',
-          input: parseJsonObject(fn.arguments ?? call.arguments),
-        });
-      }
-      if (blocks.length) pushContent(out, 'assistant', blocks);
-      continue;
-    }
-    const blocks = [];
-    if (Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (typeof part === 'string') {
-          blocks.push({ type: 'text', text: part });
-        } else if (part?.type === 'text' && typeof part.text === 'string') {
-          blocks.push({ type: 'text', text: part.text });
-        } else if (part?.type === 'image_url' || part?.type === 'image') {
-          const block = imageBlock(part);
-          if (block) blocks.push(block);
-        }
-      }
-    } else {
-      const text = contentToText(message.content);
-      if (text) blocks.push({ type: 'text', text });
-    }
-    if (blocks.length) pushContent(out, 'user', blocks);
-  }
-  return { system: system.join('\n\n'), messages: out };
+  const { system, turns } = normalizeTurns(messages, {
+    mapText: (text) => ({ type: 'text', text }),
+    mapImage: (part) => imageBlock(part),
+    mapToolCall: (call, index) => ({
+      type: 'tool_use',
+      id: call.id || `toolu_${index}`,
+      name: call.name,
+      input: call.args,
+    }),
+    mapToolResult: ({ toolCallId, content }) => ({
+      type: 'tool_result',
+      tool_use_id: toolCallId,
+      content,
+    }),
+  });
+  return { system: system.join('\n\n'), messages: turns };
 }
 
 function translateToolChoice(choice) {
@@ -136,16 +95,18 @@ function resolveMaxTokens(req, extra, modelInfo) {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_MAX_TOKENS;
 }
 
-function buildThinking(effort, maxTokens) {
+function buildThinking(effort, maxTokens, cap = 0) {
   if (!effort || effort === 'auto') return { thinking: null, maxTokens };
   const wanted = THINKING_BUDGETS[effort];
   if (!wanted) return { thinking: null, maxTokens };
   // `max_tokens` is the visible answer length the caller asked for, but
   // Anthropic counts thinking tokens against the same ceiling. Grow the
-  // ceiling by the whole budget; otherwise `budget = maxTokens - 1` leaves
-  // exactly one token for the actual reply.
-  const budget = Math.min(wanted, Math.max(1024, Math.floor(maxTokens * 0.8)));
-  const nextMax = maxTokens + budget;
+  // ceiling by the whole budget (clamped to the model's hard output limit);
+  // otherwise `budget = maxTokens - 1` leaves one token for the reply.
+  const effectiveMax = cap > 0 ? Math.min(maxTokens, cap) : maxTokens;
+  if (cap > 0 && effectiveMax <= 1024) return { thinking: null, maxTokens: effectiveMax };
+  const budget = Math.min(wanted, Math.max(1024, Math.floor(effectiveMax * 0.8)));
+  const nextMax = cap > 0 ? Math.min(effectiveMax + budget, cap) : effectiveMax + budget;
   return { thinking: { type: 'enabled', budget_tokens: budget }, maxTokens: nextMax };
 }
 
@@ -324,8 +285,12 @@ function buildPayload(req, ctx, extra) {
 
   const requestedMax = resolveMaxTokens(req || {}, extra, ctx.modelInfo);
   const supportsThinking = ctx.modelInfo ? Boolean(ctx.modelInfo.reasoning) : true;
-  const { thinking, maxTokens } = buildThinking(supportsThinking ? req?.reasoning_effort : 'auto', requestedMax);
-
+  const modelCap = Number(ctx.modelInfo?.maxTokens) || 0;
+  const { thinking, maxTokens } = buildThinking(
+    supportsThinking ? req?.reasoning_effort : 'auto',
+    requestedMax,
+    modelCap,
+  );
   const payload = { model: ctx.model, max_tokens: maxTokens, messages };
   if (isClaudeCode(ctx)) {
     // Claude Code's layout: billing attestation, identity, then the caller's

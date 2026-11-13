@@ -1,7 +1,6 @@
 /** OpenAI Responses API gateway adapter. */
 import {
   authHeaders,
-  contentToText,
   createFinishEmitter,
   hasCredential,
   invalidMessages,
@@ -9,6 +8,7 @@ import {
   missingApiKey,
   missingBaseUrl,
   newCompletionId,
+  normalizeTurns,
   openAIUsage,
   resolveBaseUrl,
   runJsonAdapter,
@@ -23,61 +23,44 @@ export const id = 'responses';
 const EFFORT_MAP = { min: 'minimal', low: 'low', medium: 'medium', high: 'high', max: 'high' };
 
 function translateInput(messages) {
-  const instructions = [];
   const input = [];
-  for (const message of Array.isArray(messages) ? messages : []) {
-    if (!message || typeof message !== 'object') continue;
-    const role = message.role;
-    if (role === 'system' || role === 'developer') {
-      const text = contentToText(message.content);
-      if (text) instructions.push(text);
-      continue;
-    }
-    if (role === 'tool' || role === 'function') {
-      input.push({
-        type: 'function_call_output',
-        call_id: message.tool_call_id || message.name || '',
-        output: contentToText(message.content),
-      });
-      continue;
-    }
-    if (role === 'assistant') {
-      const text = contentToText(message.content);
-      if (text) {
-        input.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] });
+  const { system } = normalizeTurns(messages, {
+    mapText: (text) => ({ type: 'input_text', text }),
+    mapImage: (_part, url) => (url ? { type: 'input_image', image_url: url } : null),
+    mapAssistantText: (text) => ({ type: 'output_text', text }),
+    mapToolCall: (call) => ({
+      type: 'function_call',
+      call_id: call.id,
+      name: call.name,
+      arguments:
+        typeof call.rawArguments === 'string'
+          ? call.rawArguments
+          : JSON.stringify(call.rawArguments ?? {}),
+    }),
+    mapToolResult: ({ toolCallId, content }) => ({
+      type: 'function_call_output',
+      call_id: toolCallId,
+      output: content,
+    }),
+    emitTurn: (role, parts, { isToolResult } = {}) => {
+      if (isToolResult) {
+        input.push(...parts);
+        return;
       }
-      for (const call of message.tool_calls || []) {
-        const fn = call.function || call;
-        input.push({
-          type: 'function_call',
-          call_id: call.id || `call_${input.length}`,
-          name: fn.name || call.name || 'tool',
-          arguments:
-            typeof fn.arguments === 'string'
-              ? fn.arguments
-              : JSON.stringify(fn.arguments ?? call.arguments ?? {}),
-        });
-      }
-      continue;
-    }
-    const parts = [];
-    if (Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (typeof part === 'string') parts.push({ type: 'input_text', text: part });
-        else if (part?.type === 'text' && typeof part.text === 'string') {
-          parts.push({ type: 'input_text', text: part.text });
-        } else if (part?.type === 'image_url' || part?.type === 'image') {
-          const url = part.image_url?.url || part.image_url || part.url;
-          if (url) parts.push({ type: 'input_image', image_url: url });
+      if (role === 'assistant') {
+        for (const part of parts) {
+          if (part.type === 'output_text') {
+            input.push({ type: 'message', role: 'assistant', content: [part] });
+          } else {
+            input.push(part.call_id ? part : { ...part, call_id: `call_${input.length}` });
+          }
         }
+        return;
       }
-    } else {
-      const text = contentToText(message.content);
-      if (text) parts.push({ type: 'input_text', text });
-    }
-    if (parts.length) input.push({ type: 'message', role: 'user', content: parts });
-  }
-  return { instructions: instructions.join('\n\n'), input };
+      input.push({ type: 'message', role: 'user', content: parts });
+    },
+  });
+  return { instructions: system.join('\n\n'), input };
 }
 
 function translateToolChoice(choice) {

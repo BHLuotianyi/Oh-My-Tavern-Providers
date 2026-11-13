@@ -2,16 +2,14 @@
 import { createHash, createHmac } from 'node:crypto';
 import {
   JSON_HEADERS,
-  contentToText,
   errorResponse,
   invalidMessages,
   invalidResponse,
   networkError,
   newCompletionId,
+  normalizeTurns,
   openAIUsage,
   parseDataUrl,
-  parseJsonObject,
-  pushContent,
   trimSlash,
   upstreamErrorResponse,
   usageFrame,
@@ -93,62 +91,25 @@ function imageBlock(part) {
 
 /** Split OpenAI messages into Converse `system` blocks and merged turns. */
 function convertMessages(messages) {
-  const system = [];
-  const turns = [];
-
-  for (const message of Array.isArray(messages) ? messages : []) {
-    if (!message || typeof message !== 'object') continue;
-    const role = message.role;
-    if (role === 'system' || role === 'developer') {
-      const text = contentToText(message.content);
-      if (text) system.push({ text });
-      continue;
-    }
-    if (role === 'tool' || role === 'function') {
-      pushContent(turns, 'user', [
-        {
-          toolResult: {
-            toolUseId: message.tool_call_id || message.name || '',
-            content: [{ text: contentToText(message.content) }],
-            status: 'success',
-          },
-        },
-      ]);
-      continue;
-    }
-    if (role === 'assistant') {
-      const blocks = [];
-      const text = contentToText(message.content);
-      if (text) blocks.push({ text });
-      for (const call of message.tool_calls || []) {
-        const fn = call.function || call;
-        blocks.push({
-          toolUse: {
-            toolUseId: call.id || `call_${blocks.length}`,
-            name: fn.name || call.name || 'tool',
-            input: parseJsonObject(fn.arguments ?? call.arguments),
-          },
-        });
-      }
-      if (blocks.length) pushContent(turns, 'assistant', blocks);
-      continue;
-    }
-    const blocks = [];
-    if (Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (typeof part === 'string') blocks.push({ text: part });
-        else if (part?.type === 'text' && typeof part.text === 'string') blocks.push({ text: part.text });
-        else if (part?.type === 'image_url' || part?.type === 'image') {
-          const block = imageBlock(part);
-          if (block) blocks.push(block);
-        }
-      }
-    } else {
-      const text = contentToText(message.content);
-      if (text) blocks.push({ text });
-    }
-    if (blocks.length) pushContent(turns, 'user', blocks);
-  }
+  const { system, turns } = normalizeTurns(messages, {
+    mapSystem: (text) => ({ text }),
+    mapText: (text) => ({ text }),
+    mapImage: (part) => imageBlock(part),
+    mapToolCall: (call, index) => ({
+      toolUse: {
+        toolUseId: call.id || `call_${index}`,
+        name: call.name,
+        input: call.args,
+      },
+    }),
+    mapToolResult: ({ toolCallId, content }) => ({
+      toolResult: {
+        toolUseId: toolCallId,
+        content: [{ text: content }],
+        status: 'success',
+      },
+    }),
+  });
 
   // Converse requires the transcript to start with a user turn.
   if (turns.length && turns[0].role !== 'user') {
@@ -289,23 +250,28 @@ function translateConverse(json, model) {
 }
 
 function synthesizeSse(completion) {
-  const frames = [openAIChunk({ role: 'assistant', content: '' })];
+  const extra = { id: completion.id, created: completion.created, model: completion.model };
+  const frames = [openAIChunk({ role: 'assistant', content: '' }, null, extra)];
   const message = completion.choices[0].message;
-  if (message.reasoning_content) frames.push(openAIChunk({ reasoning_content: message.reasoning_content }));
-  if (message.content) frames.push(openAIChunk({ content: message.content }));
+  if (message.reasoning_content) frames.push(openAIChunk({ reasoning_content: message.reasoning_content }, null, extra));
+  if (message.content) frames.push(openAIChunk({ content: message.content }, null, extra));
   for (const [index, call] of (message.tool_calls || []).entries()) {
     frames.push(
-      openAIChunk({
-        tool_calls: [
-          { index, id: call.id, type: 'function', function: { name: call.function.name, arguments: '' } },
-        ],
-      }),
+      openAIChunk(
+        {
+          tool_calls: [
+            { index, id: call.id, type: 'function', function: { name: call.function.name, arguments: '' } },
+          ],
+        },
+        null,
+        extra,
+      ),
     );
     frames.push(
-      openAIChunk({ tool_calls: [{ index, function: { arguments: call.function.arguments } }] }),
+      openAIChunk({ tool_calls: [{ index, function: { arguments: call.function.arguments } }] }, null, extra),
     );
   }
-  frames.push(openAIChunk({}, completion.choices[0].finish_reason));
+  frames.push(openAIChunk({}, completion.choices[0].finish_reason, extra));
   frames.push(usageFrame(completion.usage, completion.model));
   frames.push(done());
   return frames.join('');

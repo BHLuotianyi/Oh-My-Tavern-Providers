@@ -6,18 +6,6 @@
  * gateway or prevent native/translated OMTP entries from working.
  */
 
-export const ADAPTER_IDS = Object.freeze([
-    'openai',
-    'anthropic',
-    'google',
-    'google-vertex',
-    'antigravity',
-    'responses',
-    'azure-responses',
-    'bedrock',
-    'ollama',
-]);
-
 /** @type {Record<string, () => Promise<any>>} */
 const LOADERS = {
     openai: () => import('./openai.mjs'),
