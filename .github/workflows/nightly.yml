@@ -19,19 +19,23 @@ concurrency:
   group: nightly
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  actions: read
-
 env:
   TARGET_DAY: ${{ inputs.day }}
 
 jobs:
-  nightly:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.gate.outputs.sha }}
+      day: ${{ steps.window.outputs.day }}
+      compact: ${{ steps.window.outputs.compact }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
 
@@ -40,6 +44,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${TARGET_DAY}" ]; then
+            if [[ ! "$TARGET_DAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+              echo "invalid day: $TARGET_DAY (expected YYYY-MM-DD)" >&2
+              exit 1
+            fi
             day="$TARGET_DAY"
           else
             day="$(TZ=Asia/Kuala_Lumpur date -d 'yesterday' +%F)"
@@ -57,20 +65,23 @@ jobs:
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
+          START: ${{ steps.window.outputs.start }}
+          END: ${{ steps.window.outputs.end }}
+          DAY: ${{ steps.window.outputs.day }}
         run: |
           set -euo pipefail
           gh run list --repo "$GITHUB_REPOSITORY" --branch main --event push \
             --status success --limit 100 \
             --json headSha,createdAt,conclusion,event,status > runs.json
-          sha="$(node tools/nightly-gate.mjs runs.json '${{ steps.window.outputs.start }}' '${{ steps.window.outputs.end }}')"
+          sha="$(node tools/nightly-gate.mjs runs.json "$START" "$END")"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           if [ -z "$sha" ]; then
-            echo "::notice::no passing push to main on ${{ steps.window.outputs.day }}; nightly skipped"
+            echo "::notice::no passing push to main on $DAY; nightly skipped"
           else
             echo "::notice::nightly base commit $sha"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: steps.gate.outputs.sha != ''
         with:
           ref: ${{ steps.gate.outputs.sha }}
@@ -83,45 +94,57 @@ jobs:
         if: steps.gate.outputs.sha != ''
         run: npm run validate
 
-      - name: Write nightly identity
-        id: bump
+      - name: Write nightly identity and package
         if: steps.gate.outputs.sha != ''
+        env:
+          COMPACT: ${{ steps.window.outputs.compact }}
+          TAG: nightly-${{ steps.window.outputs.compact }}
         run: |
           set -euo pipefail
           floor=0
-          if git fetch --depth=1 origin nightly 2>/dev/null; then
+          set +e
+          git ls-remote --exit-code --heads origin nightly >/dev/null 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            git fetch --depth=1 origin nightly
             floor=$(git show FETCH_HEAD:package.json | node -e "
               let text = '';
               process.stdin.on('data', (chunk) => { text += chunk; });
               process.stdin.on('end', () => process.stdout.write(String(JSON.parse(text).versionCode || 0)));
             ")
+          elif [ "$rc" -ne 2 ]; then
+            echo "git ls-remote origin nightly failed with exit code $rc" >&2
+            exit "$rc"
           fi
           node tools/version.mjs nightly \
-            --date '${{ steps.window.outputs.compact }}' \
+            --date "$COMPACT" \
             --floor-code "$floor" \
             --json-out .version.json
-
-      - name: Publish the nightly channel
-        if: steps.gate.outputs.sha != ''
-        env:
-          TAG: nightly-${{ steps.window.outputs.compact }}
-        run: |
-          set -euo pipefail
+          git diff > version.patch
+          mapfile -t files < <(jq -r '.files[]' .version.json)
+          display="$(jq -r '.display' .version.json)"
           git config user.name 'omtp-version-bot'
           git config user.email 'omtp-version-bot@users.noreply.github.com'
-          display=$(node -p "require('./.version.json').display")
-          git checkout -B nightly
-          git add manifest.json package.json server-plugin/package.json src/constants.js
+          git add -- "${files[@]}"
           git commit -m "chore(version): $display"
-          git push --force origin nightly
-          git tag -f "$TAG"
-          git push --force origin "refs/tags/$TAG"
           mkdir -p dist
-          git archive --format=zip --prefix=omtp-model-hub/ -o "dist/omtp-$TAG.zip" HEAD
+          stage="$(mktemp -d)"
+          trap 'rm -rf "$stage"' EXIT
+          git archive --format=tar --prefix=omtp-model-hub/ HEAD | tar -xf - -C "$stage"
+          node -e '
+            const fs = require("node:fs");
+            for (const file of process.argv.slice(1)) {
+              fs.writeFileSync(file, JSON.stringify(JSON.parse(fs.readFileSync(file, "utf8"))));
+            }
+          ' "$stage/omtp-model-hub/catalog/omtp-catalog.json" \
+            "$stage/omtp-model-hub/server-plugin/catalog/omtp-catalog.json"
+          out="$PWD/dist/omtp-$TAG.zip"
+          (cd "$stage" && zip -9 -rq "$out" omtp-model-hub)
 
       - name: Upload nightly build
         if: steps.gate.outputs.sha != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: omtp-${{ steps.window.outputs.compact }}
           path: |
@@ -129,20 +152,74 @@ jobs:
             .version.json
           retention-days: 90
 
-      - name: Job summary
+      - name: Upload publish payload
+        if: steps.gate.outputs.sha != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-publish-${{ steps.window.outputs.compact }}
+          path: |
+            version.patch
+            .version.json
+          retention-days: 1
+
+      - name: Job summary (skipped)
+        if: steps.gate.outputs.sha == ''
+        env:
+          DAY: ${{ steps.window.outputs.day }}
         run: |
           {
             echo "### Nightly build"
             echo
-            if [ -s .version.json ]; then
-              echo '```json'
-              cat .version.json
-              echo '```'
-              echo
-              echo "- branch: \`nightly\`"
-              echo "- tag: \`nightly-${{ steps.window.outputs.compact }}\`"
-              echo "- artifact: \`omtp-${{ steps.window.outputs.compact }}\`"
-            else
-              echo "Skipped: no passing push to \`main\` on ${{ steps.window.outputs.day }} (UTC+8)."
-            fi
+            echo "Skipped: no passing push to \`main\` on $DAY (UTC+8)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: build
+    if: needs.build.outputs.sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nightly-publish-${{ needs.build.outputs.compact }}
+
+      - name: Publish the nightly channel
+        env:
+          TAG: nightly-${{ needs.build.outputs.compact }}
+        run: |
+          set -euo pipefail
+          if [ -s version.patch ]; then
+            git apply version.patch
+          fi
+          mapfile -t files < <(jq -r '.files[]' .version.json)
+          display="$(jq -r '.display' .version.json)"
+          git config user.name 'omtp-version-bot'
+          git config user.email 'omtp-version-bot@users.noreply.github.com'
+          git checkout -B nightly
+          git add -- "${files[@]}"
+          git commit -m "chore(version): $display"
+          git push --force origin nightly
+          git tag -f "$TAG"
+          git push --force origin "refs/tags/$TAG"
+
+      - name: Job summary
+        env:
+          COMPACT: ${{ needs.build.outputs.compact }}
+        run: |
+          {
+            echo "### Nightly build"
+            echo
+            echo '```json'
+            cat .version.json
+            echo '```'
+            echo
+            echo "- branch: \`nightly\`"
+            echo "- tag: \`nightly-$COMPACT\`"
+            echo "- artifact: \`omtp-$COMPACT\`"
           } >> "$GITHUB_STEP_SUMMARY"
