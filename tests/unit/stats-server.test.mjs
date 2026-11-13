@@ -110,6 +110,33 @@ test('dashboard snapshot exposes per-chat rows without mutating totals', () => {
     assert.equal(stats.snapshot().totals.requests, 2);
 });
 
+test('dashboard snapshot omits duplicate window when neither chat nor since is requested', () => {
+    const stats = new UsageStats({ root: tempRoot() });
+    seed(stats);
+    const snapshot = dashboardSnapshot(stats);
+    assert.equal(snapshot.window, null);
+    assert.equal(snapshot.allTime.totals.requests, 2);
+});
+
+test('stats server rejects non-loopback Host headers to prevent DNS rebinding', async (t) => {
+    const stats = new UsageStats({ root: tempRoot() });
+    seed(stats);
+    const { port } = await ensureStatsServer({ stats, port: 0 });
+    t.after(() => stopStatsServer());
+    const res = await new Promise((resolve, reject) => {
+        const req = http.request({
+            host: '127.0.0.1',
+            port,
+            path: '/api/stats',
+            headers: { Host: `evil.example:${port}` },
+        }, resolve);
+        req.on('error', reject);
+        req.end();
+    });
+    assert.equal(res.statusCode, 403);
+    res.resume();
+});
+
 test('gateway skips a foreign OMTP listener that rejects this token', async (t) => {
     const probes = [];
     const foreign = http.createServer((req, res) => {

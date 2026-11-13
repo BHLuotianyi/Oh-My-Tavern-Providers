@@ -394,16 +394,24 @@ test('detectSystemProxy reads the platform settings and never throws', () => {
     assert.deepEqual(broken, {});
 });
 
-test('installProxyFetch falls back to the system proxy and can be restored', () => {
+test('installProxyFetch falls back to the system proxy and can be restored', async () => {
     const original = globalThis.fetch;
+    let probed = 0;
     try {
-        const installed = installProxyFetch({
+        globalThis.fetch = async () => new Response('direct');
+        installProxyFetch({
             env: {},
             platform: 'darwin',
-            run: () => '  HTTPEnable : 1\n  HTTPPort : 7890\n  HTTPProxy : 127.0.0.1\n',
+            run: () => {
+                probed += 1;
+                return '  HTTPEnable : 1\n  HTTPPort : 9\n  HTTPProxy : 127.0.0.1\n';
+            },
         });
-        assert.equal(installed, true);
         assert.notEqual(globalThis.fetch, original);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.equal(probed, 1);
+        const res = await fetch('http://origin.test/');
+        assert.equal(await res.text(), 'direct');
     } finally {
         globalThis.fetch = original;
     }
@@ -459,7 +467,7 @@ test('createProxyFetch tunnels through a SOCKS5 proxy with credentials', async (
     }
 });
 
-test('installProxyFetch picks up a system proxy enabled after startup', async () => {
+test('installProxyFetch picks up a system proxy enabled after startup without blocking requests', async () => {
     const original = globalThis.fetch;
     const origin = http.createServer((req, res) => res.end('via proxy'));
     const { proxy, port } = await startProxy(await listen(origin));
@@ -471,13 +479,22 @@ test('installProxyFetch picks up a system proxy enabled after startup', async ()
             env: {},
             platform: 'darwin',
             now: () => clock,
-            run: () => (clashOn ? `  HTTPEnable : 1\n  HTTPPort : ${port}\n  HTTPProxy : 127.0.0.1\n` : ''),
+            run: async () => {
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                return clashOn ? `  HTTPEnable : 1\n  HTTPPort : ${port}\n  HTTPProxy : 127.0.0.1\n` : '';
+            },
         });
         assert.equal(installed, false);
+        await new Promise((resolve) => setTimeout(resolve, 35));
         assert.equal(await (await fetch('http://origin.test/')).text(), 'direct');
         clashOn = true;
         assert.equal(await (await fetch('http://origin.test/')).text(), 'direct', 'cached until the TTL passes');
         clock += 60_000;
+        // First request after TTL triggers background refresh without blocking on the 20ms probe.
+        const start = Date.now();
+        assert.equal(await (await fetch('http://origin.test/')).text(), 'direct');
+        assert.ok(Date.now() - start < 20);
+        await new Promise((resolve) => setTimeout(resolve, 35));
         assert.equal(await (await fetch('http://origin.test/')).text(), 'via proxy');
     } finally {
         globalThis.fetch = original;
@@ -495,4 +512,104 @@ test('a direct failure after a failed proxy names the proxy error', async () => 
     });
     const error = await doFetch('http://origin.test/').catch((caught) => caught);
     assert.match(describeFetchFailure(error), /UND_ERR_CONNECT_TIMEOUT; proxy http:\/\/127\.0\.0\.1:9: .*ECONNREFUSED/);
+});
+
+test('tunnel TLS handshake times out against a TLS-less blackhole server and honours AbortSignal (M5)', { timeout: 5000 }, async () => {
+    // Blackhole TCP server: accepts connection and never sends ServerHello.
+    const sockets = new Set();
+    const blackhole = net.createServer((socket) => {
+        sockets.add(socket);
+        socket.on('close', () => sockets.delete(socket));
+    });
+    const blackholePort = await listen(blackhole);
+    const { proxy, port: proxyPort } = await startProxy(blackholePort);
+    try {
+        let directCalls = 0;
+        const doFetch = createProxyFetch({
+            env: { HTTPS_PROXY: `http://127.0.0.1:${proxyPort}` },
+            handshakeTimeoutMs: 60,
+            base: async () => {
+                directCalls += 1;
+                throw new TypeError('fetch failed');
+            },
+        });
+        const timedOut = await doFetch('https://origin.test/').catch((err) => err);
+        assert.match(describeFetchFailure(timedOut), /TLS handshake timed out/);
+        assert.equal(directCalls, 1);
+
+        // Caller abort during TLS handshake rejects immediately without falling back to direct.
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new Error('caller cancelled')), 30);
+        const aborted = await doFetch('https://origin.test/', { signal: controller.signal }).catch((err) => err);
+        assert.match(String(aborted?.message || aborted), /caller cancelled/);
+        assert.equal(directCalls, 1);
+
+        // Non-TLS blackhole server exercises requestTimeoutMs fallback when no signal is passed.
+        const plainFetch = createProxyFetch({
+            env: { HTTP_PROXY: `http://127.0.0.1:${proxyPort}` },
+            requestTimeoutMs: 60,
+            base: async () => {
+                throw new Error('should not fall back after request was written');
+            },
+        });
+        const reqTimedOut = await plainFetch('http://origin.test/').catch((err) => err);
+        assert.match(String(reqTimedOut?.message || reqTimedOut), /request timed out/);
+    } finally {
+        for (const s of sockets) s.destroy();
+        await close(proxy);
+        await close(blackhole);
+    }
+});
+
+test('tunneled POST sends Content-Length and redirects honour error mode and cross-origin stripping on direct path', async () => {
+    const seen = [];
+    const origin = http.createServer((req, res) => {
+        if (req.url === '/post') {
+            seen.push({ contentLength: req.headers['content-length'], transferEncoding: req.headers['transfer-encoding'] });
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end('{"ok":true}');
+            return;
+        }
+        if (req.url === '/redir') {
+            res.writeHead(307, { location: `http://127.0.0.1:${origin.address().port}/echo` });
+            res.end();
+            return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+            authorization: req.headers.authorization || '',
+            xApiKey: req.headers['x-api-key'] || '',
+            apiKey: req.headers['api-key'] || '',
+            googKey: req.headers['x-goog-api-key'] || '',
+            other: req.headers['x-other'] || '',
+        }));
+    });
+    const originPort = await listen(origin);
+    const { proxy, port } = await startProxy(originPort);
+    try {
+        const doFetch = createProxyFetch({ env: { HTTP_PROXY: `http://127.0.0.1:${port}` } });
+        const postRes = await doFetch('http://origin.test/post', { method: 'POST', body: '{"hello":"world"}' });
+        assert.equal(postRes.status, 200);
+        await postRes.text();
+        assert.deepEqual(seen[0], { contentLength: '17', transferEncoding: undefined });
+
+        await assert.rejects(doFetch('http://origin.test/redir', { redirect: 'error' }), TypeError);
+
+        // Direct-to-direct cross-origin redirect (localhost -> 127.0.0.1) must strip all credential headers.
+        const directOnly = createProxyFetch({ env: {} });
+        await assert.rejects(directOnly(`http://localhost:${originPort}/redir`, { redirect: 'error' }), TypeError);
+        const cross = await directOnly(`http://localhost:${originPort}/redir`, {
+            headers: {
+                Authorization: 'Bearer sec',
+                'X-Api-Key': 'k1',
+                'Api-Key': 'k2',
+                'X-Goog-Api-Key': 'k3',
+                'X-Other': 'kept',
+            },
+        });
+        assert.deepEqual(await cross.json(), { authorization: '', xApiKey: '', apiKey: '', googKey: '', other: 'kept' });
+    } finally {
+        await close(proxy);
+        await close(origin);
+    }
 });

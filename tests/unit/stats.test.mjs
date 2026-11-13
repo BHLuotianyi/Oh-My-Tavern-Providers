@@ -214,3 +214,26 @@ test('partial is driven by ring coverage once the ring is full', () => {
     stats.flush();
     fs.rmSync(root, { recursive: true, force: true });
 });
+
+test('per-chat byModel stays bounded while chat totals keep every request', () => {
+    const root = tempRoot();
+    const stats = new UsageStats({ root, now: () => Date.parse('2026-10-28T10:00:00Z') });
+    for (let i = 0; i < 130; i += 1) {
+        stats.record({
+            provider: 'p',
+            model: `m${i}`,
+            price: { input: 1, output: 0 },
+            usage: { input: i + 1, output: 0 },
+            chatId: 'chat-cap',
+        });
+    }
+    const snapshot = stats.snapshot({ chat: 'chat-cap' });
+    assert.equal(snapshot.totals.requests, 130);
+    assert.equal(snapshot.totals.input, (130 * 131) / 2);
+    assert.equal(snapshot.byModel.length, 100);
+    assert.equal(snapshot.byModel[0].model, 'm129');
+    stats.flush();
+    const reloaded = new UsageStats({ root });
+    assert.equal(reloaded.snapshot({ chat: 'chat-cap' }).byModel.length, 100);
+    fs.rmSync(root, { recursive: true, force: true });
+});
