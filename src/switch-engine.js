@@ -13,45 +13,47 @@
 
 import { getSettings, saveSettings, getEntryKey, parseEntryKey } from './store.js';
 import { codedError } from './errors.js';
-import { resolveEntry } from './catalog.js';
+import { refreshProviderAvailability, resolveEntry } from './catalog.js';
 import { EVENTS, MAX_RECENTS, PROFILE_PROVIDER_ID, REASONING_LEVELS } from './constants.js';
-import { apiBase, apiHeaders, reachableUrl } from './backend.js';
 import { currentChatId } from './usage-session.js';
 import { NATIVE_ADAPTERS } from './adapters/native.js';
+import {
+  STATUS_TIMEOUT_MS,
+  gatewaySettings,
+  getGatewayStatus,
+  invalidateGatewayCaches,
+  isGatewayMode,
+  normalizeUrl,
+  resolveGatewayToken,
+} from './gateway-status.js';
+import {
+  CHAT_HEADER,
+  captureCustomFields,
+  encodeChatId,
+  jq,
+  mergeYamlHeaders,
+  setControlValue,
+  syncChatHeader,
+  writeCustomFields,
+} from './custom-source.js';
 import {
   main_api,
   online_status,
   isGenerating,
   saveSettingsDebounced,
-  getRequestHeaders as stRequestHeaders,
 } from '../../../../../script.js';
-
-const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
 import { eventSource } from '../../../../events.js';
 import { oai_settings } from '../../../../openai.js';
 import { textgenerationwebui_settings } from '../../../../textgen-settings.js';
 import { nai_settings } from '../../../../nai-settings.js';
-import { yaml } from '../../../../../lib.js';
 import { SlashCommandParser } from '../../../../slash-commands/SlashCommandParser.js';
 import { extension_settings } from '../../../../extensions.js';
 
+export { getGatewayStatus, invalidateGatewayCaches, isGatewayMode, syncChatHeader };
+
 const SWITCH_TIMEOUT_MS = 8000;
-const STATUS_TIMEOUT_MS = 8000;
 const POLL_INTERVAL_MS = 100;
 const PROFILE_TIMEOUT_MS = 20000;
-const GATEWAY_STATUS_TTL_MS = 5000;
-const GATEWAY_TOKEN_TTL_MS = 60000;
-
-/** [snapshot key, oai_settings field, DOM control] */
-const CUSTOM_FIELDS = [
-  ['customUrl', 'custom_url', '#custom_api_url_text'],
-  ['customModel', 'custom_model', '#custom_model_id'],
-  ['customIncludeHeaders', 'custom_include_headers', '#custom_include_headers'],
-  ['customIncludeBody', 'custom_include_body', '#custom_include_body'],
-  ['customExcludeBody', 'custom_exclude_body', '#custom_exclude_body'],
-  ['customPromptPostProcessing', 'custom_prompt_post_processing', '#custom_prompt_post_processing'],
-];
-
 const SETTINGS_ROOTS = {
   openai: () => oai_settings,
   textgenerationwebui: () => textgenerationwebui_settings,
@@ -60,73 +62,6 @@ const SETTINGS_ROOTS = {
 
 /** Serializes switches so a second request waits for the first one. */
 let switchChain = Promise.resolve();
-/** Gateway URL last reported by the server plugin; used for synchronous mode checks. */
-let activeGatewayUrl = null;
-let gatewayStatusCache = { at: 0, value: null };
-let gatewayTokenCache = { at: 0, url: null, token: null };
-let providerStatusCache = { at: 0, value: null };
-
-/**
- * Fetch provider availability from the server plugin. Never throws; returns
- * null when the plugin is unavailable so native routing still works.
- */
-async function getProviderStatuses() {
-  if (Date.now() - providerStatusCache.at < GATEWAY_STATUS_TTL_MS && providerStatusCache.value) {
-    return providerStatusCache.value;
-  }
-  try {
-    const response = await fetch(`${apiBase()}/providers`, { headers: getRequestHeaders({ omitContentType: true }) });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    const list = Array.isArray(data?.providers) ? data.providers : [];
-    const map = new Map(list.map(provider => [String(provider.id), provider]));
-    providerStatusCache = { at: Date.now(), value: map };
-    return map;
-  } catch {
-    return null;
-  }
-}
-
-// MARK: helpers
-
-function normalizeUrl(value) {
-  return String(value ?? '').trim().replace(/\/+$/, '');
-}
-
-function jq(selector) {
-  if (typeof $ !== 'function') {
-    return null;
-  }
-  try {
-    const element = $(selector);
-    return element.length ? element : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Set a control and fire the event ST listens to.
- * Selects whose option is missing are left untouched (their change handler would
- * otherwise clobber the settings field with the current selection).
- */
-function setControlValue(selector, value, eventName = null) {
-  if (value == null) {
-    return false;
-  }
-  const element = jq(selector);
-  if (!element) {
-    return false;
-  }
-  element.val(value);
-  if (element.is('select') && String(element.val()) !== String(value)) {
-    return false;
-  }
-  const event = eventName ?? (element.is('input, textarea') ? 'input' : 'change');
-  element.trigger(event);
-  return true;
-}
-
 function readSettingField(api, field) {
   if (!field) {
     return undefined;
@@ -199,13 +134,6 @@ function currentModel() {
   }
   const value = readSettingField(adapter.mainApi, adapter.modelField);
   return value == null ? '' : String(value);
-}
-
-function gatewaySettings(settings) {
-  if (!settings.gateway || typeof settings.gateway !== 'object') {
-    settings.gateway = { savedCustom: null };
-  }
-  return settings.gateway;
 }
 
 function refOf(entry) {
@@ -343,8 +271,9 @@ function recordSelection(entry, { native = false, persist = true } = {}) {
   }
 }
 
-function emitSelectionChanged(entry, { gateway = isGatewayMode(), reason = undefined } = {}) {
-  const payload = { ref: refOf(entry), entry: entry ?? null, gateway, reason };
+function emitSelectionChanged(entry, { gateway = isGatewayMode(), reason = undefined, ref = undefined } = {}) {
+  const resolvedRef = ref !== undefined ? ref : refOf(entry);
+  const payload = { ref: resolvedRef ?? null, entry: entry ?? null, gateway, reason };
   try {
     Promise.resolve(eventSource.emit(EVENTS.SELECTION_CHANGED, payload)).catch(error => {
       console.debug('[omtp] selection-changed listener failed', error);
@@ -403,180 +332,6 @@ function setReasoningValue(level) {
   }
 }
 
-function writeCustomFields(snapshot) {
-  if (!snapshot) {
-    return;
-  }
-  for (const [key, field, selector] of CUSTOM_FIELDS) {
-    const value = snapshot[key];
-    if (typeof value !== 'string') {
-      continue;
-    }
-    oai_settings[field] = value;
-    setControlValue(selector, value);
-  }
-}
-
-/** Header carrying the SillyTavern chat id, so usage can be attributed per chat. */
-const CHAT_HEADER = 'X-OMTP-Chat';
-
-/**
- * HTTP header values are Latin-1 only: a chat named in Chinese or with an emoji
- * made SillyTavern throw `Invalid Character in header content ["X-OMTP-Chat"]`
- * before the request was ever sent. Percent-encoding keeps it ASCII; the
- * gateway decodes it again.
- * @param {string} [chatId]
- * @returns {string}
- */
-function encodeChatId(chatId) {
-  const text = String(chatId || '');
-  if (!text) {
-    return '';
-  }
-  try {
-    return encodeURIComponent(text);
-  } catch {
-    return '';
-  }
-}
-
-/**
- * Keep the `X-OMTP-Chat` header in sync with the open chat. Called on
- * CHAT_CHANGED while in gateway mode; a no-op for native providers.
- * @param {string} [chatId]
- */
-export function syncChatHeader(chatId = currentChatId()) {
-  if (!isGatewayMode()) {
-    return false;
-  }
-  // Drop the header entirely when no chat is open, so we never send a blank id.
-  const text = String(oai_settings.custom_include_headers || '').trim();
-  let parsed = {};
-  if (text) {
-    try {
-      const value = yaml.parse(text);
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        parsed = { ...value };
-      }
-    } catch {
-      parsed = {};
-    }
-  }
-  if (chatId) {
-    parsed[CHAT_HEADER] = encodeChatId(chatId);
-  } else {
-    delete parsed[CHAT_HEADER];
-  }
-  const merged = String(yaml.stringify(parsed) ?? '').trimEnd();
-  if (merged === String(oai_settings.custom_include_headers || '').trimEnd()) {
-    return false;
-  }
-  oai_settings.custom_include_headers = merged;
-  setControlValue('#custom_include_headers', merged);
-  saveSettingsDebounced();
-  return true;
-}
-
-function mergeYamlHeaders(existing, additions) {
-  let parsed = null;
-  const text = typeof existing === 'string' ? existing.trim() : '';
-  if (text) {
-    try {
-      const value = yaml.parse(text);
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        parsed = value;
-      }
-    } catch {
-      // Invalid YAML: replace with only the managed headers.
-      parsed = null;
-    }
-  }
-  const merged = { ...(parsed ?? {}) };
-  for (const [key, value] of Object.entries(additions || {})) {
-    if (value === undefined || value === null || value === '') {
-      delete merged[key];
-    } else {
-      merged[key] = value;
-    }
-  }
-  return String(yaml.stringify(merged) ?? '').trimEnd();
-}
-
-// MARK: gateway status / token
-
-async function fetchGatewayStatus() {
-  const response = await fetch(`${apiBase()}/status`, { headers: getRequestHeaders() });
-  if (!response.ok) {
-    throw new Error(`status request failed (${response.status})`);
-  }
-  const data = await response.json();
-  const gateway = data?.gateway ?? {};
-  // A LAN companion reports its gateway on 127.0.0.1; ST must reach its host.
-  const url = normalizeUrl(reachableUrl(gateway.url));
-  if (url) {
-    activeGatewayUrl = url;
-  }
-  return {
-    running: !!gateway.running,
-    url: url || null,
-    port: gateway.port ?? null,
-    requireAuth: !!gateway.requireAuth,
-    lastError: gateway.lastError ?? null,
-    serverPlugin: data?.serverPlugin === true,
-  };
-}
-
-/**
- * Current gateway status. Never throws: without the server plugin it degrades to
- * `running:false` with the manually configured URL.
- */
-export async function getGatewayStatus({ force = false } = {}) {
-  if (!force && gatewayStatusCache.value && Date.now() - gatewayStatusCache.at < GATEWAY_STATUS_TTL_MS) {
-    return gatewayStatusCache.value;
-  }
-  let value;
-  try {
-    value = await fetchGatewayStatus();
-  } catch (error) {
-    value = {
-      running: false,
-      url: normalizeUrl(getSettings().gatewayUrl) || null,
-      port: null,
-      requireAuth: false,
-      lastError: error?.message ?? 'status unavailable',
-      serverPlugin: false,
-    };
-  }
-  gatewayStatusCache = { at: Date.now(), value };
-  return value;
-}
-
-async function resolveGatewayToken(status) {
-  if (!status.requireAuth) {
-    return null;
-  }
-  const settings = getSettings();
-  const url = status.url || normalizeUrl(settings.gatewayUrl);
-  if (gatewayTokenCache.token && gatewayTokenCache.url === url && Date.now() - gatewayTokenCache.at < GATEWAY_TOKEN_TTL_MS) {
-    return gatewayTokenCache.token;
-  }
-  try {
-    const response = await fetch(`${apiBase()}/gateway/token`, { headers: getRequestHeaders() });
-    if (response.ok) {
-      const data = await response.json();
-      const token = typeof data?.token === 'string' ? data.token.trim() : '';
-      if (token) {
-        gatewayTokenCache = { at: Date.now(), url, token };
-        return token;
-      }
-    }
-  } catch (error) {
-    console.debug('[omtp] gateway token request failed', error);
-  }
-  const manual = String(settings.gatewayToken ?? '').trim();
-  return manual || null;
-}
-
 // MARK: primitives
 
 /**
@@ -623,38 +378,6 @@ function assertCanSwitch() {
   }
 }
 
-export function isGatewayMode() {
-  if (main_api !== 'openai') {
-    return false;
-  }
-  if (oai_settings?.chat_completion_source !== 'custom') {
-    return false;
-  }
-  const current = normalizeUrl(oai_settings?.custom_url);
-  if (!current) {
-    return false;
-  }
-  const settings = getSettings();
-  // `activeUrl` is the URL actually written to `custom_url`; without it a reload
-  // on a fallback port (the server plugin may bind 4100-4110) reported native.
-  const candidates = [...new Set([
-    activeGatewayUrl,
-    settings?.gatewayUrl,
-    settings?.gateway?.activeUrl,
-  ].map(normalizeUrl).filter(Boolean))];
-  return candidates.some(url => current === url || current.startsWith(`${url}/`));
-}
-
-// MARK: snapshots
-
-/** Custom-source fields as stored in a selection snapshot. */
-function captureCustomFields() {
-  const fields = {};
-  for (const [key, field] of CUSTOM_FIELDS) {
-    fields[key] = oai_settings?.[field] ?? '';
-  }
-  return fields;
-}
 
 export function captureSelection() {
   return {
@@ -757,7 +480,11 @@ export async function restoreSelection(snapshot, { fast = false } = {}) {
   }
   saveSettings();
 
-  emitSelectionChanged(snapshot.ref ? { ref: snapshot.ref } : null, { gateway: restoredIsGateway });
+  const resolvedEntry = snapshot.ref ? resolveEntry(snapshot.ref) : null;
+  emitSelectionChanged(resolvedEntry ?? null, {
+    ref: snapshot.ref ?? null,
+    gateway: restoredIsGateway,
+  });
   return true;
 }
 
@@ -792,24 +519,26 @@ export function applyReasoning(entry, level) {
   if (!target) {
     // Without a level for this model the previous model's effort would leak in.
     if (main_api !== 'openai') {
-      return;
+      return { applied: false, level: null };
     }
     target = 'auto';
   }
   if (!REASONING_LEVELS.includes(target)) {
     console.debug('[omtp] ignoring unknown reasoning level', target);
-    return;
+    return { applied: false, level: null };
   }
   if (key && requested) {
     settings.reasoningByEntry ??= {};
     settings.reasoningByEntry[key] = target;
+    saveSettingsDebounced();
   }
   if (main_api !== 'openai') {
     console.debug('[omtp] reasoning effort is only applied to the OpenAI-compatible API');
-    return;
+    return { applied: false, level: target };
   }
   setReasoningValue(target);
   saveSettingsDebounced();
+  return { applied: true, level: target };
 }
 
 // MARK: switches
@@ -833,7 +562,14 @@ function requireNativeAdapter(entry) {
   if (adapter.readOnlyReason) {
     throw new Error(adapter.readOnlyReason);
   }
-  if (adapter.modelControl && typeof adapter.supportsModel === 'function' && !adapter.supportsModel(entry.model)) {
+  if (!adapter.modelControl) {
+    throw codedError(
+      'no_model_control',
+      [adapter.label || adapter.key],
+      `${adapter.label || adapter.key} has no writable model control`,
+    );
+  }
+  if (typeof adapter.supportsModel === 'function' && !adapter.supportsModel(entry.model)) {
     throw codedError('model_unavailable', [entry.model, adapter.label || adapter.key], `Model ${entry.model} is not available in ${adapter.label || adapter.key}`);
   }
   if (!jq('#main_api')) {
@@ -957,9 +693,6 @@ async function switchToNative(entry, { level, persist = true, reason } = {}) {
     await selectNativeSource(entry, adapter);
     sourceChanged = true;
 
-    if (!adapter.modelControl) {
-      throw codedError('unsupported', [entry?.providerLabel || entry?.provider || ''], 'Read-only provider; manage it in the native UI');
-    }
     if (adapter.mainApi !== 'novel') {
       // Can still fail when the model could not be checked beforehand
       // (TauriTavern parks inactive source forms); the source is rolled back.
@@ -996,11 +729,6 @@ function requireGatewayEntry(entry) {
       ? new Error(entry.unsupportedReason)
       : codedError('unsupported', [entry?.providerLabel || entry?.provider || 'unknown'], `Provider ${entry?.providerLabel || entry?.provider || 'unknown'} is not supported`);
   }
-  if (entry.available === false) {
-    throw entry.unsupportedReason
-      ? new Error(entry.unsupportedReason)
-      : codedError('needs_key', [entry.providerLabel || entry.provider], `Provider ${entry.providerLabel || entry.provider} has no usable API key`);
-  }
   if (!String(entry.model ?? '')) {
     throw codedError('gateway_model_id', [], 'Gateway model id is missing');
   }
@@ -1020,13 +748,18 @@ async function resolveGatewayTarget(entry, settings) {
     ? codedError('gateway_reason', [status.lastError], `OMTP Gateway unavailable: ${status.lastError}`)
     : codedError('gateway_off', [], 'OMTP Gateway unavailable (enable server plugins)');
   }
-  const providerStatuses = await getProviderStatuses();
+  const providerStatuses = await refreshProviderAvailability();
   const providerStatus = providerStatuses?.get(String(entry.provider));
   if (providerStatus && providerStatus.available === false) {
     const label = providerStatus.label || entry.provider;
     throw providerStatus.keyInvalidReason
       ? codedError('key_rejected', [label, providerStatus.keyInvalidReason], `Provider ${label} rejected its key (${providerStatus.keyInvalidReason})`)
       : codedError('needs_key', [label], `Provider ${label} needs an API key; configure it in OMTP settings`);
+  }
+  if (!providerStatus && entry.available === false) {
+    throw entry.unsupportedReason
+      ? new Error(entry.unsupportedReason)
+      : codedError('needs_key', [entry.providerLabel || entry.provider], `Provider ${entry.providerLabel || entry.provider} has no usable API key`);
   }
   const gatewayUrl = status.url || normalizeUrl(settings.gatewayUrl);
   if (!gatewayUrl) {
