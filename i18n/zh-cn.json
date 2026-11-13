@@ -485,5 +485,18 @@
     "omtp_companion_token": "伴随服务令牌",
     "omtp_companion_connect": "连接",
     "omtp_companion_connecting": "正在连接…",
-    "omtp_companion_connected": "已连接"
+    "omtp_companion_connected": "已连接",
+    "omtp_err_no_model_control": "${0} 没有可写的模型控件",
+    "omtp_topbar_title_with": "OMTP 模型中心 — ${0}",
+    "omtp_all_available_models": "所有可用模型",
+    "omtp_cap_tools": "工具调用",
+    "omtp_cap_reasoning": "推理",
+    "omtp_cap_image": "图像输入",
+    "omtp_quick_slot_n": "快速槽 ${0}",
+    "omtp_quick_slot_unavailable": "不可用的快速槽 ${0}",
+    "omtp_quick_slot_empty": "空快速槽 ${0}",
+    "omtp_reasoning_unsupported": "该模型不支持调整推理强度",
+    "omtp_provider_unlocked_title": "${0} — ${1} 个模型",
+    "omtp_auth_error": "认证错误",
+    "omtp_load_more": "显示更多 ${0} 项（剩余 ${1} 项）"
 }

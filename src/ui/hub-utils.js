@@ -4,6 +4,7 @@
  */
 import * as store from '../store.js';
 import { tr } from './dom.js';
+import { getCurrentAvatar } from './bindings.js';
 
 /**
  * Small Font Awesome capability marker for a model row.
@@ -131,16 +132,7 @@ export function formatNumber(value) {
 
 /** @returns {string|null} */
 export function currentAvatar() {
-    try {
-        const chid = globalThis.this_chid;
-        if (chid === undefined || chid === null) {
-            return null;
-        }
-        const character = globalThis.characters?.[chid];
-        return character?.avatar ?? null;
-    } catch {
-        return null;
-    }
+    return getCurrentAvatar();
 }
 
 /**

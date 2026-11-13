@@ -21,7 +21,7 @@ import {
     rebuildEntries,
     scoredOnly,
 } from './hub-catalog.js';
-import { highlightSelectedRow, renderList } from './hub-list.js';
+import { ensureRowRendered, highlightSelectedRow, renderList } from './hub-list.js';
 import { closeDetailsPane, renderDetails, toggleFavorite } from './hub-details.js';
 import { assignQuickSlotFromSelection, renderAll, renderFooter, syncTabs, useQuickSlot } from './hub-quick.js';
 import { renderProviderList } from './hub-sidebar.js';
@@ -642,6 +642,7 @@ function moveActive(delta) {
     next = Math.max(0, Math.min(state.rowEntries.length - 1, next));
     const entry = state.rowEntries[next];
     state.selectedEntryKey = entryKey(entry);
+    ensureRowRendered(state.selectedEntryKey);
     highlightSelectedRow();
     renderDetails();
     const row = document.querySelector(`#omtp-model-list .omtp-model-row[data-key="${cssEscape(state.selectedEntryKey)}"]`);
@@ -657,14 +658,16 @@ function trapFocus(event) {
         return;
     }
     const focusable = [...state.modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
-        .filter((element) => !element.disabled && (element.offsetParent !== null || element === document.activeElement));
+        .filter((element) => !element.disabled
+            && element.getClientRects().length > 0
+            && getComputedStyle(element).visibility !== 'hidden');
     if (!focusable.length) {
         return;
     }
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     const active = document.activeElement;
-    if (!state.modal.contains(active)) {
+    if (!state.modal.contains(active) || !focusable.includes(active)) {
         // Focus escaped to <body> after a click on plain text; pull it back in.
         event.preventDefault();
         (event.shiftKey ? last : first).focus();

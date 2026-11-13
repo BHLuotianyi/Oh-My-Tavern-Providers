@@ -173,10 +173,10 @@ function providerItemTitle(group) {
         return trf('omtp_profiles_count', '${0} profiles', group.count);
     }
     if (group.unlocked) {
-        return `${group.label} — ${group.availableCount} models`;
+        return trf('omtp_provider_unlocked_title', '${0} — ${1} models', group.label, group.availableCount);
     }
     if (group.invalid) {
-        return trf('omtp_provider_invalid_title', '${0} — key rejected: ${1}', group.label, group.reason || 'auth error');
+        return trf('omtp_provider_invalid_title', '${0} — key rejected: ${1}', group.label, group.reason || tr('omtp_auth_error', 'auth error'));
     }
     return trf('omtp_provider_locked_title', '${0} (no credentials / not signed in)', group.label);
 }
@@ -306,7 +306,11 @@ function selectProvider(provider) {
     if (!provider) {
         return;
     }
-    setLiveRefreshState(document.querySelector('.omtp-provider-refresh-btn'), true);
+    const button = document.querySelector('.omtp-provider-refresh-btn');
+    setLiveRefreshState(button, true);
+    if (button) {
+        button.disabled = true;
+    }
     catalogApi.fetchLiveModelsForProvider(provider).then((result) => {
         if (result?.models?.length && state.selectedProvider === provider) {
             rebuildEntries();
@@ -316,6 +320,11 @@ function selectProvider(provider) {
     }).catch((err) => {
         console.debug('[omtp] background live model query failed', err);
     }).finally(() => {
-        setLiveRefreshState(document.querySelector('.omtp-provider-refresh-btn'), false);
+        if (state.selectedProvider === provider) {
+            setLiveRefreshState(button, false);
+            if (button) {
+                button.disabled = false;
+            }
+        }
     });
 }

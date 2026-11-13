@@ -6,8 +6,9 @@
  * file owns the extension hooks, the settings-panel injection, the SillyTavern
  * event wiring and the public re-exports used by events.js and public-api.js.
  *
- * It never edits SillyTavern core files and never mutates native <select>
- * option lists.
+ * It never edits SillyTavern core files; the only native control it rewrites is
+ * the Connection Profiles `<select>` option list (see hub-profile-store.js#syncStSelect),
+ * kept in sync with Connection Manager settings.
  */
 import { eventSource } from '../../../../../events.js';
 import { DOMPurify } from '../../../../../../lib.js';
@@ -19,8 +20,11 @@ import * as bindings from './bindings.js';
 import * as extraBody from './extra-body.js';
 import * as events from '../events.js';
 import * as publicApi from '../public-api.js';
+import * as aboutPanel from './about-panel.js';
+import * as loginPanel from './login-panel.js';
 import * as usagePanel from './usage-panel.js';
 import * as usageChip from './usage-chip.js';
+import { closeQuickPicker } from './quick-picker.js';
 import { initSlashCommands, teardownSlashCommands } from '../slash-commands.js';
 import { EVENTS, EXTENSION_VERSION, ST_EVENTS } from '../constants.js';
 import {
@@ -235,12 +239,30 @@ function onShowNativeSelector() {
 const patchedWelcomeButtons = [];
 /** @type {MutationObserver|null} */
 let welcomeObserver = null;
+/** @type {ReturnType<typeof setTimeout>|null} */
+let welcomeTimer = null;
+
+const WELCOME_SELECTOR = '.custom-flex-container > button.drawer-opener[data-target="sys-settings-button"]:not([data-omtp-welcome])';
+
+function hasWelcomeCandidate(mutations) {
+    for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+            if (!(node instanceof Element)) {
+                continue;
+            }
+            if (node.matches(WELCOME_SELECTOR)
+                || node.classList.contains('custom-flex-container')
+                || node.querySelector?.('.custom-flex-container')) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 function wireWelcomeApiButton() {
     const patch = () => {
-        const button = document.querySelector(
-            '.custom-flex-container > button.drawer-opener[data-target="sys-settings-button"]:not([data-omtp-welcome])',
-        );
+        const button = document.querySelector(WELCOME_SELECTOR);
         if (!button) {
             return;
         }
@@ -272,12 +294,26 @@ function wireWelcomeApiButton() {
     if (welcomeObserver || typeof MutationObserver !== 'function') {
         return;
     }
-    welcomeObserver = new MutationObserver(patch);
+    welcomeObserver = new MutationObserver((mutations) => {
+        if (!hasWelcomeCandidate(mutations) || welcomeTimer) {
+            return;
+        }
+        welcomeTimer = setTimeout(() => {
+            welcomeTimer = null;
+            if (!state.isCleaningUp) {
+                patch();
+            }
+        }, 80);
+    });
     welcomeObserver.observe(document.getElementById('chat') || document.body, { childList: true, subtree: true });
 }
 
 /** Restore the welcome prompt buttons we rewrote. */
 function unwireWelcomeApiButton() {
+    if (welcomeTimer) {
+        clearTimeout(welcomeTimer);
+        welcomeTimer = null;
+    }
     welcomeObserver?.disconnect();
     welcomeObserver = null;
     for (const { button, html, target, className } of patchedWelcomeButtons.splice(0)) {
@@ -396,6 +432,10 @@ function cleanupHubSurfaces() {
     }
     cleanupHubEvents();
     closeHub();
+    closeQuickPicker();
+    loginPanel.disposeLoginPanel();
+    usagePanel.disposeUsagePanel();
+    aboutPanel.disposeAboutPanel();
     destroyModal();
     try {
         usageChip.disposeUsageChip();
@@ -408,8 +448,12 @@ function cleanupHubSurfaces() {
 
 /** Forget all hub state so a later init() starts clean. */
 function resetHubState() {
+    state.entries = [];
+    state.entryByKey = new Map();
+    state.fuse = null;
     state.rowEntries = [];
     state.selectedEntryKey = null;
+    state.detailsKey = null;
     state.selectedProvider = null;
     state.searchQuery = '';
     state.catalogLoading = null;

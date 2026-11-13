@@ -142,6 +142,11 @@ function close() {
     previousFocus = null;
 }
 
+/** Close the quick picker if open. */
+export function closeQuickPicker() {
+    close();
+}
+
 function commit() {
     const entry = filtered[cursor];
     if (!entry || entry.available === false) {
@@ -167,6 +172,9 @@ function onKeyDown(event) {
         && !overlay.contains(target)
         && target !== document.body
         && target !== document.documentElement) {
+        return;
+    }
+    if (event.isComposing || event.keyCode === 229) {
         return;
     }
     switch (event.key) {

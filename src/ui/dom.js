@@ -63,6 +63,7 @@ const ERROR_TEXT = {
     unsupported: ['omtp_err_unsupported', 'Model ${0} is not supported'],
     unavailable: ['omtp_err_unavailable', 'Model ${0} is unavailable'],
     no_native_adapter: ['omtp_err_no_native_adapter', 'No native SillyTavern adapter for ${0}'],
+    no_model_control: ['omtp_err_no_model_control', '${0} has no writable model control'],
     model_unavailable: ['omtp_err_model_unavailable', 'Model ${0} is not available in ${1}'],
     ui_not_ready: ['omtp_err_ui_not_ready', 'SillyTavern UI is not ready'],
     api_switch: ['omtp_err_api_switch', 'Failed to switch the API to ${0}'],
@@ -227,7 +228,9 @@ export function updateTopBarTitle(text) {
     if (!button) {
         return;
     }
-    const title = text ? `OMTP Model Hub — ${text}` : 'OMTP Model Hub';
+    const title = text
+        ? trf('omtp_topbar_title_with', 'OMTP Model Hub — ${0}', text)
+        : tr('omtp_topbar_title', 'OMTP Model Hub');
     button.title = title;
     button.setAttribute('aria-label', title);
 }
@@ -338,6 +341,7 @@ export function cleanupDom() {
     removeInjected(document.getElementById(API_TOOLS_ID));
     document.getElementById(MODAL_ID)?.remove();
     document.getElementById('omtp-settings')?.remove();
+    document.querySelectorAll('.omtp-picker-overlay').forEach((element) => element.remove());
     document.body.classList.remove(HIDE_NATIVE_CLASS);
     document.querySelectorAll('.omtp-highlight').forEach((element) => element.classList.remove('omtp-highlight'));
 }

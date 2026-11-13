@@ -485,5 +485,18 @@
     "omtp_companion_token": "Companion token",
     "omtp_companion_connect": "Connect",
     "omtp_companion_connecting": "Connecting…",
-    "omtp_companion_connected": "Connected"
+    "omtp_companion_connected": "Connected",
+    "omtp_err_no_model_control": "${0} has no writable model control",
+    "omtp_topbar_title_with": "OMTP Model Hub — ${0}",
+    "omtp_all_available_models": "All available models",
+    "omtp_cap_tools": "Tools",
+    "omtp_cap_reasoning": "Reasoning",
+    "omtp_cap_image": "Image input",
+    "omtp_quick_slot_n": "Quick slot ${0}",
+    "omtp_quick_slot_unavailable": "Unavailable quick slot ${0}",
+    "omtp_quick_slot_empty": "Empty quick slot ${0}",
+    "omtp_reasoning_unsupported": "This model does not expose reasoning effort",
+    "omtp_provider_unlocked_title": "${0} — ${1} models",
+    "omtp_auth_error": "auth error",
+    "omtp_load_more": "Show ${0} more (${1} remaining)"
 }

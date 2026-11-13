@@ -85,7 +85,7 @@ function normalizeRef(value) {
 }
 
 /** Avatar of the selected character, or null in group chats / no selection. */
-function getCurrentAvatar() {
+export function getCurrentAvatar() {
     try {
         const context = getContext?.();
         if (context?.groupId) {
