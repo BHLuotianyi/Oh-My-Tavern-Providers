@@ -69,6 +69,9 @@ export class UsageStats {
         this.events = [];
         this.startedAt = new Date(now()).toISOString();
         this.flushTimer = null;
+        this._flushing = null;
+        this._dirty = false;
+        this._flushSeq = 0;
         this._load();
     }
 
@@ -118,39 +121,83 @@ export class UsageStats {
         }
     }
 
-    _flush() {
-        this.flushTimer = null;
-        const payload = {
-            totals: this.totals,
+    _buildPayload() {
+        return {
+            totals: { ...this.totals },
             startedAt: this.startedAt,
             updatedAt: new Date(this.now()).toISOString(),
-            byModel: [...this.byModel.values()],
-            byDay: [...this.byDay.entries()].map(([day, totals]) => ({ day, totals })),
+            byModel: [...this.byModel.values()].map((entry) => ({
+                ...entry,
+                totals: { ...entry.totals },
+            })),
+            byDay: [...this.byDay.entries()].map(([day, totals]) => ({ day, totals: { ...totals } })),
             byChat: [...this.byChat.entries()].map(([chatId, entry]) => ({
                 chatId,
-                totals: entry.totals,
+                totals: { ...entry.totals },
                 at: entry.at,
-                byModel: [...entry.byModel.values()],
+                byModel: [...entry.byModel.values()].map((row) => ({ ...row })),
             })),
             // Without the event ring, "last 24h" silently resets to zero after
             // every restart while still claiming to be complete.
-            events: this.events,
+            events: this.events.slice(),
         };
+    }
+
+    _flush() {
+        this.flushTimer = null;
+        this._dirty = false;
+        this._flushSeq += 1;
+        const tmp = `${this.file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
         try {
+            const serialized = `${JSON.stringify(this._buildPayload())}\n`;
             fs.mkdirSync(this.root, { recursive: true });
             // Unique temp name: two processes sharing DATA_ROOT must not
             // overwrite each other's half-written stats file.
-            const tmp = `${this.file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
-            fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+            fs.writeFileSync(tmp, serialized, { mode: 0o600 });
             fs.renameSync(tmp, this.file);
         } catch (error) {
+            try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ }
             logError('could not persist usage stats', error);
         }
     }
 
+    _flushAsync() {
+        this.flushTimer = null;
+        if (this._flushing) {
+            this._dirty = true;
+            return;
+        }
+        this._dirty = false;
+        const seq = ++this._flushSeq;
+        const payload = this._buildPayload();
+        const tmp = `${this.file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+        this._flushing = (async () => {
+            try {
+                const serialized = `${JSON.stringify(payload)}\n`;
+                await fs.promises.mkdir(this.root, { recursive: true });
+                await fs.promises.writeFile(tmp, serialized, { mode: 0o600 });
+                if (seq !== this._flushSeq) {
+                    await fs.promises.rm(tmp, { force: true }).catch(() => {});
+                    return;
+                }
+                await fs.promises.rename(tmp, this.file);
+            } catch (error) {
+                await fs.promises.rm(tmp, { force: true }).catch(() => {});
+                logError('could not persist usage stats', error);
+            } finally {
+                this._flushing = null;
+                if (this._dirty) this._scheduleFlush();
+            }
+        })();
+    }
+
     _scheduleFlush() {
+        if (this._flushing) {
+            this._dirty = true;
+            return;
+        }
         if (this.flushTimer) return;
-        this.flushTimer = setTimeout(() => this._flush(), FLUSH_DELAY_MS);
+        this.flushTimer = setTimeout(() => this._flushAsync(), FLUSH_DELAY_MS);
         this.flushTimer.unref?.();
     }
 
@@ -239,6 +286,8 @@ export class UsageStats {
                 chatEntry.byModel.set(modelKey, chatModel);
             }
             add(chatModel);
+            trimToSize(chatEntry.byModel, MAX_MODELS, (a, b) => (a[1].costUsd - b[1].costUsd)
+                || a[0].localeCompare(b[0]));
             trimToSize(this.byChat, MAX_CHATS, (a, b) => a[1].at - b[1].at);
         }
         trimToSize(this.byDay, KEEP_DAYS, (a, b) => a[0].localeCompare(b[0]));

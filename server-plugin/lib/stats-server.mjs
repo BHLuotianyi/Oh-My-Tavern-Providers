@@ -13,6 +13,7 @@
  */
 import http from 'node:http';
 import { log, logError } from './redact.mjs';
+import { isLoopbackHostHeader } from './net-hosts.mjs';
 
 /** Marks our own dashboard; bumped when the API shape changes. */
 export const DASHBOARD_HEADER = 'x-omtp-stats-dashboard';
@@ -92,6 +93,10 @@ function sendJson(res, payload, status = 200) {
 function createHandler(stats) {
     /** @param {import('node:http').IncomingMessage} req */
     return (req, res) => {
+        if (!isLoopbackHostHeader(req.headers.host)) {
+            sendJson(res, { ok: false, error: 'host not allowed' }, 403);
+            return;
+        }
         touch();
         const url = new URL(req.url || '/', `http://${BIND_HOST}`);
         const path = url.pathname;
@@ -135,7 +140,7 @@ function createHandler(stats) {
  */
 export function dashboardSnapshot(stats, { chat = '', since = null } = {}) {
     const allTime = stats.snapshot();
-    const live = chat ? stats.snapshot({ chat }) : (since ? stats.snapshot({ since }) : allTime);
+    const live = chat ? stats.snapshot({ chat }) : (since ? stats.snapshot({ since }) : null);
     /** @type {Map<string, any>} */
     const chats = new Map();
     const source = stats.dashboard ? stats.dashboard() : null;
@@ -443,7 +448,7 @@ footer { color: var(--muted); font-size: 11px; border-top: 1px solid var(--borde
 
   function pickWindow(d) {
     if (state.range === 'all') return d.allTime;
-    return d.window;
+    return d.window || d.allTime;
   }
 
   function renderCards(d) {
