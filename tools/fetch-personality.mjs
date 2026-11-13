@@ -25,6 +25,8 @@ const SOURCE_URL = 'https://artificialanalysis.ai/evaluations/aa-personalitybenc
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_FILE = path.join(ROOT, 'catalog', 'personality.json');
 const CACHE_FILE = path.join(ROOT, '.cache', 'aa-personalitybench.html');
+const FETCH_TIMEOUT_MS = 30_000;
+const MAX_PAGE_BYTES = 20 * 1024 * 1024;
 
 /** Index → traits, in AA's published order. */
 const INDEXES = {
@@ -138,6 +140,11 @@ function indexZScores(zScores) {
  */
 function rankBy(rows, keyFn, assign) {
     const sorted = [...rows].sort((a, b) => keyFn(a) - keyFn(b));
+    if (sorted.length === 0) return;
+    if (sorted.length === 1) {
+        assign(sorted[0], 50);
+        return;
+    }
     sorted.forEach((row, position) => assign(row, (position / (sorted.length - 1)) * 100));
 }
 
@@ -147,9 +154,34 @@ function rankBy(rows, keyFn, assign) {
 async function loadPage() {
     fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
     try {
-        const response = await fetch(SOURCE_URL, { headers: { 'user-agent': 'omtp-personality-fetch/1.0' } });
+        const response = await fetch(SOURCE_URL, {
+            headers: { 'user-agent': 'omtp-personality-fetch/1.0' },
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const html = await response.text();
+        const contentLength = Number(response.headers.get('content-length'));
+        if (Number.isFinite(contentLength) && contentLength > MAX_PAGE_BYTES) {
+            throw new Error(`response too large (${contentLength} bytes)`);
+        }
+        let html;
+        if (response.body) {
+            const chunks = [];
+            let totalBytes = 0;
+            for await (const chunk of response.body) {
+                totalBytes += chunk.byteLength;
+                if (totalBytes > MAX_PAGE_BYTES) {
+                    await response.body.cancel().catch(() => {});
+                    throw new Error(`response exceeded ${MAX_PAGE_BYTES} byte limit`);
+                }
+                chunks.push(chunk);
+            }
+            html = Buffer.concat(chunks).toString('utf8');
+        } else {
+            html = await response.text();
+            if (Buffer.byteLength(html, 'utf8') > MAX_PAGE_BYTES) {
+                throw new Error(`response exceeded ${MAX_PAGE_BYTES} byte limit`);
+            }
+        }
         fs.writeFileSync(CACHE_FILE, html);
         return html;
     } catch (error) {
@@ -258,7 +290,7 @@ function writeSnapshot(rows) {
         schemaVersion: 1,
         source: SOURCE_URL,
         attribution: 'Artificial Analysis — AA-PersonalityBench',
-        method: 'Personality indexes are percentiles (1-100) across every model AA evaluated; models without published indexes are derived from the 30 trait z-scores using AA\'s documented aggregation. Trait percentiles cover the same 41 models.',
+        method: `Personality indexes are percentiles (1-100) across every model AA evaluated; models without published indexes are derived from the 30 trait z-scores using AA's documented aggregation. Trait percentiles cover the same ${Object.keys(models).length} models.`,
         fetchedAt: new Date().toISOString().slice(0, 10),
         indexes: INDEX_KEYS,
         models,

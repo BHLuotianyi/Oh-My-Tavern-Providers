@@ -32,6 +32,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseArgs as parseCliArgs } from 'node:util';
 
 /** Fixed build timezone: UTC+8, with no daylight saving. */
 export const BUILD_TZ_OFFSET_MINUTES = 8 * 60;
@@ -172,21 +173,18 @@ export function matchesTag(tag, display) {
 }
 
 function parseArgs(argv) {
-    const [command, ...rest] = argv;
-    const flags = { _: [] };
-    for (let index = 0; index < rest.length; index += 1) {
-        const arg = rest[index];
-        if (arg.startsWith('--')) {
-            const key = arg.slice(2);
-            const value = rest[index + 1];
-            if (value === undefined || value.startsWith('--')) throw new Error(`missing value for ${arg}`);
-            flags[key] = value;
-            index += 1;
-        } else {
-            flags._.push(arg);
-        }
-    }
-    return { command, flags };
+    const { values, positionals } = parseCliArgs({
+        args: argv,
+        allowPositionals: true,
+        options: {
+            root: { type: 'string' },
+            date: { type: 'string' },
+            'floor-code': { type: 'string' },
+            'json-out': { type: 'string' },
+        },
+    });
+    const [command, ...rest] = positionals;
+    return { command, flags: { ...values, _: rest } };
 }
 
 function emit(result, file) {
@@ -198,7 +196,10 @@ function emit(result, file) {
 function main(argv) {
     const { command, flags } = parseArgs(argv);
     const root = path.resolve(flags.root || DEFAULT_ROOT);
-    const floorCode = Number(flags['floor-code'] || 0);
+    const floorCode = flags['floor-code'] !== undefined && flags['floor-code'] !== ''
+        ? Number(flags['floor-code'])
+        : 0;
+    if (!Number.isFinite(floorCode)) throw new Error(`invalid --floor-code: ${flags['floor-code']}`);
 
     switch (command) {
         case 'nightly': {
