@@ -41,22 +41,6 @@ export const GATEWAY_ADAPTERS = Object.freeze([
     'ollama',
 ]);
 
-/** Providers that authenticate via OAuth / OMP session rather than plain API keys. */
-export const OAUTH_PROVIDER_IDS = Object.freeze(new Set([
-    'google-antigravity',
-    'google-gemini-cli',
-    'openai-codex',
-    'openai-codex-device',
-    'github-copilot',
-    'cursor',
-    'devin',
-    'gitlab-duo',
-    'gitlab-duo-agent',
-    'stencil',
-    'xai-oauth',
-    'zai-coding-plan',
-]));
-
 /**
  * Request body keys that OMTP manages itself. Manual extra-body JSON may not
  * override them.

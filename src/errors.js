@@ -19,23 +19,3 @@ export function codedError(code, params = [], message = '') {
   /** @type {any} */ (error).params = Array.isArray(params) ? params.map(String) : [];
   return error;
 }
-
-/**
- * Stable code of a thrown value, or an empty string.
- * @param {unknown} error
- * @returns {string}
- */
-export function errorCode(error) {
-  const code = /** @type {any} */ (error)?.code;
-  return typeof code === 'string' ? code : '';
-}
-
-/**
- * Placeholder values of a thrown value.
- * @param {unknown} error
- * @returns {string[]}
- */
-export function errorParams(error) {
-  const params = /** @type {any} */ (error)?.params;
-  return Array.isArray(params) ? params.map(String) : [];
-}
