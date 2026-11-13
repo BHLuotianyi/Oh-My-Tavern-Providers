@@ -22,7 +22,10 @@ const server = http.createServer(async (req, res) => {
     for await (const chunk of req) body += chunk;
     let parsed = {};
     try { parsed = JSON.parse(body); } catch { return json(res, 400, { error: { message: 'invalid json', type: 'invalid_request_error' } }); }
-    const content = parsed.messages?.map((m) => m.content).filter((v) => typeof v === 'string').join(' ') || '';
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.messages)) {
+      return json(res, 400, { error: { message: 'messages must be an array', type: 'invalid_request_error' } });
+    }
+    const content = parsed.messages.map((m) => m?.content).filter((v) => typeof v === 'string').join(' ') || '';
     const reply = content.toLowerCase().includes('ping') ? 'pong' : `echo: ${content}`;
     const model = parsed.model || 'echo';
     if (parsed.stream) {

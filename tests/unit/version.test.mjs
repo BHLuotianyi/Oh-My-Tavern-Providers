@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXTENSION_VERSION, EXTENSION_VERSION_CODE } from '../../src/constants.js';
-import { applyVersion, bumpVersion } from '../../tools/version.mjs';
+import { applyVersion, buildDate, bumpVersion, matchesTag, previousBuildDate } from '../../tools/version.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const readJson = (file) => JSON.parse(fs.readFileSync(path.join(root, file), 'utf8'));
@@ -60,4 +60,21 @@ test('an unchanged display version rewrites only the bumped fields', () => {
     const before = fs.readFileSync(path.join(tempRoot, 'server-plugin/package.json'), 'utf8');
     applyVersion(tempRoot, { display: '2.0.0', versionCode: 11 });
     assert.equal(fs.readFileSync(path.join(tempRoot, 'server-plugin/package.json'), 'utf8'), before);
+});
+
+test('buildDate and previousBuildDate follow UTC+8 calendar boundaries', () => {
+    assert.equal(buildDate(Date.parse('2026-11-13T15:59:59.999Z')), '20261113');
+    assert.equal(buildDate(Date.parse('2026-11-13T16:00:00.000Z')), '20261114');
+    assert.equal(previousBuildDate(Date.parse('2026-11-13T15:59:59.999Z')), '20261112');
+    assert.equal(previousBuildDate(Date.parse('2026-11-13T16:00:00.000Z')), '20261113');
+});
+
+test('matchesTag accepts release line, base line and full display tag', () => {
+    assert.equal(matchesTag('v2.2.1', '2.2.1'), true);
+    assert.equal(matchesTag('v2.2.1', '2.2.1+nightly.20261113'), true);
+    assert.equal(matchesTag('v2.2.1+nightly.20261113', '2.2.1+nightly.20261113'), true);
+    assert.equal(matchesTag('v2.2.1-beta.1', '2.2.1-beta.1+nightly.20261113'), true);
+    assert.equal(matchesTag('v2.2.1', '2.2.1-beta.1+nightly.20261113'), true);
+    assert.equal(matchesTag('v2.2.0', '2.2.1'), false);
+    assert.equal(matchesTag('v2.2.1-alpha.1', '2.2.1-beta.1'), false);
 });
