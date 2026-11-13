@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">= 18.0.0"
+    "node": ">= 18.17.0"
   },
   "main": "index.mjs",
   "description": "OMTP Gateway server plugin for SillyTavern",

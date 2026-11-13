@@ -18,3 +18,7 @@ oauth-clients.json
 
 # Locally rendered banner for forum posts (regenerate: resvg --width 2400 assets/readme-banner.svg assets/readme-banner.png)
 assets/readme-banner.png
+
+# Dependencies and packaged release/nightly archives
+node_modules/
+dist/
