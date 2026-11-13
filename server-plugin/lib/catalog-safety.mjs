@@ -7,12 +7,10 @@
  * bundled catalog only. This is what keeps a poisoned `models.json` (or a
  * hand-written file in `data/omtp/`) from exfiltrating saved API keys.
  */
+import { ADAPTER_IDS } from './adapter-ids.mjs';
+import { isLoopbackHost } from './net-hosts.mjs';
 
-/** Same adapter ids as the gateway (kept local to avoid an import cycle). */
-const GATEWAY_ADAPTER_IDS = new Set([
-    'openai', 'anthropic', 'google', 'google-vertex', 'antigravity',
-    'responses', 'azure-responses', 'bedrock', 'ollama',
-]);
+const GATEWAY_ADAPTER_IDS = new Set(ADAPTER_IDS);
 
 /** Model fields an external catalog is allowed to supply. */
 const MODEL_FIELDS = [
@@ -55,14 +53,6 @@ export function validateBaseUrl(value) {
     return url.toString().replace(/\/+$/, '');
 }
 
-/**
- * @param {string} hostname
- * @returns {boolean}
- */
-export function isLoopbackHost(hostname) {
-    const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
-    return host === 'localhost' || host === '::1' || host.startsWith('127.') || host === '0.0.0.0';
-}
 
 /**
  * Hosts already trusted by the bundled catalog. A brand-new provider in an
@@ -137,7 +127,7 @@ export function sanitizeExternalLayer(layer, bundled) {
             : [];
         const display = pick(raw, DISPLAY_FIELDS);
 
-        if (trusted[id]) {
+        if (Object.hasOwn(trusted, id)) {
             // Keep bundled routing/auth fields by not emitting them here:
             // mergeCatalog overlays only the keys present in this layer.
             providers[id] = { id, ...display, models };
@@ -150,6 +140,7 @@ export function sanitizeExternalLayer(layer, bundled) {
             api: 'custom',
             authKind: 'api-key',
             envVars: [],
+            bundled: false,
             ...display,
             models,
         };

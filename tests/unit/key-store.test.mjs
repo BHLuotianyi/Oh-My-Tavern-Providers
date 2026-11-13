@@ -189,3 +189,56 @@ test('userAgentSpoof round-trips and clears back to the catalog default', async 
   });
   assert.equal(cleared.userAgentSpoof, true);
 });
+
+test('M3: overriding baseUrl drops stored apiKey and blocks ST/env secret fallback', async () => {
+  const root = tempRoot();
+  const store = new KeyStore({
+    root,
+    resolveStSecret: () => 'st-secret',
+    env: { OPENAI_API_KEY: 'env-secret' },
+  });
+  const catalogProvider = {
+    id: 'openai',
+    gatewayAdapter: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    envVars: ['OPENAI_API_KEY'],
+    authKind: 'api-key',
+    models: [],
+  };
+
+  // Same-origin path change keeps stored key.
+  await store.setProviderConfig('openai', { apiKey: 'stored-key' }, { fallbackBaseUrl: catalogProvider.baseUrl });
+  await store.setProviderConfig('openai', { baseUrl: 'https://api.openai.com/v2' }, { fallbackBaseUrl: catalogProvider.baseUrl });
+  assert.equal((await store.getProviderConfig('openai')).apiKey, 'stored-key');
+
+  // Foreign-origin baseUrl override without apiKey drops stored key and blocks ST/env fallback.
+  await store.setProviderConfig('openai', { baseUrl: 'https://evil.example/v1' }, { fallbackBaseUrl: catalogProvider.baseUrl });
+  assert.equal((await store.getProviderConfig('openai')).apiKey, undefined);
+
+  const resolved = await store.resolveProvider(catalogProvider);
+  assert.equal(resolved.baseUrl, 'https://evil.example/v1');
+  assert.equal(resolved.apiKey, '');
+  assert.equal(resolved.keySource, 'none');
+  assert.equal(resolved.available, false);
+});
+
+test('clearProviderKey validates providerId and prototype keys do not leak', async () => {
+  const root = tempRoot();
+  const store = new KeyStore({ root, resolveStSecret: () => '' });
+  for (const badId of ['', '../bad', '__proto__', 'a/b']) {
+    await assert.rejects(() => store.clearProviderKey(badId), /Invalid provider id/);
+  }
+  assert.equal(await store.deleteProviderConfig('toString'), false);
+  assert.deepEqual(await store.getProviderConfig('constructor'), {});
+});
+
+test('external edits to providers.json are seen despite read cache', async () => {
+  const root = tempRoot();
+  const store = new KeyStore({ root, resolveStSecret: () => '' });
+  await store.setProviderConfig('mock', { apiKey: 'v1' });
+  assert.equal((await store.getProviderConfig('mock')).apiKey, 'v1');
+
+  const store2 = new KeyStore({ root, resolveStSecret: () => '' });
+  await store2.setProviderConfig('mock', { apiKey: 'v2' });
+  assert.equal((await store.getProviderConfig('mock')).apiKey, 'v2');
+});

@@ -23,7 +23,38 @@ export class KeyStoreUnreadableError extends Error {
 }
 
 const ENC_PREFIX = 'enc:v1:';
+const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
 
+/**
+ * @param {unknown} providerId
+ */
+function assertValidProviderId(providerId) {
+    if (!PROVIDER_ID_PATTERN.test(String(providerId || ''))) {
+        throw new Error('Invalid provider id');
+    }
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function urlOrigin(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return '';
+    try {
+        return new URL(raw).origin;
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * @param {import('node:fs').BigIntStats} stat
+ * @returns {string}
+ */
+function fileStamp(stat) {
+    return `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+}
 /**
  * @param {unknown} value
  * @returns {boolean}
@@ -98,6 +129,8 @@ export class KeyStore {
         this._masterKeyPromise = null;
         /** Serializes read-modify-write cycles on `providers.json`. */
         this._mutations = Promise.resolve();
+        /** @type {{stamp:string, providers:Record<string, string>}|null} */
+        this._providersCache = null;
     }
 
     /**
@@ -130,12 +163,14 @@ export class KeyStore {
                 return this._masterKey;
             }
             // Never regenerate over an existing (but unreadable) key: that
-            // silently makes every stored credential undecryptable. Keep a
-            // copy so the user can restore it, then fail loudly.
+            // silently makes every stored credential undecryptable. Keep one
+            // backup copy so the user can restore it, then fail loudly.
             try {
-                await fs.promises.copyFile(keyPath, `${keyPath}.corrupt-${Date.now()}`);
+                await fs.promises.copyFile(keyPath, `${keyPath}.corrupt-backup`, fs.constants.COPYFILE_EXCL);
             } catch (backupError) {
-                logError('could not back up the invalid master key', backupError);
+                if (/** @type {NodeJS.ErrnoException} */ (backupError).code !== 'EEXIST') {
+                    logError('could not back up the invalid master key', backupError);
+                }
             }
             throw new KeyStoreUnreadableError('OMTP master.key is invalid; the original was backed up. Restore it or re-enter provider keys.');
         } catch (error) {
@@ -161,10 +196,26 @@ export class KeyStore {
                 }
             }
         }
-        const key = crypto.randomBytes(32);
-        await writeFileAtomic(keyPath, `${key.toString('hex')}\n`, 0o600);
-        this._masterKey = key;
-        return key;
+        await ensureOmtpRoot(this.root);
+        const candidate = crypto.randomBytes(32);
+        try {
+            await fs.promises.writeFile(keyPath, `${candidate.toString('hex')}\n`, { flag: 'wx', mode: 0o600 });
+            try {
+                await fs.promises.chmod(keyPath, 0o600);
+            } catch {
+                // Best effort on filesystems that do not support chmod.
+            }
+            this._masterKey = candidate;
+            return candidate;
+        } catch (error) {
+            if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EEXIST') throw error;
+            const raw = (await fs.promises.readFile(keyPath, 'utf8')).trim();
+            if (/^[0-9a-f]{64}$/i.test(raw)) {
+                this._masterKey = Buffer.from(raw, 'hex');
+                return this._masterKey;
+            }
+            throw new KeyStoreUnreadableError('OMTP master.key is invalid; restore it or re-enter provider keys.');
+        }
     }
 
     /**
@@ -209,21 +260,40 @@ export class KeyStore {
      * @returns {Promise<Record<string, string>>}
      */
     async readEncryptedProviders() {
+        const filePath = omtpPath(this.root, PROVIDERS_FILE);
+        let stat;
+        try {
+            stat = await fs.promises.stat(filePath, { bigint: true });
+        } catch (error) {
+            if (/** @type {NodeJS.ErrnoException} */ (error).code === 'ENOENT') {
+                this._providersCache = null;
+                return Object.create(null);
+            }
+            logError('providers.json is unreadable', error);
+            this._providersCache = null;
+            throw new KeyStoreUnreadableError();
+        }
+        const stamp = fileStamp(stat);
+        if (this._providersCache && this._providersCache.stamp === stamp) {
+            return this._providersCache.providers;
+        }
         let raw;
         try {
-            raw = await readJsonFile(omtpPath(this.root, PROVIDERS_FILE));
+            raw = await readJsonFile(filePath);
         } catch (error) {
             // A corrupt file is not an empty store: treating it as one would
             // overwrite ciphertext that may still be recoverable.
+            this._providersCache = null;
             logError('providers.json is unreadable', error);
             throw new KeyStoreUnreadableError();
         }
-        if (!raw || !isPlainObject(raw.providers)) return {};
-        /** @type {Record<string,string>} */
-        const out = {};
-        for (const [id, blob] of Object.entries(raw.providers)) {
-            if (typeof blob === 'string') out[id] = blob;
+        const out = Object.create(null);
+        if (raw && isPlainObject(raw.providers)) {
+            for (const [id, blob] of Object.entries(raw.providers)) {
+                if (typeof blob === 'string') out[id] = blob;
+            }
         }
+        this._providersCache = { stamp, providers: out };
         return out;
     }
 
@@ -232,7 +302,16 @@ export class KeyStore {
      */
     async writeEncryptedProviders(providers) {
         await ensureOmtpRoot(this.root);
-        await writeJsonAtomic(omtpPath(this.root, PROVIDERS_FILE), { providers });
+        const filePath = omtpPath(this.root, PROVIDERS_FILE);
+        const snapshot = Object.assign(Object.create(null), providers);
+        this._providersCache = null;
+        await writeJsonAtomic(filePath, { providers: snapshot });
+        try {
+            const stat = await fs.promises.stat(filePath, { bigint: true });
+            this._providersCache = { stamp: fileStamp(stat), providers: snapshot };
+        } catch {
+            this._providersCache = null;
+        }
     }
 
     /**
@@ -245,7 +324,7 @@ export class KeyStore {
      */
     async _mutate(mutate) {
         const run = this._mutations.then(async () => {
-            const providers = await this.readEncryptedProviders();
+            const providers = Object.assign(Object.create(null), await this.readEncryptedProviders());
             const { result, providers: next } = await mutate(providers);
             if (next) await this.writeEncryptedProviders(next);
             return result;
@@ -261,7 +340,7 @@ export class KeyStore {
      */
     async getProviderConfig(providerId) {
         const providers = await this.readEncryptedProviders();
-        const blob = providers[providerId];
+        const blob = Object.hasOwn(providers, providerId) ? providers[providerId] : '';
         if (!blob) return {};
         return this.decrypt(blob);
     }
@@ -284,23 +363,22 @@ export class KeyStore {
      * Merge a patch into the stored provider config and persist it encrypted.
      * @param {string} providerId
      * @param {Record<string, any>} patch
+     * @param {{fallbackBaseUrl?: string}} [options]
      * @returns {Promise<Record<string, any>>} Sanitized public config.
      */
-    async setProviderConfig(providerId, patch = {}) {
-        if (!/^[a-z0-9][a-z0-9._-]*$/i.test(String(providerId || ''))) {
-            throw new Error('Invalid provider id');
-        }
+    async setProviderConfig(providerId, patch = {}, options = {}) {
+        assertValidProviderId(providerId);
         return this._mutate(async (providers) => {
             // Never replace an unreadable config: its ciphertext may still be
             // recoverable, and silently overwriting it loses that chance.
-            const existing = providers[providerId]
+            const existing = Object.hasOwn(providers, providerId)
                 ? await this.decrypt(providers[providerId])
                 : {};
 
             /** @type {Record<string, any>} */
             const next = { ...existing, id: providerId };
             for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'apiKey', 'ignoreStSecret', 'userAgentSpoof', 'singleMaxTokens']) {
-                if (!(key in patch)) continue;
+                if (!Object.hasOwn(patch, key)) continue;
                 const value = patch[key];
                 if (key === 'apiKey') {
                     next.apiKey = typeof value === 'string' ? value.trim() : '';
@@ -337,6 +415,17 @@ export class KeyStore {
                 else next[key] = String(value);
             }
 
+            // Changing the endpoint origin without supplying a new apiKey must
+            // drop the old key so credentials cannot be redirected to a new host.
+            if (Object.hasOwn(patch, 'baseUrl') && !Object.hasOwn(patch, 'apiKey')) {
+                const fallback = options.fallbackBaseUrl || '';
+                const prevOrigin = urlOrigin(existing.baseUrl || fallback);
+                const nextOrigin = urlOrigin(next.baseUrl || fallback);
+                if (prevOrigin !== nextOrigin) {
+                    delete next.apiKey;
+                }
+            }
+
             next.updatedAt = Date.now();
             providers[providerId] = await this.encrypt(next);
             return { providers, result: this.publicConfig(next) };
@@ -349,17 +438,18 @@ export class KeyStore {
      * @returns {Promise<Record<string, any>>}
      */
     async clearProviderKey(providerId) {
+        assertValidProviderId(providerId);
         return this._mutate(async (providers) => {
             // Unlike `setProviderConfig`, this path keeps the existing
             // KeyStoreUnreadableError: signing out of unreadable data cannot
             // be done safely.
-            const base = providers[providerId]
+            const base = Object.hasOwn(providers, providerId)
                 ? await this.decrypt(providers[providerId])
                 : {};
             // A key can come from SillyTavern's own secrets instead of this store;
             // clearing must opt out of that fallback, or "Sign out" changes nothing.
             base.ignoreStSecret = true;
-            const next = { ...base };
+            const next = { ...base, id: providerId };
             delete next.apiKey;
             next.updatedAt = Date.now();
             providers[providerId] = await this.encrypt(next);
@@ -374,7 +464,7 @@ export class KeyStore {
      */
     async deleteProviderConfig(providerId) {
         return this._mutate(async (providers) => {
-            if (!(providerId in providers)) return { result: false };
+            if (!Object.hasOwn(providers, providerId)) return { result: false };
             delete providers[providerId];
             return { providers, result: true };
         });
@@ -425,7 +515,11 @@ export class KeyStore {
         /** @type {'omtp'|'st'|'env'|'none'} */
         let keySource = apiKey ? 'omtp' : 'none';
 
-        if (!apiKey && this.resolveStSecret && stored.ignoreStSecret !== true) {
+        const allowStSecret = !catalogProvider?.custom
+            && !catalogProvider?.external
+            && catalogProvider?.bundled !== false
+            && stored.custom !== true;
+        if (!apiKey && allowStSecret && this.resolveStSecret && stored.ignoreStSecret !== true) {
             try {
                 const value = this.resolveStSecret(providerId);
                 if (typeof value === 'string' && value.trim()) {

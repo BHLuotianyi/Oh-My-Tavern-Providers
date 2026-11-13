@@ -10,6 +10,8 @@ import {
     validateBaseUrl,
 } from '../../server-plugin/lib/catalog-safety.mjs';
 import { CatalogService } from '../../server-plugin/lib/catalog-service.mjs';
+import { isLoopbackHost, isLoopbackHostHeader, isPrivateHost } from '../../server-plugin/lib/net-hosts.mjs';
+import { KeyStore } from '../../server-plugin/lib/key-store.mjs';
 
 const bundled = {
     schemaVersion: 1,
@@ -126,6 +128,55 @@ test('loadActive keeps bundled baseUrl even with a poisoned cached layer', async
         assert.equal(active.providers.openai.baseUrl, 'https://api.openai.com/v1');
         assert.equal(active.providers.openai.gatewayAdapter, 'openai');
         assert.equal(active.providers.openai.authLogin.authorizeUrl, 'https://auth.openai.com/authorize');
+    } finally {
+        await fs.promises.rm(root, { recursive: true, force: true });
+    }
+});
+
+test('M2: 127.evil.tld is not treated as loopback and non-bundled layers never inherit ST secrets', async () => {
+    const hosts = trustedHostsFromCatalog(bundled);
+    assert.equal(isTrustedEndpoint('https://127.evil.tld/v1', hosts), false);
+    assert.equal(isTrustedEndpoint('https://127.a.evil.tld/v1', hosts), false);
+    assert.equal(isTrustedEndpoint('http://127.0.0.2:8080/v1', hosts), true);
+
+    assert.equal(isLoopbackHost('127.evil.tld'), false);
+    assert.equal(isLoopbackHost('[::1]'), true);
+    assert.equal(isLoopbackHostHeader('127.0.0.1:4100'), true);
+    assert.equal(isLoopbackHostHeader('127.evil.tld:4100'), false);
+    assert.equal(isPrivateHost('10.0.0.1'), true);
+    assert.equal(isPrivateHost('10.evil.tld'), false);
+    assert.equal(isPrivateHost('fd12::1'), true);
+    assert.equal(isPrivateHost('fe80::1'), true);
+    assert.equal(isPrivateHost('fc::1'), false);
+
+    const external = sanitizeExternalLayer({
+        schemaVersion: 1,
+        providers: {
+            cohere: {
+                id: 'cohere',
+                baseUrl: 'https://127.evil.tld/v1',
+                gatewayAdapter: 'openai',
+                models: [{ id: 'c', input: ['text'] }],
+            },
+            ai21: {
+                id: 'ai21',
+                baseUrl: 'http://127.0.0.1:9999/v1',
+                gatewayAdapter: 'openai',
+                models: [{ id: 'j', input: ['text'] }],
+            },
+        },
+    }, bundled);
+    assert.equal(external.providers.cohere.baseUrl, undefined);
+    assert.equal(external.providers.cohere.gatewayAdapter, undefined);
+    assert.equal(external.providers.ai21.bundled, false);
+
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'omtp-m2-'));
+    try {
+        const store = new KeyStore({ root, resolveStSecret: () => 'st-secret-value' });
+        const resolved = await store.resolveProvider(external.providers.ai21);
+        assert.equal(resolved.apiKey, '');
+        assert.equal(resolved.keySource, 'none');
+        assert.equal(resolved.available, false);
     } finally {
         await fs.promises.rm(root, { recursive: true, force: true });
     }

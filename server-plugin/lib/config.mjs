@@ -56,10 +56,16 @@ export async function writeFileAtomic(filePath, contents, mode = 0o600) {
     const directory = path.dirname(filePath);
     await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
     const tmpPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
-    await fs.promises.writeFile(tmpPath, contents, { mode });
+    let handle = null;
     try {
+        handle = await fs.promises.open(tmpPath, 'wx', mode);
+        await handle.writeFile(contents);
+        await handle.sync();
+        await handle.close();
+        handle = null;
         await fs.promises.rename(tmpPath, filePath);
     } catch (error) {
+        if (handle) await handle.close().catch(() => {});
         await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
         throw error;
     }
@@ -149,16 +155,30 @@ export async function saveConfig(root, patch = {}) {
  * @returns {Promise<string>}
  */
 async function ensureTokenFile(root, file) {
+    await ensureOmtpRoot(root);
     const tokenPath = omtpPath(root, file);
     try {
         const existing = (await fs.promises.readFile(tokenPath, 'utf8')).trim();
         if (existing) return existing;
+        await fs.promises.rm(tokenPath, { force: true });
     } catch (error) {
         if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') throw error;
     }
-    const token = crypto.randomBytes(32).toString('hex');
-    await writeFileAtomic(tokenPath, `${token}\n`, 0o600);
-    return token;
+    const candidate = crypto.randomBytes(32).toString('hex');
+    try {
+        await fs.promises.writeFile(tokenPath, `${candidate}\n`, { flag: 'wx', mode: 0o600 });
+        try {
+            await fs.promises.chmod(tokenPath, 0o600);
+        } catch {
+            // Best effort on filesystems that do not support chmod.
+        }
+        return candidate;
+    } catch (error) {
+        if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EEXIST') throw error;
+        const existing = (await fs.promises.readFile(tokenPath, 'utf8')).trim();
+        if (existing) return existing;
+        throw error;
+    }
 }
 
 /**

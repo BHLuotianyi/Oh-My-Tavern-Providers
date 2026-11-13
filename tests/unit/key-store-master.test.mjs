@@ -20,8 +20,9 @@ test('a corrupted master.key is backed up, never silently regenerated', async ()
             KeyStoreUnreadableError,
         );
         assert.equal(fs.readFileSync(keyFile, 'utf8'), 'truncated\n');
-        assert.ok(fs.readdirSync(root).some((name) => name.startsWith('master.key.corrupt-')));
-
+        await assert.rejects(() => reopened.getProviderConfig('mock'), KeyStoreUnreadableError);
+        const corruptBackups = fs.readdirSync(root).filter((name) => name.startsWith('master.key.corrupt-'));
+        assert.equal(corruptBackups.length, 1);
         // The user can recover everything by restoring the backed-up key.
         fs.writeFileSync(keyFile, original);
         const restored = new KeyStore({ root, resolveStSecret: () => '' });

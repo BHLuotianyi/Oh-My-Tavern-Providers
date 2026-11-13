@@ -18,8 +18,9 @@ export const info = {
 };
 
 /**
- * Provider id -> SillyTavern secret key. The gateway has no request user
- * context, so secrets are read from the default user's directories.
+ * Provider id -> SillyTavern secret key (bundled providers only; non-bundled
+ * providers must never fall back to ST secrets). The gateway has no request
+ * user context, so secrets are read from the default user's directories.
  */
 const ST_SECRET_BY_PROVIDER = Object.freeze({
     openai: SECRET_KEYS.OPENAI,
@@ -38,14 +39,9 @@ const ST_SECRET_BY_PROVIDER = Object.freeze({
     fireworks: SECRET_KEYS.FIREWORKS,
     nanogpt: SECRET_KEYS.NANOGPT,
     aimlapi: SECRET_KEYS.AIMLAPI,
-    chutes: SECRET_KEYS.CHUTES,
-    electronhub: SECRET_KEYS.ELECTRONHUB,
     siliconflow: SECRET_KEYS.SILICONFLOW,
     'cloudflare-workers-ai': SECRET_KEYS.WORKERS_AI,
-    pollinations: SECRET_KEYS.POLLINATIONS,
     perplexity: SECRET_KEYS.PERPLEXITY,
-    cohere: SECRET_KEYS.COHERE,
-    ai21: SECRET_KEYS.AI21,
     together: SECRET_KEYS.TOGETHERAI,
     azure: SECRET_KEYS.AZURE_OPENAI,
 });

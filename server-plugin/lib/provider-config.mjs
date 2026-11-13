@@ -5,6 +5,7 @@
  * `{ id, label, adapter, baseUrl, apiKey, headers, extraConfig, keySource,
  *    available, custom, models }`.
  */
+import { ADAPTER_IDS } from './adapter-ids.mjs';
 import { validateBaseUrl } from './catalog-safety.mjs';
 
 const ADAPTER_BY_API = new Map([
@@ -18,18 +19,6 @@ const ADAPTER_BY_API = new Map([
     ['azure-openai-responses', 'azure-responses'],
     ['bedrock-converse-stream', 'bedrock'],
     ['ollama-chat', 'ollama'],
-]);
-
-export const SUPPORTED_ADAPTERS = Object.freeze([
-    'openai',
-    'anthropic',
-    'google',
-    'google-vertex',
-    'antigravity',
-    'responses',
-    'azure-responses',
-    'bedrock',
-    'ollama',
 ]);
 
 export const KEYLESS_PROVIDERS = Object.freeze(['local', 'ollama', 'pollinations', 'yolo-auto']);
@@ -51,7 +40,7 @@ function adapterForApi(api) {
  * @returns {boolean}
  */
 export function isSupportedAdapter(adapter) {
-    return SUPPORTED_ADAPTERS.includes(String(adapter || ''));
+    return ADAPTER_IDS.includes(String(adapter || ''));
 }
 
 /**
@@ -62,6 +51,17 @@ function trimTrailingSlash(value) {
     return String(value || '').replace(/\/+$/, '');
 }
 
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function urlHost(value) {
+    try {
+        return new URL(String(value || '')).host.toLowerCase();
+    } catch {
+        return '';
+    }
+}
 /**
  * @param {Record<string, string>} headers
  * @returns {Record<string, string>}
@@ -205,8 +205,18 @@ export function buildProviderConfig(catalogProvider, options = {}) {
     } catch {
         baseUrl = trimTrailingSlash(fallbackBaseUrl || '');
     }
-    const apiKey = typeof options.apiKey === 'string' ? options.apiKey : '';
-    const keySource = options.keySource || (apiKey ? 'omtp' : 'none');
+    let apiKey = typeof options.apiKey === 'string' ? options.apiKey : '';
+    let keySource = options.keySource || (apiKey ? 'omtp' : 'none');
+    // ST secrets and env keys belong to the catalog's own endpoint; overriding
+    // baseUrl to a different host must never carry fallback credentials there.
+    if (keySource === 'st' || keySource === 'env') {
+        const effectiveHost = urlHost(baseUrl);
+        const catalogHost = urlHost(fallbackBaseUrl);
+        if (!effectiveHost || !catalogHost || effectiveHost !== catalogHost) {
+            apiKey = '';
+            keySource = 'none';
+        }
+    }
     const keyless = Boolean(options.keyless);
     const headers = compactHeaders({
         ...defaultHeadersFor(adapter, apiKey, extraConfig),
