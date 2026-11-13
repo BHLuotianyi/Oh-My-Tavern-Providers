@@ -5,10 +5,7 @@
  * `{ windows: [{ label, usedPercent, remainingPercent, resetAt }] }`; this file
  * only renders it.
  */
-import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
-
-const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
-import { apiBase, apiHeaders } from '../backend.js';
+import { apiBase, requestHeaders } from '../backend.js';
 import { currentChatId, ensureUsageSession } from '../usage-session.js';
 import { tr, trf } from './dom.js';
 import { el, formatTokens, formatUsd } from './helpers.js';
@@ -31,7 +28,7 @@ export function resetUsageSession(chatId) {
 }
 
 async function api(path, init = {}) {
-    const headers = { ...getRequestHeaders(), ...(init.headers || {}) };
+    const headers = { ...requestHeaders(), ...(init.headers || {}) };
     const response = await fetch(`${apiBase()}${path}`, { ...init, headers });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {

@@ -6,9 +6,15 @@
  * login engine; providers whose policy needs provider-specific code point at
  * the OMP import instead.
  */
-import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
-
-const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
+import { apiBase, isTauriTavern, requestHeaders } from '../backend.js';
+import { apiKeyUrlFor } from '../provider-links.js';
+import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
+import { forgetLiveModels } from '../catalog.js';
+import { getSettings } from '../store.js';
+import { invalidateGatewayCaches } from '../switch-engine.js';
+import { tr, trf } from './dom.js';
+import { el } from './helpers.js';
+import { openCustomProviderEditor } from './settings-forms.js';
 
 /**
  * Authorize URLs come from the server (and ultimately from a catalog policy).
@@ -24,14 +30,6 @@ function safeAuthorizeUrl(value) {
         return '';
     }
 }
-import { apiBase, apiHeaders, isTauriTavern } from '../backend.js';
-import { apiKeyUrlFor } from '../provider-links.js';
-import { providerDisplayName, supportsProviderNames } from '../provider-names.js';
-import { forgetLiveModels } from '../catalog.js';
-import { getSettings } from '../store.js';
-import { tr, trf } from './dom.js';
-import { el } from './helpers.js';
-import { openCustomProviderEditor } from './settings.js';
 
 /** Providers with a login flow come first, like omp's `/login` roster. */
 const KIND_RANK = new Map([
@@ -65,7 +63,7 @@ let roster = [];
 let filterText = '';
 
 async function api(path, init = {}) {
-    const headers = { ...getRequestHeaders(), ...(init.headers || {}) };
+    const headers = { ...requestHeaders(), ...(init.headers || {}) };
     if (init.body && !headers['Content-Type']) {
         headers['Content-Type'] = 'application/json';
     }
@@ -242,6 +240,7 @@ function renderRow(provider) {
             try {
                 await api(`/providers/${encodeURIComponent(id)}/logout`, { method: 'POST' });
                 forgetLiveModels(id);
+                invalidateGatewayCaches();
                 onChanged?.();
                 await refresh();
             } catch (error) {
@@ -380,6 +379,7 @@ function renderKeyEntry(provider, row) {
             });
             input.value = '';
             forgetLiveModels(id);
+            invalidateGatewayCaches();
             onChanged?.();
             await refresh();
         } catch (error) {
@@ -604,6 +604,7 @@ function pollSession(providerId, started, panel, popup = null, actions = null) {
 function finishLogin(providerId, panel, status, popup = null) {
     stopPolling(providerId);
     forgetLiveModels(providerId);
+    invalidateGatewayCaches();
     panel.replaceChildren(el('div', 'omtp-login-success', trf('omtp_login_success', 'Signed in${0}', status.account ? ` · ${status.account}` : '')));
     onChanged?.();
     setTimeout(() => refresh(), 400);

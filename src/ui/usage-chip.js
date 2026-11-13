@@ -6,10 +6,7 @@
  * the gateway's counters (`/stats?since=`), so they cover streaming and
  * non-streaming replies alike.
  */
-import { getRequestHeaders as stRequestHeaders } from '../../../../../../script.js';
-
-const getRequestHeaders = (...args) => apiHeaders(stRequestHeaders(...args));
-import { apiBase, apiHeaders } from '../backend.js';
+import { apiBase, requestHeaders } from '../backend.js';
 import { currentChatId, ensureUsageSession } from '../usage-session.js';
 import { tr, trf } from './dom.js';
 import { formatTokens, formatUsd } from './helpers.js';
@@ -39,7 +36,7 @@ export async function refreshUsageChip({ force = false, chatId } = {}) {
     const query = activeChat ? `chat=${encodeURIComponent(activeChat)}` : `since=${encodeURIComponent(since)}`;
     try {
         const response = await fetch(`${apiBase()}/stats?${query}`, {
-            headers: getRequestHeaders(),
+            headers: requestHeaders(),
         });
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
