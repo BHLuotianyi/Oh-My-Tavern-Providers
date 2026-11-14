@@ -157,7 +157,6 @@ export async function startOpenAICodexDevice({ providerId = 'openai-codex', logi
                         cancel?.removeEventListener?.('abort', onAbort);
                         resolve();
                     }, poll === 0 ? Math.min(intervalMs, POLL_FLOOR_MS) : intervalMs);
-                    timer.unref?.();
                     cancel?.addEventListener?.('abort', onAbort, { once: true });
                 });
                 if (cancel?.aborted) throw new Error('Login canceled');

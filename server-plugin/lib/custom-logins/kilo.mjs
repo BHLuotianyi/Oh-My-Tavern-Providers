@@ -54,7 +54,6 @@ export async function startKilo({ doFetch = fetch, signal } = {}) {
                     cancel?.removeEventListener?.('abort', onAbort);
                     resolve();
                 }, POLL_INTERVAL_MS);
-                timer.unref?.();
                 cancel?.addEventListener?.('abort', onAbort, { once: true });
             });
             while (Date.now() < deadline) {

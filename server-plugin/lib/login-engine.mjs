@@ -458,8 +458,9 @@ async function startDeviceAuthorization(login, { env = process.env } = {}, doFet
 }
 
 /**
- * Sleep for `ms`, resolving early if `signal` aborts. Timer is `.unref()`ed
- * so an abandoned poll never keeps the process alive.
+ * Sleep for `ms`, resolving early if `signal` aborts. The timer stays ref'd:
+ * a caller awaiting the poll needs the event loop alive, and cancel/sweep
+ * abort the signal, so an abandoned poll still ends promptly.
  * @param {number} ms
  * @param {AbortSignal|undefined} signal
  */
@@ -477,7 +478,6 @@ function sleepPoll(ms, signal) {
             signal?.removeEventListener?.('abort', onAbort);
             resolve();
         }, ms);
-        timer.unref?.();
         signal?.addEventListener?.('abort', onAbort, { once: true });
     });
 }

@@ -563,18 +563,9 @@ test('tunnel TLS handshake times out against a TLS-less blackhole server and hon
 
 test('tunneled POST sends Content-Length and redirects honour error mode and cross-origin stripping on direct path', async () => {
     const seen = [];
-    const origin = http.createServer((req, res) => {
-        if (req.url === '/post') {
-            seen.push({ contentLength: req.headers['content-length'], transferEncoding: req.headers['transfer-encoding'] });
-            res.writeHead(200, { 'content-type': 'application/json' });
-            res.end('{"ok":true}');
-            return;
-        }
-        if (req.url === '/redir') {
-            res.writeHead(307, { location: `http://127.0.0.1:${origin.address().port}/echo` });
-            res.end();
-            return;
-        }
+    // A second port is a different origin. Avoid `localhost` here: Node 18
+    // resolves it to ::1 first while these servers bind 127.0.0.1 only.
+    const target = http.createServer((req, res) => {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({
             authorization: req.headers.authorization || '',
@@ -583,6 +574,17 @@ test('tunneled POST sends Content-Length and redirects honour error mode and cro
             googKey: req.headers['x-goog-api-key'] || '',
             other: req.headers['x-other'] || '',
         }));
+    });
+    const targetPort = await listen(target);
+    const origin = http.createServer((req, res) => {
+        if (req.url === '/post') {
+            seen.push({ contentLength: req.headers['content-length'], transferEncoding: req.headers['transfer-encoding'] });
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end('{"ok":true}');
+            return;
+        }
+        res.writeHead(307, { location: `http://127.0.0.1:${targetPort}/echo` });
+        res.end();
     });
     const originPort = await listen(origin);
     const { proxy, port } = await startProxy(originPort);
@@ -595,10 +597,10 @@ test('tunneled POST sends Content-Length and redirects honour error mode and cro
 
         await assert.rejects(doFetch('http://origin.test/redir', { redirect: 'error' }), TypeError);
 
-        // Direct-to-direct cross-origin redirect (localhost -> 127.0.0.1) must strip all credential headers.
+        // Direct-to-direct cross-origin redirect must strip all credential headers.
         const directOnly = createProxyFetch({ env: {} });
-        await assert.rejects(directOnly(`http://localhost:${originPort}/redir`, { redirect: 'error' }), TypeError);
-        const cross = await directOnly(`http://localhost:${originPort}/redir`, {
+        await assert.rejects(directOnly(`http://127.0.0.1:${originPort}/redir`, { redirect: 'error' }), TypeError);
+        const cross = await directOnly(`http://127.0.0.1:${originPort}/redir`, {
             headers: {
                 Authorization: 'Bearer sec',
                 'X-Api-Key': 'k1',
@@ -611,5 +613,6 @@ test('tunneled POST sends Content-Length and redirects honour error mode and cro
     } finally {
         await close(proxy);
         await close(origin);
+        await close(target);
     }
 });

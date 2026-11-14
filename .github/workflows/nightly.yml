@@ -150,6 +150,8 @@ jobs:
           path: |
             dist/*.zip
             .version.json
+          # upload-artifact >= 4.4 skips dotfiles unless asked.
+          include-hidden-files: true
           retention-days: 90
 
       - name: Upload publish payload
@@ -160,6 +162,7 @@ jobs:
           path: |
             version.patch
             .version.json
+          include-hidden-files: true
           retention-days: 1
 
       - name: Job summary (skipped)
