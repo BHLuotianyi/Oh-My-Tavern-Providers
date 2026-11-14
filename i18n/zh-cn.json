@@ -525,5 +525,8 @@
     "omtp_proxy_verdict_proxy_bad": "代理连不上这些站点。请检查代理软件是否在运行、端口是否正确、当前节点是否可用。",
     "omtp_proxy_verdict_mixed": "部分站点经代理无法访问，请检查代理规则中标 ✗ 的域名。",
     "omtp_proxy_verdict_direct_ok": "直连可用，无需代理。",
-    "omtp_proxy_verdict_direct_bad": "当前未使用代理，且直连失败。请在代理软件中打开“系统代理”，或选择“手动填写”并输入代理地址（例如 http://127.0.0.1:7890）。"
+    "omtp_proxy_verdict_direct_bad": "当前未使用代理，且直连失败。请在代理软件中打开“系统代理”，或选择“手动填写”并输入代理地址（例如 http://127.0.0.1:7890）。",
+    "omtp_proxy_unsupported": "正在运行的服务端插件比扩展旧，没有代理设置。请按顶部提示更新服务端插件后重启。",
+    "omtp_server_version_mismatch": "服务端插件版本为 ${0}，扩展为 ${1}。更新扩展不会同时更新服务端插件，后台仍在运行旧代码：请把扩展目录中的 server-plugin 重新复制为 SillyTavern/plugins/omtp，然后重启 SillyTavern。",
+    "omtp_server_version_mismatch_companion": "伴随服务版本为 ${0}，扩展为 ${1}。请用更新后扩展目录中的 server-plugin 重新启动伴随服务。"
 }

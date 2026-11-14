@@ -525,5 +525,8 @@
     "omtp_proxy_verdict_proxy_bad": "The proxy cannot reach these sites. Check that the proxy app is running, that the port is right, and that its current node works.",
     "omtp_proxy_verdict_mixed": "Some sites are unreachable through the proxy; check its rules for the hosts marked ✗.",
     "omtp_proxy_verdict_direct_ok": "Direct connections work; no proxy is needed.",
-    "omtp_proxy_verdict_direct_bad": "No proxy is in use and direct connections fail. Turn on the system proxy in your proxy app, or choose Manual and enter its address (for example http://127.0.0.1:7890)."
+    "omtp_proxy_verdict_direct_bad": "No proxy is in use and direct connections fail. Turn on the system proxy in your proxy app, or choose Manual and enter its address (for example http://127.0.0.1:7890).",
+    "omtp_proxy_unsupported": "The running server plugin is older than this extension and has no proxy settings. Update it as the warning at the top describes, then restart.",
+    "omtp_server_version_mismatch": "The server plugin runs version ${0}, the extension is ${1}. Updating the extension does not update the server plugin: copy the extension's server-plugin folder to SillyTavern/plugins/omtp again, then restart SillyTavern.",
+    "omtp_server_version_mismatch_companion": "The companion runs version ${0}, the extension is ${1}. Restart the companion from the updated extension's server-plugin folder."
 }

@@ -12,7 +12,7 @@ import { getSettings } from '../store.js';
 import { resolveUpdateChannel } from '../update-check.js';
 import { initBindingUI } from './bindings.js';
 import { gatewayUnavailableText, tr, trf } from './dom.js';
-import { isPlainObject } from './helpers.js';
+import { isPlainObject, notify } from './helpers.js';
 
 const SERVER_CONTROL_IDS = [
     'omtp-gateway-autostart',
@@ -25,6 +25,8 @@ const SERVER_CONTROL_IDS = [
     'omtp-import-omp',
 ];
 
+const PROXY_CONTROL_IDS = ['omtp-proxy-mode', 'omtp-proxy-url', 'omtp-proxy-test'];
+
 /** @type {object|null} */
 let serverStatus = null;
 /** @type {boolean|null} */
@@ -33,6 +35,8 @@ let serverAvailable = null;
 let providersCache = [];
 /** @type {Promise<void>|null} */
 let refreshing = null;
+/** Server version already reported in a toast, so it shows once per page load. */
+let warnedServerVersion = null;
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                      */
@@ -352,9 +356,44 @@ export function applyProxyStatus(status) {
 export async function refreshProxyStatus() {
     try {
         applyProxyStatus(await apiFetch('/proxy'));
-    } catch {
-        // An older server plugin has no proxy routes; leave the section blank.
+    } catch (error) {
         applyProxyStatus(null);
+        if (error?.status === 404) {
+            // A server plugin older than 2.4.0 has no proxy routes.
+            const reason = tr('omtp_proxy_unsupported', 'The running server plugin is older than this extension and has no proxy settings. Update it as the warning at the top describes, then restart.');
+            setText('omtp-proxy-status', reason);
+            for (const id of PROXY_CONTROL_IDS) {
+                setDisabled(id, true, reason);
+            }
+        }
+    }
+}
+
+/**
+ * Warn when the server plugin runs other code than this extension. Updating
+ * the extension does not update `plugins/omtp`, and a copied plugin only
+ * loads after a restart, so the two drift apart silently.
+ * @param {object|null} status `/status` response, null when unavailable
+ */
+function applyServerVersion(status) {
+    const element = byId('omtp-server-version-warning');
+    const server = isPlainObject(status) && typeof status.serverVersion === 'string' ? status.serverVersion : '';
+    if (!status || server === EXTENSION_VERSION) {
+        if (element) {
+            element.hidden = true;
+        }
+        return;
+    }
+    const text = isTauriTavern()
+        ? trf('omtp_server_version_mismatch_companion', 'The companion runs version ${0}, the extension is ${1}. Restart the companion from the updated extension\'s server-plugin folder.', server || '?', EXTENSION_VERSION)
+        : trf('omtp_server_version_mismatch', 'The server plugin runs version ${0}, the extension is ${1}. Updating the extension does not update the server plugin: copy the extension\'s server-plugin folder to SillyTavern/plugins/omtp again, then restart SillyTavern.', server || '?', EXTENSION_VERSION);
+    if (element) {
+        element.textContent = text;
+        element.hidden = false;
+    }
+    if (warnedServerVersion !== server) {
+        warnedServerVersion = server;
+        notify('warning', text);
     }
 }
 
@@ -369,6 +408,7 @@ export async function refreshServerStatus() {
             throw new Error('Unexpected /status response');
         }
         markServerAvailable();
+        applyServerVersion(status);
         serverStatus = status;
         updateGatewayStatus(serverStatus?.gateway);
         updateCatalogInfo(serverStatus?.catalog);
@@ -380,8 +420,8 @@ export async function refreshServerStatus() {
             config = null;
         }
         applyGatewayConfig(config);
-        await refreshProxyStatus();
         setServerControlsDisabled(false);
+        await refreshProxyStatus();
     } catch (error) {
         markServerUnavailable(error);
         serverStatus = null;
@@ -389,6 +429,7 @@ export async function refreshServerStatus() {
         updateCatalogInfo(null);
         applyGatewayConfig(null);
         applyProxyStatus(null);
+        applyServerVersion(null);
         setServerControlsDisabled(true);
     }
 }
