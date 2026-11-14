@@ -18,6 +18,9 @@ const SERVER_CONTROL_IDS = [
     'omtp-gateway-autostart',
     'omtp-gateway-requireauth',
     'omtp-gateway-restart',
+    'omtp-proxy-mode',
+    'omtp-proxy-url',
+    'omtp-proxy-test',
     'omtp-catalog-refresh',
     'omtp-import-omp',
 ];
@@ -307,6 +310,54 @@ function applyGatewayConfig(config) {
     setChecked('omtp-gateway-requireauth', source.requireAuth ?? DEFAULT_GATEWAY_SETTINGS.requireAuth);
 }
 
+/** Which route the server takes right now, in the user's words. */
+function proxyStatusText(status) {
+    if (!isPlainObject(status)) {
+        return '';
+    }
+    if (!status.installed) {
+        return trf('omtp_proxy_status_inert', 'Proxy handling is switched off by ${0}; this setting has no effect.', status.reason || '?');
+    }
+    switch (status.source) {
+        case 'manual':
+            return trf('omtp_proxy_status_manual', 'In use: ${0} (manual)', status.effective);
+        case 'environment':
+            return trf('omtp_proxy_status_environment', 'In use: ${0} (environment variable)', status.effective);
+        case 'system':
+            return trf('omtp_proxy_status_system', 'In use: ${0} (system proxy)', status.effective);
+        case 'settings':
+            return tr('omtp_proxy_status_direct', 'No proxy: connecting directly.');
+        default:
+            return tr('omtp_proxy_status_none', 'No system proxy found; connecting directly. Turn on the system proxy in your proxy app, or choose Manual and enter its address.');
+    }
+}
+
+/**
+ * Show the server's proxy settings and the route in effect.
+ * @param {object|null} status `/proxy` response, null when unavailable
+ */
+export function applyProxyStatus(status) {
+    const mode = isPlainObject(status) && typeof status.mode === 'string' ? status.mode : 'system';
+    setSelectValue('omtp-proxy-mode', mode);
+    if (isPlainObject(status)) {
+        setInputValue('omtp-proxy-url', String(status.url || ''));
+    }
+    const urlRow = byId('omtp-proxy-url-row');
+    if (urlRow) {
+        urlRow.hidden = mode !== 'manual';
+    }
+    setText('omtp-proxy-status', proxyStatusText(status));
+}
+
+export async function refreshProxyStatus() {
+    try {
+        applyProxyStatus(await apiFetch('/proxy'));
+    } catch {
+        // An older server plugin has no proxy routes; leave the section blank.
+        applyProxyStatus(null);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Refresh                                                            */
 /* ------------------------------------------------------------------ */
@@ -329,6 +380,7 @@ export async function refreshServerStatus() {
             config = null;
         }
         applyGatewayConfig(config);
+        await refreshProxyStatus();
         setServerControlsDisabled(false);
     } catch (error) {
         markServerUnavailable(error);
@@ -336,6 +388,7 @@ export async function refreshServerStatus() {
         updateGatewayStatus(null);
         updateCatalogInfo(null);
         applyGatewayConfig(null);
+        applyProxyStatus(null);
         setServerControlsDisabled(true);
     }
 }

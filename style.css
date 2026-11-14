@@ -1088,6 +1088,36 @@ body.omtp-hide-native-api-selector #rm_api_block > *:not(#omtp-api-drawer-tools)
     flex: 0 0 auto;
 }
 
+/* `display: flex` on a row would otherwise override the hidden attribute. */
+#omtp-settings .omtp-settings-row[hidden] {
+    display: none;
+}
+
+#omtp-settings .omtp-proxy-test-result {
+    margin: 6px 0;
+    font-size: 0.85em;
+}
+
+#omtp-settings .omtp-proxy-test-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 3px 0;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.14));
+}
+
+#omtp-settings .omtp-proxy-test-host {
+    flex: 1 0 100%;
+    font-weight: 600;
+}
+
+#omtp-settings .omtp-proxy-ok { color: #8fd3a3; }
+#omtp-settings .omtp-proxy-bad { color: #f38f8f; overflow-wrap: anywhere; }
+
+#omtp-settings .omtp-proxy-test-verdict {
+    margin-top: 6px;
+}
+
 /* The sign-in panel uses the full modal width; model details are irrelevant */
 #omtp-hub-body.omtp-manager-open #omtp-details {
     display: none;

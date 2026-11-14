@@ -13,6 +13,7 @@ import { applyRequestHeaders, requestHeaderPolicy } from './request-headers.mjs'
 import { buildProviderContext, singleMaxTokensEnabled, userAgentSpoofEnabled } from './provider-config.mjs';
 import { resolveAccessToken } from './oauth.mjs';
 import { openAIErrorEnvelope } from './sse.mjs';
+import { describeFetchFailure } from './proxy-fetch.mjs';
 import { log, logError } from './redact.mjs';
 import { getAdapter } from './adapters/index.mjs';
 import { createUsageTap, tokensFromOpenAIUsage } from './stats.mjs';
@@ -449,7 +450,8 @@ export class GatewayServer {
             const status = Number(/** @type {any} */ (error)?.status) || 502;
             const type = /** @type {any} */ (error)?.type || 'gateway_error';
             const code = /** @type {any} */ (error)?.code || 'upstream_error';
-            const message = error instanceof Error ? error.message : 'Gateway error';
+            // A bare `fetch failed` hides whether the proxy or the network refused.
+            const message = error instanceof Error ? describeFetchFailure(error) : 'Gateway error';
             if (!res.headersSent) {
                 res.status(status).json(openAIErrorEnvelope(message, type, code));
             } else {

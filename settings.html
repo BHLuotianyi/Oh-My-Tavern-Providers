@@ -51,6 +51,30 @@
             </div>
 
             <div class="omtp-settings-section">
+                <h4 data-i18n="omtp_settings_proxy">Network proxy</h4>
+                <div class="omtp-settings-row">
+                    <label for="omtp-proxy-mode" data-i18n="omtp_proxy_mode">Outbound proxy</label>
+                    <select id="omtp-proxy-mode">
+                        <option value="system" data-i18n="omtp_proxy_mode_system">Use the system proxy (automatic)</option>
+                        <option value="manual" data-i18n="omtp_proxy_mode_manual">Manual</option>
+                        <option value="direct" data-i18n="omtp_proxy_mode_direct">No proxy (direct)</option>
+                    </select>
+                </div>
+                <div id="omtp-proxy-url-row" class="omtp-settings-row" hidden>
+                    <label for="omtp-proxy-url" data-i18n="omtp_proxy_url">Proxy address</label>
+                    <input id="omtp-proxy-url" type="text" placeholder="http://127.0.0.1:7890" autocomplete="off" spellcheck="false" />
+                </div>
+                <div class="omtp-settings-row">
+                    <button id="omtp-proxy-test" type="button" class="menu_button" data-i18n="omtp_proxy_test">Test connection</button>
+                    <span id="omtp-proxy-status" class="omtp-muted"></span>
+                </div>
+                <div id="omtp-proxy-test-result" class="omtp-proxy-test-result" hidden></div>
+                <div class="omtp-settings-row">
+                    <span class="omtp-muted" data-i18n="omtp_proxy_hint">Used for sign-in, key checks, quota and gateway requests. Automatic mode reads HTTPS_PROXY / ALL_PROXY first, then the operating system's proxy. Accepts http://, https:// and socks5:// addresses.</span>
+                </div>
+            </div>
+
+            <div class="omtp-settings-section">
                 <h4 data-i18n="omtp_settings_catalog">Catalog</h4>
                 <div class="omtp-settings-row">
                     <span id="omtp-catalog-info" class="omtp-muted" data-i18n="omtp_catalog_loading">Catalog not loaded</span>

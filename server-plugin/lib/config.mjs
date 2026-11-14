@@ -2,10 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
+import { normalizeProxySettings } from './proxy-fetch.mjs';
+
 export const DEFAULT_CONFIG = Object.freeze({
     autoStart: true,
     port: 4100,
     requireAuth: true,
+    proxy: Object.freeze({ mode: 'system', url: '' }),
 });
 
 export const CONFIG_FILE = 'config.json';
@@ -112,9 +115,14 @@ export function normalizePort(value, fallback = DEFAULT_CONFIG.port) {
 }
 
 /**
- * Load gateway configuration, filling defaults.
+ * @typedef {{autoStart:boolean, port:number, requireAuth:boolean,
+ *            proxy:{mode:'system'|'manual'|'direct', url:string}}} OmtpConfig
+ */
+
+/**
+ * Load gateway and proxy configuration, filling defaults.
  * @param {string} root
- * @returns {Promise<{autoStart:boolean, port:number, requireAuth:boolean}>}
+ * @returns {Promise<OmtpConfig>}
  */
 export async function loadConfig(root = getOmtpRoot()) {
     let raw = null;
@@ -127,14 +135,15 @@ export async function loadConfig(root = getOmtpRoot()) {
         autoStart: typeof raw?.autoStart === 'boolean' ? raw.autoStart : DEFAULT_CONFIG.autoStart,
         port: normalizePort(raw?.port, DEFAULT_CONFIG.port),
         requireAuth: typeof raw?.requireAuth === 'boolean' ? raw.requireAuth : DEFAULT_CONFIG.requireAuth,
+        proxy: normalizeProxySettings(raw?.proxy),
     };
 }
 
 /**
- * Merge and persist gateway configuration atomically.
+ * Merge and persist configuration atomically.
  * @param {string} root
- * @param {Partial<{autoStart:boolean, port:number, requireAuth:boolean}>} patch
- * @returns {Promise<{autoStart:boolean, port:number, requireAuth:boolean}>}
+ * @param {Partial<OmtpConfig>} patch
+ * @returns {Promise<OmtpConfig>}
  */
 export async function saveConfig(root, patch = {}) {
     const current = await loadConfig(root);
@@ -142,6 +151,7 @@ export async function saveConfig(root, patch = {}) {
         autoStart: typeof patch.autoStart === 'boolean' ? patch.autoStart : current.autoStart,
         port: patch.port === undefined ? current.port : normalizePort(patch.port, current.port),
         requireAuth: typeof patch.requireAuth === 'boolean' ? patch.requireAuth : current.requireAuth,
+        proxy: patch.proxy === undefined ? current.proxy : normalizeProxySettings(patch.proxy),
     };
     await ensureOmtpRoot(root);
     await writeJsonAtomic(omtpPath(root, CONFIG_FILE), next);

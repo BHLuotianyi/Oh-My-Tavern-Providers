@@ -39,8 +39,43 @@ const PROXY_PROTOCOLS = new Set(['http:', 'https:', ...SOCKS_PROTOCOLS]);
 
 /** How long a read of the OS proxy settings stays valid. */
 const SYSTEM_PROXY_TTL_MS = 10_000;
+/** Longest a request waits for a fresh read before using the previous one. */
+const SYSTEM_PROXY_WAIT_MS = 1_500;
 const TLS_HANDSHAKE_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 300_000;
+const DIAGNOSTIC_TIMEOUT_MS = 8_000;
+
+/** A URL every proxy rule applies to; used to describe the current route. */
+const PROBE_TARGET = new URL('https://example.com');
+
+/**
+ * Hosts the sign-in and chat paths depend on. Any HTTP answer, even an error
+ * status, proves the route works.
+ */
+const DIAGNOSTIC_TARGETS = Object.freeze([
+    'https://oauth2.googleapis.com/',
+    'https://api.anthropic.com/',
+    'https://auth.openai.com/',
+    'https://api.github.com/',
+]);
+
+/** Routing chosen in the settings panel. */
+const PROXY_MODES = new Set(['system', 'manual', 'direct']);
+
+/** @typedef {{mode: 'system'|'manual'|'direct', url: string}} ProxySettings */
+
+/** @type {ProxySettings} */
+let settings = { mode: 'system', url: '' };
+
+/**
+ * The installed wrapper's view of its own routing; null while no wrapper is
+ * installed (`OMTP_DISABLE_PROXY`, or Node handling the proxy itself).
+ * @type {{route: () => Promise<{env: Record<string,string|undefined>, source: string}>,
+ *         detected: () => {environment: string, system: string}, base: typeof fetch}|null}
+ */
+let installed = null;
+/** Why no wrapper is installed, for the settings panel. */
+let notInstalledReason = 'not-installed';
 
 /** @type {Set<number>} */
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
@@ -100,19 +135,49 @@ export function proxyFor(target, env = process.env) {
         ? [env.HTTPS_PROXY, env.https_proxy, env.ALL_PROXY, env.all_proxy, env.HTTP_PROXY, env.http_proxy]
         : [env.HTTP_PROXY, env.http_proxy, env.ALL_PROXY, env.all_proxy];
     for (const raw of candidates) {
-        if (!raw) continue;
-        try {
-            const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
-            // CONNECT (HTTP/HTTPS) and SOCKS5 are supported; anything else
-            // (SOCKS4) would burn a guaranteed failed attempt per host.
-            if (!PROXY_PROTOCOLS.has(url.protocol)) continue;
-            if (!url.hostname) continue;
-            return url;
-        } catch {
-            continue;
-        }
+        // CONNECT (HTTP/HTTPS) and SOCKS5 are supported; anything else
+        // (SOCKS4) would burn a guaranteed failed attempt per host.
+        const url = parseProxyUrl(raw);
+        if (url) return url;
     }
     return null;
+}
+
+/**
+ * Parse a proxy address the way people write it: `host:port`, a full URL, and
+ * the quoted value `set HTTPS_PROXY="http://…"` leaves behind in cmd.exe.
+ *
+ * @param {unknown} raw
+ * @returns {URL|null} null when empty, malformed or an unsupported scheme
+ */
+export function parseProxyUrl(raw) {
+    const text = String(raw ?? '').trim().replace(/^(["'])(.*)\1$/, '$2').trim();
+    if (!text) return null;
+    try {
+        const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `http://${text}`);
+        return PROXY_PROTOCOLS.has(url.protocol) && url.hostname ? url : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * `URL.hostname` keeps the brackets of an IPv6 literal; `net`/`http` resolve
+ * them as a DNS name and fail with ENOTFOUND.
+ * @param {URL} proxy
+ * @returns {string}
+ */
+function proxyHostname(proxy) {
+    return proxy.hostname.replace(/^\[/, '').replace(/\]$/, '');
+}
+
+/**
+ * A proxy as shown in logs and the settings panel: never its credentials.
+ * @param {URL|null} proxy
+ * @returns {string}
+ */
+function proxyLabel(proxy) {
+    return proxy ? `${proxy.protocol}//${proxy.host}` : '';
 }
 
 /**
@@ -134,7 +199,7 @@ function openTunnel(proxy, host, port, signal, timeoutMs = TLS_HANDSHAKE_TIMEOUT
             headers['proxy-authorization'] = `Basic ${Buffer.from(credentials).toString('base64')}`;
         }
         const request = (secureProxy ? https : http).request({
-            host: proxy.hostname,
+            host: proxyHostname(proxy),
             port: Number(proxy.port) || (secureProxy ? 443 : 80),
             method: 'CONNECT',
             path: `${host}:${port}`,
@@ -169,7 +234,7 @@ function openTunnel(proxy, host, port, signal, timeoutMs = TLS_HANDSHAKE_TIMEOUT
  */
 function openSocksTunnel(proxy, host, port, signal, timeoutMs = TLS_HANDSHAKE_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
-        const socket = net.connect(Number(proxy.port) || 1080, proxy.hostname);
+        const socket = net.connect(Number(proxy.port) || 1080, proxyHostname(proxy));
         let buffer = Buffer.alloc(0);
         /** @type {((chunk: Buffer) => void)|null} */
         let waiter = null;
@@ -514,7 +579,7 @@ function toFetchResponse(response, method) {
  * Build a fetch implementation that honours proxy environment variables.
  *
  * @param {{env?: Record<string,string|undefined> | (() => Record<string,string|undefined>), base?: typeof fetch}} [options]
- *        `env` may be a function, re-evaluated per request.
+ *        `env` may be a function, re-evaluated per request; it may be async.
  * @returns {typeof fetch}
  */
 export function createProxyFetch({ env = process.env, base = globalThis.fetch, handshakeTimeoutMs, requestTimeoutMs } = {}) {
@@ -531,7 +596,7 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch, h
             } catch {
                 target = null;
             }
-            const proxy = target ? proxyFor(target, typeof env === 'function' ? env() : env) : null;
+            const proxy = target ? proxyFor(target, typeof env === 'function' ? await env() : env) : null;
             const canHandleRedirects = Boolean(target) && !(current instanceof Request) && isReplayableBody(currentInit?.body);
             const directInit = canHandleRedirects ? { ...currentInit, redirect: 'manual' } : currentInit;
             let response;
@@ -833,12 +898,53 @@ export function describeFetchFailure(error) {
 }
 
 /**
+ * Wait for `promise`, but no longer than `ms`.
+ * @param {Promise<unknown>} promise
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
+function settleWithin(promise, ms) {
+    return new Promise((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        promise.finally(() => {
+            clearTimeout(timer);
+            resolve();
+        });
+    });
+}
+
+/**
+ * Normalize stored or submitted proxy settings. A manual mode without a usable
+ * address falls back to `system`, so a damaged config file cannot silently
+ * turn the proxy off.
+ * @param {unknown} value
+ * @returns {ProxySettings}
+ */
+export function normalizeProxySettings(value) {
+    const raw = /** @type {any} */ (value) || {};
+    const mode = PROXY_MODES.has(raw.mode) ? raw.mode : 'system';
+    const url = typeof raw.url === 'string' ? raw.url.trim() : '';
+    if (mode === 'manual' && !parseProxyUrl(url)) return { mode: 'system', url };
+    return { mode, url };
+}
+
+/**
+ * Apply the settings panel's routing choice to every later request.
+ * @param {unknown} value
+ * @returns {ProxySettings}
+ */
+export function setProxySettings(value) {
+    settings = normalizeProxySettings(value);
+    return settings;
+}
+
+/**
  * Install the proxy-aware fetch as `globalThis.fetch` (idempotent).
  *
  * Adapters resolve `fetch` at call time (`ctx.fetchImpl || fetch`), so one
- * replacement covers the gateway, probes and the OAuth flows alike. Proxy
- * variables win; without a usable one the OS proxy is read, and re-read every
- * few seconds, so toggling Clash's system proxy needs no restart.
+ * replacement covers the gateway, probes and the OAuth flows alike. The
+ * settings panel's choice comes first (`setProxySettings`); in `system` mode
+ * proxy variables win, and without a usable one the OS proxy is read.
  *
  * @param {{env?: Record<string,string|undefined>, force?: boolean, system?: boolean,
  *          platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string,
@@ -851,12 +957,12 @@ export function installProxyFetch({ env = process.env, force = false, system = t
     const nodeMajor = Number(String(process.versions.node || '0').split('.')[0]) || 0;
     const nodeHandlesEnvProxy = env.NODE_USE_ENV_PROXY === '1' && nodeMajor >= 24;
     if (!force && (env.OMTP_DISABLE_PROXY === '1' || nodeHandlesEnvProxy)) {
+        notInstalledReason = env.OMTP_DISABLE_PROXY === '1' ? 'OMTP_DISABLE_PROXY' : 'NODE_USE_ENV_PROXY';
         return Boolean(env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy);
     }
     const current = globalThis.fetch;
     if (!current || wrapped.has(current)) return false;
 
-    const probe = new URL('https://example.com');
     let systemProxy = {};
     let readAt = -Infinity;
     /** @type {Promise<void>|null} */
@@ -864,55 +970,140 @@ export function installProxyFetch({ env = process.env, force = false, system = t
     let announced;
 
     const announce = (effective, source) => {
-        const proxy = proxyFor(probe, effective);
-        const label = proxy ? `${source} proxy ${proxy.protocol}//${proxy.host}` : '';
-        if (label !== announced) {
-            announced = label;
-            log(proxy ? `outbound requests use the ${label}` : 'no outbound proxy configured; requests connect directly');
+        const proxy = proxyFor(PROBE_TARGET, effective);
+        const label = proxy ? `${source} proxy ${proxyLabel(proxy)}` : source === 'settings' ? 'off' : '';
+        if (label === announced) return;
+        announced = label;
+        if (proxy) log(`outbound requests use the ${label}`);
+        else if (source === 'settings') log('outbound proxy turned off in the settings; requests connect directly');
+        else log('no outbound proxy configured; requests connect directly');
+    };
+
+    /** Read the OS proxy; concurrent callers share one read. */
+    const refresh = () => {
+        if (!refreshing) {
+            refreshing = detectSystemProxyAsync({ platform, run })
+                .then((next) => {
+                    systemProxy = next;
+                    readAt = now();
+                })
+                .finally(() => {
+                    refreshing = null;
+                });
         }
+        return refreshing;
     };
 
-    const triggerRefresh = () => {
-        if (!system || refreshing) return;
-        // Update readAt eagerly so concurrent calls don't re-trigger while
-        // the probe is in flight or immediately after a failure.
-        readAt = now();
-        refreshing = detectSystemProxyAsync({ platform, run })
-            .then((next) => {
-                systemProxy = next;
-                readAt = now();
-                if (!proxyFor(probe, env)) {
-                    announce(withSystemProxy(env, systemProxy), 'system');
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                refreshing = null;
-            });
-    };
-
-    const resolveEnv = () => {
+    const route = async () => {
+        if (settings.mode === 'direct') return { env: { NO_PROXY: '*' }, source: 'settings' };
+        if (settings.mode === 'manual') {
+            return {
+                env: { HTTP_PROXY: settings.url, HTTPS_PROXY: settings.url, NO_PROXY: env.NO_PROXY || env.no_proxy },
+                source: 'manual',
+            };
+        }
         // `env` is read live: SillyTavern's requestProxy sets `all_proxy` at runtime.
-        let effective = env;
-        let source = 'environment';
-        if (system && !proxyFor(probe, env)) {
-            if (now() - readAt >= SYSTEM_PROXY_TTL_MS) {
-                triggerRefresh();
-            }
-            effective = withSystemProxy(env, systemProxy);
-            source = 'system';
-        }
+        if (!system || proxyFor(PROBE_TARGET, env)) return { env, source: 'environment' };
+        // Wait for a fresh read instead of answering from the last one. A
+        // sign-in's token exchange is often the first request in minutes, so a
+        // stale "no proxy" sent it direct right after the user had turned the
+        // system proxy on. The read is asynchronous: only this request waits.
+        if (now() - readAt >= SYSTEM_PROXY_TTL_MS) await settleWithin(refresh(), SYSTEM_PROXY_WAIT_MS);
+        return { env: withSystemProxy(env, systemProxy), source: 'system' };
+    };
+
+    const resolveEnv = async () => {
+        const { env: effective, source } = await route();
         announce(effective, source);
         return effective;
     };
 
-    // Pre-warm system proxy in the background without blocking startup.
-    if (system && !proxyFor(probe, env)) {
-        triggerRefresh();
-    }
+    // Warm the first read so the first request does not pay for it.
+    if (system && !proxyFor(PROBE_TARGET, env)) refresh();
 
     const proxyFetch = createProxyFetch({ env: resolveEnv, base: current });
     wrapped.add(proxyFetch);
     globalThis.fetch = proxyFetch;
-    return Boolean(proxyFor(probe, env));
+    installed = {
+        route,
+        base: current,
+        detected: () => ({
+            environment: proxyLabel(proxyFor(PROBE_TARGET, env)),
+            system: proxyLabel(proxyFor(PROBE_TARGET, withSystemProxy({}, systemProxy))),
+        }),
+    };
+    return Boolean(proxyFor(PROBE_TARGET, env));
+}
+
+/**
+ * The routing in effect right now, for the settings panel. Credentials in a
+ * proxy URL never leave through `effective`/`detected`.
+ * @returns {Promise<{mode: string, url: string, installed: boolean, reason: string,
+ *                    effective: string, source: string, detected: {environment: string, system: string}}>}
+ */
+export async function getProxyStatus() {
+    if (!installed) {
+        return { ...settings, installed: false, reason: notInstalledReason, effective: '', source: 'none', detected: { environment: '', system: '' } };
+    }
+    const { env, source } = await installed.route();
+    const proxy = proxyFor(PROBE_TARGET, env);
+    return {
+        ...settings,
+        installed: true,
+        reason: '',
+        effective: proxyLabel(proxy),
+        source: proxy || source === 'settings' ? source : 'none',
+        detected: installed.detected(),
+    };
+}
+
+/**
+ * One reachability check over a single route, with no fallback, so the result
+ * names the hop that failed.
+ * @param {URL} target
+ * @param {URL|null} proxy
+ * @param {typeof fetch} base
+ * @param {number} timeoutMs
+ * @returns {Promise<{ok: boolean, status?: number, ms: number, error?: string}>}
+ */
+async function probeRoute(target, proxy, base, timeoutMs) {
+    const started = Date.now();
+    const init = { method: 'GET', redirect: /** @type {const} */ ('manual'), signal: AbortSignal.timeout(timeoutMs) };
+    try {
+        const response = proxy
+            ? await tunnelRequest(target, proxy, init, { handshakeTimeoutMs: timeoutMs, requestTimeoutMs: timeoutMs })
+            : await base(target.href, init);
+        try {
+            await response.body?.cancel();
+        } catch {
+            // Only the status line matters here.
+        }
+        return { ok: true, status: response.status, ms: Date.now() - started };
+    } catch (error) {
+        // http.request reports an aborted signal as a bare AbortError.
+        return { ok: false, ms: Date.now() - started, error: init.signal.aborted ? 'timed out' : describeFetchFailure(error) };
+    }
+}
+
+/**
+ * Check the hosts sign-in depends on, through the proxy in effect and directly,
+ * so a failing login can be traced to "no proxy found", "proxy unreachable",
+ * "proxy cannot reach the host" or "blocked without a proxy".
+ * @param {{targets?: readonly string[], timeoutMs?: number}} [options]
+ */
+export async function diagnoseProxy({ targets = DIAGNOSTIC_TARGETS, timeoutMs = DIAGNOSTIC_TIMEOUT_MS } = {}) {
+    const status = await getProxyStatus();
+    const active = status.installed ? installed : null;
+    const env = active ? (await active.route()).env : {};
+    const base = active ? active.base : globalThis.fetch;
+    const results = await Promise.all(targets.map(async (href) => {
+        const target = new URL(href);
+        const proxy = proxyFor(target, env);
+        const [viaProxy, direct] = await Promise.all([
+            proxy ? probeRoute(target, proxy, base, timeoutMs) : null,
+            probeRoute(target, null, base, timeoutMs),
+        ]);
+        return { host: target.host, proxy: viaProxy, direct };
+    }));
+    return { ...status, results };
 }

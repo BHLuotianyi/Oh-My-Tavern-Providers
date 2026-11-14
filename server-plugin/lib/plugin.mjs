@@ -15,7 +15,7 @@ import { ADAPTER_IDS } from './adapter-ids.mjs';
 import { buildModelsProbe, buildProviderContext, isSupportedAdapter, singleMaxTokensEnabled, userAgentSpoofEnabled } from './provider-config.mjs';
 import { parseStructuredCredential, resolveAccessToken } from './oauth.mjs';
 import { importFromOmp } from './import-omp.mjs';
-import { installProxyFetch } from './proxy-fetch.mjs';
+import { describeFetchFailure, diagnoseProxy, getProxyStatus, installProxyFetch, parseProxyUrl, setProxySettings } from './proxy-fetch.mjs';
 import { getAdapter } from './adapters/index.mjs';
 import { log, logError } from './redact.mjs';
 import { USAGE_PROVIDERS, fetchProviderUsage } from './usage.mjs';
@@ -388,7 +388,7 @@ async function probeProvider(resolved, adapter, provider, { model = '', keyStore
         }
         return { models: describeModels(rawModels), httpStatus };
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = describeFetchFailure(error);
         const status = Number(/\(HTTP (\d{3})\)/.exec(message)?.[1] || /^HTTP (\d{3})$/.exec(message)?.[1] || 0);
         if (persist && looksLikeAuthFailure(status, message)) {
             recordAuthFailure(resolved.id, status, message);
@@ -876,6 +876,39 @@ function registerConfigRoutes(router) {
 }
 
 /**
+ * Outbound proxy: the settings panel's choice, the route in effect, and a
+ * reachability check that tells a proxy problem from a blocked network.
+ * @param {any} router
+ */
+function registerProxyRoutes(router) {
+    router.get('/proxy', asyncHandler(async (req, res) => {
+        requireState();
+        res.json(await getProxyStatus());
+    }));
+
+    router.post('/proxy', asyncHandler(async (req, res) => {
+        const current = requireState();
+        const body = req.body && typeof req.body === 'object' ? req.body : {};
+        const mode = String(body.mode || '');
+        if (!['system', 'manual', 'direct'].includes(mode)) {
+            throw new HttpError(400, 'Proxy mode must be system, manual or direct', 'invalid_proxy_mode');
+        }
+        const url = typeof body.url === 'string' ? body.url.trim() : '';
+        if (mode === 'manual' && !parseProxyUrl(url)) {
+            throw new HttpError(400, 'Enter a proxy address such as http://127.0.0.1:7890 or socks5://127.0.0.1:7891', 'invalid_proxy_url');
+        }
+        const config = await saveConfig(current.root, { proxy: { mode, url } });
+        setProxySettings(config.proxy);
+        res.json(await getProxyStatus());
+    }));
+
+    router.post('/proxy/test', asyncHandler(async (req, res) => {
+        requireState();
+        res.json(await diagnoseProxy());
+    }));
+}
+
+/**
  * @param {any} router
  */
 function registerImportRoutes(router) {
@@ -928,6 +961,7 @@ function registerRoutes(router) {
     registerStatsRoutes(router);
     registerLoginRoutes(router);
     registerConfigRoutes(router);
+    registerProxyRoutes(router);
     registerImportRoutes(router);
 
     router.use((req, res) => {
@@ -979,6 +1013,8 @@ async function createState() {
     // routing through the environment's proxy (with a direct fallback) is the
     // only way login, probes and the gateway can reach the internet there.
     installProxyFetch();
+    // The settings panel's proxy choice applies before the first request.
+    setProxySettings((await loadConfig(root)).proxy);
     const keyStore = new KeyStore({ root, resolveStSecret: host.resolveStSecret });
     // Credentials are never pulled in implicitly: `POST /import/omp` with
     // `credentials: true, confirm: true` is the only path, so a wiped

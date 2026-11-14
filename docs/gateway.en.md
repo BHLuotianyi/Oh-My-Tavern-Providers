@@ -51,6 +51,8 @@ All routes live under `/api/plugins/omtp`, use SillyTavern's own session and CSR
 | Gateway | `GET /gateway/token` | Read the gateway token |
 | | `POST /gateway/restart` | Restart the gateway |
 | | `GET /config`, `POST /config` | Read or change `autoStart`, `port`, `requireAuth`. Setting `requireAuth` to `false` also requires `confirmInsecure: true` |
+| Proxy | `GET /proxy`, `POST /proxy` | Read or change the outbound proxy: `mode` is `system`, `manual` or `direct`; `manual` needs `url`. Returns the proxy in effect and where it came from |
+| | `POST /proxy/test` | Reaches a few hosts sign-in depends on, through the current proxy and directly, and returns each route's status, time or error |
 | Catalog | `GET /catalog` | The merged catalog |
 | | `POST /catalog/refresh` | Refresh the catalog from the body's `url` (or the default upstream) |
 | | `POST /import/omp` | Import a catalog overlay from a local OMP; with `credentials: true` and `confirm: true` also import credentials |
@@ -224,6 +226,16 @@ The statistics page opened by `/omtp stats` is started by `GET /stats/server`. I
 
 Node's built-in `fetch` ignores proxy environment variables. On start the plugin replaces the global `fetch` with a proxy-aware implementation (`lib/proxy-fetch.mjs`) used by sign-in, key checks, quota queries and gateway forwarding.
 
+"Network proxy" in the extension settings chooses the route. It is stored in `config.json` and applies at once:
+
+| Mode | Behaviour |
+|---|---|
+| Use the system proxy (default) | The environment variables below first; without a usable one, the operating system's proxy settings |
+| Manual | Only the address entered: `http://`, `https://` or `socks5://`, scheme optional (`127.0.0.1:7890`); `NO_PROXY` still applies |
+| No proxy | Everything connects directly |
+
+"Test connection" reaches `oauth2.googleapis.com`, `api.anthropic.com`, `auth.openai.com` and `api.github.com` through the current proxy and directly; any HTTP response counts as reachable. Use Manual where the operating system's settings cannot be read (PAC mode on Windows, KDE, containers, Termux).
+
 | Variable | Effect |
 |---|---|
 | `HTTPS_PROXY` / `https_proxy` | HTTPS targets, through an HTTP `CONNECT` or SOCKS5 tunnel |
@@ -232,7 +244,7 @@ Node's built-in `fetch` ignores proxy environment variables. On start the plugin
 | `NO_PROXY` / `no_proxy` | Direct-connect list: `*`, `*.example.com`, `.example.com`, `host:port` and IPv6 literals |
 | `OMTP_DISABLE_PROXY=1` | Disables the implementation entirely |
 
-Without a usable proxy variable the plugin reads the operating system's proxy settings: the Windows registry, `scutil --proxy` on macOS, GNOME's `gsettings` on Linux. The result is cached for 10 seconds, so turning on Clash's system proxy after SillyTavern started takes effect. With neither, requests connect directly. On Node 24 and later with `NODE_USE_ENV_PROXY=1`, Node handles the proxy itself and the plugin leaves `fetch` alone.
+Without a usable proxy variable the plugin reads the operating system's proxy settings: the Windows registry, `scutil --proxy` on macOS, GNOME's `gsettings` on Linux. The result is cached for 10 seconds; the first request after that waits for the new read (at most 1.5 seconds), so after turning on Clash's system proxy while SillyTavern runs, the next request already uses it. With neither, requests connect directly. With `OMTP_DISABLE_PROXY=1`, or on Node 24 and later with `NODE_USE_ENV_PROXY=1`, the plugin leaves `fetch` alone and the "Network proxy" setting has no effect.
 
 - Loopback and private ranges (`127.0.0.0/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`) always connect directly.
 - If the tunnel cannot be opened, the request falls back to a direct connection and the failure is logged once; when the direct connection fails too, the error also carries the proxy's failure. A failure after request bytes reached the tunnel, or after the origin answered, is never retried, so a completion is not billed twice.
@@ -246,7 +258,7 @@ All in `<SillyTavern data directory>/omtp/`, directory mode `0700`.
 
 | File | Format | Contents |
 |---|---|---|
-| `config.json` | JSON | `autoStart`, `port`, `requireAuth` |
+| `config.json` | JSON | `autoStart`, `port`, `requireAuth`, `proxy` (`mode`, `url`; credentials in a proxy address are stored in plain text) |
 | `gateway-token` | text, `0600` | Gateway token (not encrypted) |
 | `master.key` | hex, `0600` | AES-256-GCM master key for `providers.json` |
 | `providers.json` | JSON, `0600` | Encrypted keys, OAuth tokens and provider config, each entry `enc:v1:…` |

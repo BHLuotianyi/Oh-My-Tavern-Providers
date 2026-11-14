@@ -47,6 +47,29 @@ const activeSessions = new Map();
 /** How long a bound callback may stay silent before the panel explains why. */
 const CALLBACK_STALL_MS = 20_000;
 
+/** A failure to reach the provider is fixed in the proxy settings, not by signing in again. */
+const NETWORK_FAILURE = /request failed:|fetch failed/i;
+
+/**
+ * Show a failed sign-in, and where to fix it when the server could not reach
+ * the provider.
+ * @param {HTMLElement} panel
+ * @param {string} message
+ */
+function appendLoginError(panel, message) {
+    panel.append(el('div', 'omtp-login-error', message));
+    if (NETWORK_FAILURE.test(message) && !panel.querySelector('.omtp-login-network-hint')) {
+        panel.append(el(
+            'div',
+            'omtp-login-hint omtp-login-network-hint',
+            tr(
+                'omtp_login_network_hint',
+                'The server could not reach the provider. Open Extensions → OMTP Model Hub → Network proxy, run "Test connection" and set the proxy, then paste the sign-in tab\'s address into the box again (sign in again if the code has expired).',
+            ),
+        ));
+    }
+}
+
 /**
  * Last failed row action per provider. Kept outside the DOM so a hub refresh
  * that re-renders the roster cannot swallow the error.
@@ -514,10 +537,10 @@ function buildPasteBox(id, sessionId, panel, popup) {
             if (result.status === 'done') {
                 finishLogin(id, panel, result, popup);
             } else {
-                panel.append(el('div', 'omtp-login-error', result.error || 'Login failed'));
+                appendLoginError(panel, result.error || 'Login failed');
             }
         } catch (error) {
-            panel.append(el('div', 'omtp-login-error', String(error.message || error)));
+            appendLoginError(panel, String(error.message || error));
         } finally {
             submit.disabled = false;
         }
@@ -570,7 +593,7 @@ function pollSession(providerId, started, panel, popup = null, actions = null) {
                 finishLogin(providerId, panel, status, popup);
             } else if (status.status === 'error') {
                 stopPolling(providerId);
-                panel.append(el('div', 'omtp-login-error', status.error || 'Login failed'));
+                appendLoginError(panel, status.error || 'Login failed');
                 if (actions) {
                     setRowButtonsDisabled(actions, false);
                 }

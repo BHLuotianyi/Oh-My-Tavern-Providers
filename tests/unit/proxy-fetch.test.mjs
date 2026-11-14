@@ -8,10 +8,15 @@ import {
     createProxyFetch,
     describeFetchFailure,
     detectSystemProxy,
+    diagnoseProxy,
+    getProxyStatus,
     installProxyFetch,
+    normalizeProxySettings,
+    parseProxyUrl,
     parseScutilProxy,
     parseWindowsProxyServer,
     proxyFor,
+    setProxySettings,
 } from '../../server-plugin/lib/proxy-fetch.mjs';
 
 const listen = (server) => new Promise((resolve) => {
@@ -467,7 +472,7 @@ test('createProxyFetch tunnels through a SOCKS5 proxy with credentials', async (
     }
 });
 
-test('installProxyFetch picks up a system proxy enabled after startup without blocking requests', async () => {
+test('installProxyFetch picks up a system proxy enabled after startup without blocking the event loop', async () => {
     const original = globalThis.fetch;
     const origin = http.createServer((req, res) => res.end('via proxy'));
     const { proxy, port } = await startProxy(await listen(origin));
@@ -490,12 +495,14 @@ test('installProxyFetch picks up a system proxy enabled after startup without bl
         clashOn = true;
         assert.equal(await (await fetch('http://origin.test/')).text(), 'direct', 'cached until the TTL passes');
         clock += 60_000;
-        // First request after TTL triggers background refresh without blocking on the 20ms probe.
-        const start = Date.now();
-        assert.equal(await (await fetch('http://origin.test/')).text(), 'direct');
-        assert.ok(Date.now() - start < 20);
-        await new Promise((resolve) => setTimeout(resolve, 35));
+        // The first request after the TTL waits for the fresh read: a sign-in's
+        // token exchange is usually that request, and answering it from the old
+        // snapshot sent it direct right after the proxy had been turned on.
+        let ticks = 0;
+        const ticker = setInterval(() => { ticks += 1; }, 2);
         assert.equal(await (await fetch('http://origin.test/')).text(), 'via proxy');
+        clearInterval(ticker);
+        assert.ok(ticks > 0, 'the read is asynchronous; other work keeps running');
     } finally {
         globalThis.fetch = original;
         await close(proxy);
@@ -614,5 +621,103 @@ test('tunneled POST sends Content-Length and redirects honour error mode and cro
         await close(proxy);
         await close(origin);
         await close(target);
+    }
+});
+
+test('proxy addresses are accepted as people write them', () => {
+    const target = new URL('https://api.openai.com');
+    // cmd.exe keeps the quotes of `set HTTPS_PROXY="http://127.0.0.1:7890"`.
+    assert.equal(proxyFor(target, { HTTPS_PROXY: '"http://127.0.0.1:7890"' })?.host, '127.0.0.1:7890');
+    assert.equal(proxyFor(target, { HTTPS_PROXY: ' http://127.0.0.1:7890 ' })?.host, '127.0.0.1:7890');
+    assert.equal(parseProxyUrl('127.0.0.1:7890')?.href, 'http://127.0.0.1:7890/');
+    assert.equal(parseProxyUrl('socks5://user:pw@proxy.lan:1080')?.protocol, 'socks5:');
+    assert.equal(parseProxyUrl('socks4://127.0.0.1:1080'), null);
+    assert.equal(parseProxyUrl('  '), null);
+    assert.equal(parseProxyUrl('http://'), null);
+});
+
+test('a proxy on an IPv6 literal is dialled without the URL brackets', async (t) => {
+    const origin = http.createServer((req, res) => res.end('via proxy'));
+    const originPort = await listen(origin);
+    const proxy = http.createServer();
+    proxy.on('connect', (req, socket) => {
+        const upstream = net.connect(originPort, '127.0.0.1', () => {
+            socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+            upstream.pipe(socket).pipe(upstream);
+        });
+        socket.on('error', () => upstream.destroy());
+        upstream.on('error', () => socket.destroy());
+    });
+    const bound = await new Promise((resolve) => {
+        proxy.once('error', () => resolve(false));
+        proxy.listen(0, '::1', () => resolve(true));
+    });
+    if (!bound) {
+        await close(origin);
+        t.skip('no IPv6 loopback on this host');
+        return;
+    }
+    try {
+        const doFetch = createProxyFetch({
+            env: { HTTP_PROXY: `http://[::1]:${proxy.address().port}` },
+            base: async () => new Response('direct'),
+        });
+        assert.equal(await (await doFetch('http://origin.test/')).text(), 'via proxy');
+    } finally {
+        await close(proxy);
+        await close(origin);
+    }
+});
+
+test('normalizeProxySettings keeps valid choices and never keeps a manual mode without an address', () => {
+    assert.deepEqual(normalizeProxySettings(undefined), { mode: 'system', url: '' });
+    assert.deepEqual(normalizeProxySettings({ mode: 'direct', url: 'x' }), { mode: 'direct', url: 'x' });
+    assert.deepEqual(normalizeProxySettings({ mode: 'manual', url: ' 127.0.0.1:7890 ' }), { mode: 'manual', url: '127.0.0.1:7890' });
+    assert.equal(normalizeProxySettings({ mode: 'manual', url: 'socks4://127.0.0.1:1' }).mode, 'system');
+    assert.equal(normalizeProxySettings({ mode: 'pac', url: '' }).mode, 'system');
+});
+
+test('the settings panel choice overrides the environment, and the diagnosis names the failing route', async () => {
+    const original = globalThis.fetch;
+    const origin = http.createServer((req, res) => res.end('via proxy'));
+    const { proxy, port } = await startProxy(await listen(origin));
+    try {
+        globalThis.fetch = async () => {
+            throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } });
+        };
+        // The environment points at a dead proxy; only the manual address works.
+        installProxyFetch({ env: { HTTP_PROXY: 'http://127.0.0.1:9' }, system: false });
+        await assert.rejects(fetch('http://origin.test/'), /fetch failed/);
+        assert.deepEqual(
+            (({ effective, source }) => ({ effective, source }))(await getProxyStatus()),
+            { effective: 'http://127.0.0.1:9', source: 'environment' },
+        );
+
+        setProxySettings({ mode: 'manual', url: `user:secret@127.0.0.1:${port}` });
+        assert.equal(await (await fetch('http://origin.test/')).text(), 'via proxy');
+        const status = await getProxyStatus();
+        assert.equal(status.source, 'manual');
+        assert.equal(status.effective, `http://127.0.0.1:${port}`, 'credentials stay out of the label');
+        assert.equal(status.detected.environment, 'http://127.0.0.1:9');
+
+        const report = await diagnoseProxy({ targets: ['http://origin.test/'], timeoutMs: 2000 });
+        assert.equal(report.results[0].host, 'origin.test');
+        assert.equal(report.results[0].proxy.ok, true);
+        assert.equal(report.results[0].proxy.status, 200);
+        assert.equal(report.results[0].direct.ok, false);
+        assert.match(report.results[0].direct.error, /UND_ERR_CONNECT_TIMEOUT/);
+
+        setProxySettings({ mode: 'direct' });
+        await assert.rejects(fetch('http://origin.test/'), /fetch failed/);
+        assert.deepEqual(
+            (({ effective, source }) => ({ effective, source }))(await getProxyStatus()),
+            { effective: '', source: 'settings' },
+        );
+        assert.equal((await diagnoseProxy({ targets: ['http://origin.test/'], timeoutMs: 2000 })).results[0].proxy, null);
+    } finally {
+        setProxySettings({ mode: 'system' });
+        globalThis.fetch = original;
+        await close(proxy);
+        await close(origin);
     }
 });

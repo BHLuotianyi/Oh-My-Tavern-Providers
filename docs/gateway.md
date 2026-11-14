@@ -51,6 +51,8 @@
 | 网关 | `GET /gateway/token` | 读取网关令牌 |
 | | `POST /gateway/restart` | 重启网关 |
 | | `GET /config`、`POST /config` | 读取或修改 `autoStart`、`port`、`requireAuth`。把 `requireAuth` 设为 `false` 必须同时提交 `confirmInsecure: true` |
+| 代理 | `GET /proxy`、`POST /proxy` | 读取或修改出站代理：`mode` 为 `system`、`manual` 或 `direct`，`manual` 需要 `url`。返回当前生效的代理及其来源 |
+| | `POST /proxy/test` | 分别经当前代理和直连访问几个登录要用到的站点，返回每一路的状态码、耗时或错误 |
 | 目录 | `GET /catalog` | 合并后的完整目录 |
 | | `POST /catalog/refresh` | 从请求体中的 `url`（或默认上游）刷新目录 |
 | | `POST /import/omp` | 从本地 OMP 导入目录覆盖层；`credentials: true` 且 `confirm: true` 时同时导入凭据 |
@@ -224,6 +226,16 @@
 
 Node 内置的 `fetch` 不读取代理环境变量。插件启动时把全局 `fetch` 换成会读取代理设置的实现（`lib/proxy-fetch.mjs`），登录、密钥校验、额度查询和网关转发都经过它。
 
+扩展设置中的“网络代理”决定走哪条路，保存在 `config.json`，立即生效：
+
+| 模式 | 行为 |
+|---|---|
+| 使用系统代理（默认） | 先读下表的环境变量，没有可用的再读操作系统的代理设置 |
+| 手动填写 | 只用填写的地址，支持 `http://`、`https://`、`socks5://`，可省略协议（`127.0.0.1:7890`）；`NO_PROXY` 仍然有效 |
+| 不使用代理 | 全部直连 |
+
+“测试连接”分别经当前代理和直连访问 `oauth2.googleapis.com`、`api.anthropic.com`、`auth.openai.com`、`api.github.com`，任何 HTTP 响应都算连通。操作系统的代理设置读不到时（Windows 的 PAC 模式、KDE、容器、Termux）请用手动填写。
+
 | 变量 | 作用 |
 |---|---|
 | `HTTPS_PROXY` / `https_proxy` | HTTPS 目标，经 HTTP `CONNECT` 或 SOCKS5 隧道 |
@@ -232,7 +244,7 @@ Node 内置的 `fetch` 不读取代理环境变量。插件启动时把全局 `f
 | `NO_PROXY` / `no_proxy` | 直连名单，支持 `*`、`*.example.com`、`.example.com`、`host:port` 与 IPv6 地址 |
 | `OMTP_DISABLE_PROXY=1` | 完全停用该实现 |
 
-没有可用的代理变量时，插件读取操作系统的代理设置：Windows 注册表、macOS `scutil --proxy`、Linux 上 GNOME 的 `gsettings`，结果缓存 10 秒，因此在 SillyTavern 启动后再打开 Clash 的“系统代理”也会生效。两者都没有时直连。Node 24 及以上且设置了 `NODE_USE_ENV_PROXY=1` 时，由 Node 自己处理代理，插件不再替换 `fetch`。
+没有可用的代理变量时，插件读取操作系统的代理设置：Windows 注册表、macOS `scutil --proxy`、Linux 上 GNOME 的 `gsettings`。结果缓存 10 秒，过期后的第一个请求会等这次读取完成（最多 1.5 秒），因此在 SillyTavern 启动后再打开 Clash 的“系统代理”，下一个请求就会走代理。两者都没有时直连。设置了 `OMTP_DISABLE_PROXY=1`，或 Node 24 及以上且设置了 `NODE_USE_ENV_PROXY=1` 时，插件不替换 `fetch`，“网络代理”设置不生效。
 
 - 回环与私有网段（`127.0.0.0/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）始终直连。
 - 隧道建立失败时改为直连，并记录一次日志；直连也失败时，错误信息同时给出代理的失败原因。请求已经写入隧道，或上游已经响应之后的失败不会重发，避免一次补全被计费两次。
@@ -246,7 +258,7 @@ Node 内置的 `fetch` 不读取代理环境变量。插件启动时把全局 `f
 
 | 文件 | 格式 | 内容 |
 |---|---|---|
-| `config.json` | JSON | `autoStart`、`port`、`requireAuth` |
+| `config.json` | JSON | `autoStart`、`port`、`requireAuth`、`proxy`（`mode`、`url`；代理地址中的用户名密码以明文保存） |
 | `gateway-token` | 文本，`0600` | 网关令牌（未加密） |
 | `master.key` | 十六进制，`0600` | `providers.json` 的 AES-256-GCM 主密钥 |
 | `providers.json` | JSON，`0600` | 加密的密钥、OAuth 令牌与服务商配置，每条形如 `enc:v1:…` |

@@ -21,6 +21,7 @@ import {
 } from './settings-actions.js';
 import { byId, refreshSettingsUI, safeHttpUrl } from './settings-api.js';
 import { openImportPopup } from './settings-forms.js';
+import { bindProxyControls } from './settings-proxy.js';
 import { refreshUpdatePill } from './update-pill.js';
 
 export { refreshSettingsUI };
@@ -131,6 +132,8 @@ function bindControls(root) {
         event.preventDefault();
         restartGateway();
     });
+
+    bindProxyControls(root);
 
     const catalogUrl = element(root, 'omtp-catalog-url');
     catalogUrl?.addEventListener('change', () => {

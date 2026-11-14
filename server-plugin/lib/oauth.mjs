@@ -12,6 +12,7 @@ import { CLAUDE_CODE_SDK_VERSION } from './client-versions.mjs';
 import { headersForHook } from './custom-logins/kimi-fingerprint.mjs';
 import { mapCredential, postToken, resolvePolicyUrl } from './login-engine.mjs';
 import { loginEnv, policyValue, resolveOAuthClient } from './oauth-clients.mjs';
+import { describeFetchFailure } from './proxy-fetch.mjs';
 import { logError } from './redact.mjs';
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -241,7 +242,7 @@ export async function resolveAccessToken(resolved, keyStore, doFetch = globalThi
                 }
                 return { apiKey: next.access, credential: next, refreshError: null };
             } catch (error) {
-                logError(`oauth refresh failed for ${resolved.id}`, error);
+                logError(`oauth refresh failed for ${resolved.id}`, describeFetchFailure(error));
                 // Keep the old token for compatibility, but surface the failure
                 // instead of pretending the credential is healthy.
                 return { apiKey: activeCredential.access, credential: activeCredential, refreshError: error };

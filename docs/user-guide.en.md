@@ -172,6 +172,8 @@ Find **OMTP Model Hub** in SillyTavern's **Extensions** settings:
 | | Start gateway with SillyTavern | When off, the gateway does not start automatically |
 | | Require gateway token | Turning it off asks for confirmation. Without a token the gateway only accepts requests whose Host is a loopback address |
 | | Restart gateway | |
+| Network proxy | Outbound proxy | The proxy the server uses for sign-in, key checks, quota and gateway requests: the system proxy (default), a manual address, or none. The line below shows the proxy actually in effect |
+| | Test connection | Reaches a few sign-in hosts through the proxy and directly, and says what the result means. Start here when sign-in reports "request failed / fetch failed" |
 | Catalog | Refresh catalog | Fetches the catalog from the default or a given URL. Only model lists, names, prices and similar data are updated |
 | | Import from local OMP | Reads the catalog in `~/oh-my-pi` or `~/.omp` as an overlay; optionally imports the keys and OAuth sessions OMP saved |
 | Interface | Hide native API selector | On by default. It is only hidden; nothing is removed |
