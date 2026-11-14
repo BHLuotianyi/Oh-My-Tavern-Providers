@@ -2,6 +2,11 @@
 
 ## 未发布
 
+### 变更
+
+- **Claude、Gemini CLI、Antigravity 订阅默认改走官方命令行工具**：Google 禁止第三方应用使用 Gemini CLI / Antigravity 的登录凭据并已因此封号，Anthropic 不允许第三方应用用 Claude 账号登录或冒充 Claude Code。这三个服务商现在默认通过运行 SillyTavern 的机器上的 `claude`、`gemini`、`agy` 调用，登录由这些工具完成，OMTP 不再读取订阅凭据。工具中的内置工具、项目记忆、插件和 MCP 都会关闭，聊天的系统提示词替换工具自带的提示词；温度等采样参数无法生效，Gemini CLI 和 Antigravity CLI 只接受文本。工具不在 `PATH` 中时，可以用 `OMTP_CLAUDE_PATH`、`OMTP_GEMINI_PATH`、`OMTP_AGY_PATH` 指定路径。
+- **原来的直连 OAuth 方式改为开关**：登录行新增 **改用原来的直连 OAuth 登录（不推荐）**，默认关闭，打开后显示封号风险警告。**升级后，已经用 OAuth 登录的这三个服务商会切换到官方工具**，需要安装并登录对应工具，或者打开此开关。已保存的 OAuth 登录不会被删除，可以用 **删除已保存的 OAuth 登录** 清除。Anthropic 的普通 API 密钥不受影响。
+
 ### 修复
 
 - **服务端插件未更新时没有任何提示**：更新扩展不会更新 `plugins/omtp`，复制后也要重启 SillyTavern 才会加载，此前两边版本不一致时界面照常显示，新功能只报 "Not found"（如 2.4.0 的网络代理设置无法保存、测试连接失败）。现在设置顶部和启动时的提示会给出两边的版本和更新方法；服务端插件不支持代理设置时，该分组变为不可用并说明原因。

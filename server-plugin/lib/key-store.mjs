@@ -10,7 +10,7 @@ import {
     writeFileAtomic,
     writeJsonAtomic,
 } from './config.mjs';
-import { buildProviderConfig, isKeylessProvider, isSupportedAdapter, singleMaxTokensEnabled, userAgentSpoofEnabled } from './provider-config.mjs';
+import { buildProviderConfig, isKeylessProvider, isSupportedAdapter, legacyOAuthEnabled, singleMaxTokensEnabled, userAgentSpoofEnabled } from './provider-config.mjs';
 import { headersForHook } from './custom-logins/kimi-fingerprint.mjs';
 import { logError } from './redact.mjs';
 
@@ -377,7 +377,7 @@ export class KeyStore {
 
             /** @type {Record<string, any>} */
             const next = { ...existing, id: providerId };
-            for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'apiKey', 'ignoreStSecret', 'userAgentSpoof', 'singleMaxTokens']) {
+            for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'apiKey', 'ignoreStSecret', 'userAgentSpoof', 'singleMaxTokens', 'legacyOAuth']) {
                 if (!Object.hasOwn(patch, key)) continue;
                 const value = patch[key];
                 if (key === 'apiKey') {
@@ -400,7 +400,7 @@ export class KeyStore {
                     if (models) next.models = models;
                     continue;
                 }
-                if (key === 'custom' || key === 'ignoreStSecret') {
+                if (key === 'custom' || key === 'ignoreStSecret' || key === 'legacyOAuth') {
                     if (value === false || value === null) delete next[key];
                     else next[key] = Boolean(value);
                     continue;
@@ -568,6 +568,7 @@ export class KeyStore {
             last4: typeof config.apiKey === 'string' ? config.apiKey.slice(-4) : '',
             userAgentSpoof: userAgentSpoofEnabled(config),
             singleMaxTokens: singleMaxTokensEnabled(config),
+            legacyOAuth: legacyOAuthEnabled(config),
             updatedAt: config.updatedAt || 0,
         };
     }

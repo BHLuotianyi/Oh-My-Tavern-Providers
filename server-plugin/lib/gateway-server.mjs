@@ -16,6 +16,7 @@ import { openAIErrorEnvelope } from './sse.mjs';
 import { describeFetchFailure } from './proxy-fetch.mjs';
 import { log, logError } from './redact.mjs';
 import { getAdapter } from './adapters/index.mjs';
+import { applyCliRoute } from './cli-routes.mjs';
 import { createUsageTap, tokensFromOpenAIUsage } from './stats.mjs';
 import { acquireGatewayPort } from './gateway-ports.mjs';
 import { isLoopbackHostHeader } from './net-hosts.mjs';
@@ -364,6 +365,14 @@ export class GatewayServer {
             res.status(400).json(openAIErrorEnvelope(`Provider ${ref.provider} has no base URL`, 'invalid_request_error', 'invalid_provider_config'));
             return null;
         }
+        if (resolved.cli && !resolved.cli.path) {
+            res.status(503).json(openAIErrorEnvelope(
+                `${resolved.cli.label} (\`${resolved.cli.command}\`) is not installed on the machine running SillyTavern; install it and sign in there, or turn on the original direct OAuth sign-in for ${resolved.label || ref.provider}`,
+                'invalid_request_error',
+                'cli_not_found',
+            ));
+            return null;
+        }
         if (!resolved.available) {
             res.status(401).json(openAIErrorEnvelope(
                 `Missing API key for ${resolved.label || ref.provider}`,
@@ -586,6 +595,8 @@ export function credentialStorageId(provider) {
 /**
  * Resolve a catalog provider through its key-store row. The result keeps the
  * catalog id: status, auth-failure bookkeeping and adapter policies key on it.
+ * Subscription providers then switch to their official CLI unless the user
+ * turned direct OAuth back on (`cli-routes.mjs`).
  * @param {any} keyStore
  * @param {any} provider catalog provider
  * @returns {Promise<any>}
@@ -594,7 +605,11 @@ export async function resolveProviderCredentials(keyStore, provider) {
     const storageId = credentialStorageId(provider);
     const lookup = storageId && storageId !== provider?.id ? { ...provider, id: storageId } : provider;
     const resolved = await keyStore.resolveProvider(lookup);
-    return { ...resolved, id: String(provider?.id || resolved.id || '') };
+    return applyCliRoute(
+        { ...resolved, id: String(provider?.id || resolved.id || '') },
+        keyStore.root || getOmtpRoot(),
+        keyStore.env || process.env,
+    );
 }
 
 /**

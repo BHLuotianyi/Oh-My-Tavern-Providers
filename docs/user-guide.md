@@ -75,6 +75,28 @@ OMTP 按以下顺序查找凭据：OMTP 自己保存的凭据 → SillyTavern �
 > [!WARNING]
 > 火山方舟规定这两个套餐只能在 AI 编程 / Agent 工具中使用。在 SillyTavern 中使用套餐的 Base URL 和 API Key 可能被识别为滥用，导致订阅停用或账号封禁。
 
+### Claude、Gemini CLI 与 Antigravity 订阅
+
+Anthropic（Claude Pro/Max）、Google Cloud Code Assist（Gemini CLI）和 Google Antigravity 默认通过运行 SillyTavern 的机器上的**官方命令行工具**调用，登录也由这个工具完成。OMTP 只把对话交给它，不读取也不保存订阅凭据。
+
+| 服务商 | 官方工具 | 登录方式 |
+| --- | --- | --- |
+| Anthropic | Claude Code（`claude`） | 在终端运行 `claude` 后登录 |
+| Google Cloud Code Assist | Gemini CLI（`gemini`） | 在终端运行 `gemini` 后登录 |
+| Google Antigravity | Antigravity CLI（`agy`） | 在终端运行 `agy` 后登录 |
+
+- 登录行显示“通过 …”时，表示已找到对应工具。点击刷新模型可以检查登录状态；Claude Code 未登录时，该行会标为不可用。
+- 工具必须在 SillyTavern 进程的 `PATH` 中，也可以用 `OMTP_CLAUDE_PATH`、`OMTP_GEMINI_PATH`、`OMTP_AGY_PATH` 指定完整路径。以 systemd 等服务方式运行时，`PATH` 往往不含 `~/.local/bin`，OMTP 会额外查找这些常见安装目录。
+- 每次请求都会启动一次该工具：工具运行在 `data/omtp/cli/` 下的空目录中，内置工具、项目记忆、插件和 MCP 全部关闭，聊天的系统提示词替换掉工具自带的编程提示词。Antigravity CLI 没有替换系统提示词的参数，因此 OMTP 会写入 `~/.gemini/config/agents/omtp-chat.md` 这个自定义 agent，系统提示词改为随消息发送。
+- 温度、top_p、停止词和输出上限无法传给这些工具，不会生效。推理强度会映射到 `--effort`。Gemini CLI 和 Antigravity CLI 只接受文本，带图片的请求会被拒绝。
+- 用量标签页不显示这些服务商的额度。
+- Anthropic 已保存或在 SillyTavern 中填写的普通 API 密钥（非订阅令牌）仍直接调用 Anthropic API，不经过 Claude Code。
+
+登录行上的 **改用原来的直连 OAuth 登录（不推荐）** 开关默认关闭。打开后恢复旧的方式：在面板中 OAuth 登录，网关以官方客户端的身份直接调用订阅接口。关闭时不提供登录按钮；如果之前保存过 OAuth 登录，可以用 **删除已保存的 OAuth 登录** 清除。
+
+> [!WARNING]
+> Google 禁止第三方应用使用 Gemini CLI / Antigravity 的登录凭据，并已封禁过这样做的账号。Anthropic 不允许第三方应用用 Claude 账号登录或冒充 Claude Code。直连 OAuth 方式两者都违反，只在可以承受封号的账号上使用。官方工具方式由厂商自己的客户端登录和调用，但 Google 对其他程序调用其命令行工具的规定并不明确。
+
 ### 自定义服务商
 
 **登录** 标签页底部的 **添加自定义服务商** 可以接入任意 OpenAI 兼容或其他受支持协议的接口：填写 ID、名称、适配器、Base URL、模型列表和密钥。自定义服务商会出现在面板和网关的模型列表中。

@@ -17,6 +17,11 @@ const LOADERS = {
     'azure-responses': () => import('./azure-responses.mjs'),
     bedrock: () => import('./bedrock.mjs'),
     ollama: () => import('./ollama.mjs'),
+    // Official-CLI routes for subscription providers (`cli-routes.mjs`). Not in
+    // ADAPTER_IDS: a stored provider config cannot select them.
+    'claude-cli': () => import('./claude-cli.mjs'),
+    'agy-cli': () => import('./agy-cli.mjs'),
+    'gemini-cli': () => import('./gemini-cli.mjs'),
 };
 
 /** @type {Map<string, any|null>} */

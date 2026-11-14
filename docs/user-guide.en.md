@@ -75,6 +75,28 @@ Volcengine Ark Coding Plan and Agent Plan have a **Send only max_tokens** switch
 > [!WARNING]
 > Volcengine only allows these plans in AI coding / agent tools. Using a plan's Base URL and API key from SillyTavern may be treated as abuse and get the subscription suspended or the account banned.
 
+### Claude, Gemini CLI and Antigravity subscriptions
+
+Anthropic (Claude Pro/Max), Google Cloud Code Assist (Gemini CLI) and Google Antigravity run by default through the vendor's **official command-line tool** on the machine running SillyTavern, and that tool handles sign-in. OMTP only hands it the chat; it never reads or stores the subscription credentials.
+
+| Provider | Official tool | Sign in |
+| --- | --- | --- |
+| Anthropic | Claude Code (`claude`) | run `claude` in a terminal and sign in |
+| Google Cloud Code Assist | Gemini CLI (`gemini`) | run `gemini` in a terminal and sign in |
+| Google Antigravity | Antigravity CLI (`agy`) | run `agy` in a terminal and sign in |
+
+- A row that reads "Via …" has found the tool. Refreshing the model list checks the sign-in; a signed-out Claude Code marks the row unusable.
+- The tool must be on the SillyTavern process's `PATH`, or named with `OMTP_CLAUDE_PATH`, `OMTP_GEMINI_PATH` or `OMTP_AGY_PATH`. Services (systemd and the like) often run without `~/.local/bin` on `PATH`, so OMTP also checks the usual install folders.
+- Each request starts the tool once. It runs in an empty folder under `data/omtp/cli/` with its built-in tools, project memory, plugins and MCP servers off, and the chat's system prompt replaces its coding prompt. Antigravity CLI has no system-prompt option, so OMTP writes a custom agent to `~/.gemini/config/agents/omtp-chat.md` and sends the system prompt with the message instead.
+- Temperature, top_p, stop sequences and output limits cannot be passed to these tools and do not apply. Reasoning effort maps to `--effort`. Gemini CLI and Antigravity CLI take text only; requests with images are rejected.
+- The Usage tab does not show quotas for these providers.
+- A plain Anthropic API key (not a subscription token), stored in OMTP or SillyTavern, still calls the Anthropic API directly, not Claude Code.
+
+The **Use the original direct OAuth sign-in instead (not recommended)** switch on these rows is off by default. Turning it on restores the old route: OAuth sign-in in the panel, and the gateway calls the subscription endpoints directly while presenting itself as the official client. While it is off there is no sign-in button; an earlier OAuth sign-in can be removed with **Delete saved OAuth sign-in**.
+
+> [!WARNING]
+> Google forbids third-party apps from using Gemini CLI / Antigravity sign-ins and has suspended accounts that did. Anthropic does not allow third-party apps to sign in with Claude accounts or to present themselves as Claude Code. The direct OAuth route does both; only use it with an account you can afford to lose. On the official-tool route the vendor's own client signs in and makes the calls, but Google has not said clearly whether other programs may drive its command-line tools.
+
 ### Custom providers
 
 **Add custom provider** at the bottom of the **Sign-in** tab connects any endpoint that speaks a supported protocol, OpenAI-compatible or otherwise: enter an id, label, adapter, base URL, model list and key. Custom providers appear in the panel and in the gateway's model list.

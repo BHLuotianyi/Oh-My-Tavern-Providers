@@ -173,6 +173,16 @@ export function singleMaxTokensEnabled(config) {
 }
 
 /**
+ * Direct OAuth for providers that run through their official CLI by default
+ * (`cli-routes.mjs`). Off unless the stored config turns it on.
+ * @param {Record<string, any>|null|undefined} config Resolved or stored config.
+ * @returns {boolean}
+ */
+export function legacyOAuthEnabled(config) {
+    return config?.legacyOAuth === true;
+}
+
+/**
  * Merge catalog metadata, stored overrides and key information into the config
  * consumed by gateway adapters.
  *
@@ -242,6 +252,7 @@ export function buildProviderConfig(catalogProvider, options = {}) {
         // provider.
         userAgentSpoof: userAgentSpoofEnabled(stored),
         singleMaxTokens: singleMaxTokensEnabled(stored),
+        legacyOAuth: legacyOAuthEnabled(stored),
         custom: Boolean(stored.custom || catalogProvider?.custom),
         models: Array.isArray(stored.models) && stored.models.length > 0 ? stored.models : catalogProvider?.models || [],
     };
@@ -268,6 +279,8 @@ export function buildProviderContext(providerConfig, model, signal = null, catal
         signal,
         catalogProvider,
         modelInfo,
+        // Official-CLI route (`cli-routes.mjs`); null for HTTP adapters.
+        cli: providerConfig.cli || null,
         fetchImpl: (...args) => globalThis.fetch(...args),
     };
 }

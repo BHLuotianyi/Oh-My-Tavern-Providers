@@ -111,6 +111,16 @@ function fingerprint(provider) {
 }
 
 function statusText(provider) {
+    const cli = provider.cliRoute;
+    if (cli) {
+        if (!cli.found) {
+            return trf('omtp_login_cli_missing', '${0} not installed', cli.label);
+        }
+        if (provider.keyInvalid) {
+            return trf('omtp_login_cli_invalid', '${0}: ${1}', cli.label, provider.keyInvalidReason || 'auth error');
+        }
+        return trf('omtp_login_status_cli', 'Via ${0}', cli.label);
+    }
     // `keyInvalid` only ever applies to a stored key; an empty slot can never be
     // "rejected", it is simply not signed in.
     if (provider.keyInvalid && provider.hasKey) {
@@ -221,9 +231,12 @@ function renderRow(provider) {
     const actions = el('div', 'omtp-login-actions');
     const kind = provider.loginKind || '';
     const signedIn = Boolean(provider.hasKey);
+    // Subscription providers driven through the vendor's official CLI: that
+    // CLI signs in, not this panel.
+    const cli = provider.cliRoute || null;
 
     // `custom` providers run here too when the server ships their hook.
-    if (kind === 'oauth-code' || kind === 'device-code' || kind === 'custom') {
+    if (!cli && (kind === 'oauth-code' || kind === 'device-code' || kind === 'custom')) {
         const loginBtn = el('button', 'menu_button', tr('omtp_login_sign_in', 'Sign in'));
         loginBtn.type = 'button';
         loginBtn.addEventListener('click', () => startLogin(provider, row, actions));
@@ -254,29 +267,29 @@ function renderRow(provider) {
         actions.append(link);
     }
 
-    if (signedIn) {
-        const out = el('button', 'menu_button', tr('omtp_logout', 'Sign out'));
-        out.type = 'button';
-        out.addEventListener('click', async () => {
-            clearActionError(row, id);
-            out.disabled = true;
-            try {
-                await api(`/providers/${encodeURIComponent(id)}/logout`, { method: 'POST' });
-                forgetLiveModels(id);
-                invalidateGatewayCaches();
-                onChanged?.();
-                await refresh();
-            } catch (error) {
-                showActionError(row, id, trf('omtp_login_logout_failed', 'Could not sign out: ${0}', error.message || error));
-                onChanged?.();
-            } finally {
-                out.disabled = false;
-            }
-        });
-        actions.append(out);
+    if (signedIn && !cli) {
+        actions.append(renderLogoutButton(row, id, tr('omtp_logout', 'Sign out')));
+    }
+    if (cli?.legacyCredential) {
+        actions.append(renderLogoutButton(row, id, tr('omtp_login_cli_forget_oauth', 'Delete saved OAuth sign-in')));
     }
 
     row.append(actions);
+    if (cli) {
+        row.append(el('div', 'omtp-login-hint', cli.found
+            ? trf('omtp_login_cli_hint', 'Runs through the official ${0} (${1}) on the machine running SillyTavern, which handles sign-in: run `${2}` there in a terminal to sign in. Sampling settings such as temperature are not applied.', cli.label, cli.path, cli.command)
+            : trf('omtp_login_cli_install', 'Install the official ${0} on the machine running SillyTavern and sign in with `${1}` in a terminal; OMTP then runs it for this provider.', cli.label, cli.command)));
+    }
+    if (provider.supportsLegacyOAuth) {
+        row.append(renderConfigToggle(provider, row, 'legacyOAuth',
+            tr('omtp_login_legacy_oauth', 'Use the original direct OAuth sign-in instead (not recommended)'),
+            (message) => trf('omtp_login_legacy_oauth_failed', 'Could not save the sign-in setting: ${0}', message),
+            false));
+        if (provider.legacyOAuth) {
+            const warning = LEGACY_OAUTH_WARNINGS[id];
+            if (warning) row.append(el('div', 'omtp-login-hint omtp-login-warning', tr(warning[0], warning[1])));
+        }
+    }
     if (provider.supportsUserAgentSpoof) {
         row.append(renderConfigToggle(provider, row, 'userAgentSpoof',
             tr('omtp_login_ua_spoof', 'Disguise User-Agent as the opencode client'),
@@ -311,21 +324,62 @@ const PROVIDER_NOTICES = Object.freeze({
 });
 
 /**
- * Per-provider boolean switch stored in the provider config. Defaults to on;
- * the server treats an absent value as on.
- * @param {object} provider
+ * Shown while a subscription provider uses its original direct OAuth
+ * transport: `[i18n key, English fallback]`.
+ */
+const GOOGLE_LEGACY_WARNING = ['omtp_login_legacy_oauth_google_warning', 'Google forbids third-party apps from using Gemini CLI / Antigravity sign-ins and has suspended accounts that did. Only use this with an account you can afford to lose.'];
+const LEGACY_OAUTH_WARNINGS = Object.freeze({
+    'google-antigravity': GOOGLE_LEGACY_WARNING,
+    'google-gemini-cli': GOOGLE_LEGACY_WARNING,
+    anthropic: ['omtp_login_legacy_oauth_anthropic_warning', 'Anthropic does not allow third-party apps to sign in with Claude accounts or to present themselves as Claude Code, which this route does; Anthropic may restrict the account without notice.'],
+});
+
+/**
+ * Sign-out button: drops the stored credential for `id`.
  * @param {HTMLElement} row
- * @param {'userAgentSpoof'|'singleMaxTokens'} key
+ * @param {string} id
  * @param {string} label
- * @param {(message: string) => string} failureText
  * @returns {HTMLElement}
  */
-function renderConfigToggle(provider, row, key, label, failureText) {
+function renderLogoutButton(row, id, label) {
+    const out = el('button', 'menu_button', label);
+    out.type = 'button';
+    out.addEventListener('click', async () => {
+        clearActionError(row, id);
+        out.disabled = true;
+        try {
+            await api(`/providers/${encodeURIComponent(id)}/logout`, { method: 'POST' });
+            forgetLiveModels(id);
+            invalidateGatewayCaches();
+            onChanged?.();
+            await refresh();
+        } catch (error) {
+            showActionError(row, id, trf('omtp_login_logout_failed', 'Could not sign out: ${0}', error.message || error));
+            onChanged?.();
+        } finally {
+            out.disabled = false;
+        }
+    });
+    return out;
+}
+
+/**
+ * Per-provider boolean switch stored in the provider config. The server
+ * treats an absent value as the switch's default.
+ * @param {object} provider
+ * @param {HTMLElement} row
+ * @param {'userAgentSpoof'|'singleMaxTokens'|'legacyOAuth'} key
+ * @param {string} label
+ * @param {(message: string) => string} failureText
+ * @param {boolean} [defaultOn]
+ * @returns {HTMLElement}
+ */
+function renderConfigToggle(provider, row, key, label, failureText, defaultOn = true) {
     const id = String(provider.id);
     const wrap = el('label', 'checkbox_label omtp-login-spoof');
     const input = document.createElement('input');
     input.type = 'checkbox';
-    input.checked = provider[key] !== false;
+    input.checked = defaultOn ? provider[key] !== false : provider[key] === true;
     input.addEventListener('change', async () => {
         input.disabled = true;
         try {
@@ -333,6 +387,9 @@ function renderConfigToggle(provider, row, key, label, failureText) {
                 method: 'POST',
                 body: JSON.stringify({ [key]: input.checked }),
             });
+            // The server dropped this provider's model list; so must we.
+            forgetLiveModels(id);
+            invalidateGatewayCaches();
             onChanged?.();
             await refresh();
         } catch (error) {

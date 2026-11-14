@@ -12,7 +12,8 @@ import { freshLiveModels, loadLiveModels, saveLiveModels } from './live-models-s
 import { CatalogService } from './catalog-service.mjs';
 import { GatewayServer, asyncHandler, buildGatewayContext, credentialStorageId, resolveProviderCredentials } from './gateway-server.mjs';
 import { ADAPTER_IDS } from './adapter-ids.mjs';
-import { buildModelsProbe, buildProviderContext, isSupportedAdapter, singleMaxTokensEnabled, userAgentSpoofEnabled } from './provider-config.mjs';
+import { buildModelsProbe, buildProviderContext, isSupportedAdapter, legacyOAuthEnabled, singleMaxTokensEnabled, userAgentSpoofEnabled } from './provider-config.mjs';
+import { hasCliRoute } from './cli-routes.mjs';
 import { parseStructuredCredential, resolveAccessToken } from './oauth.mjs';
 import { importFromOmp } from './import-omp.mjs';
 import { describeFetchFailure, diagnoseProxy, getProxyStatus, installProxyFetch, parseProxyUrl, setProxySettings } from './proxy-fetch.mjs';
@@ -271,6 +272,19 @@ async function buildProviderStatus(providerId, keyStore, catalogService) {
         supportsUserAgentSpoof: Boolean(provider?.requestHeaders?.spoofUserAgent),
         singleMaxTokens: singleMaxTokensEnabled(resolved),
         supportsSingleMaxTokens: provider?.singleMaxTokens === true,
+        // Subscription providers that run through the vendor's official CLI
+        // unless direct OAuth is switched back on (`cli-routes.mjs`).
+        supportsLegacyOAuth: hasCliRoute(providerId),
+        legacyOAuth: legacyOAuthEnabled(resolved),
+        cliRoute: resolved.cli
+            ? {
+                    command: resolved.cli.command,
+                    label: resolved.cli.label,
+                    path: resolved.cli.path,
+                    found: Boolean(resolved.cli.path),
+                    legacyCredential: resolved.cli.legacyCredential,
+                }
+            : null,
         unsupportedReason: synthetic.unsupportedReason || authFailure?.message || null,
     };
 }
@@ -398,6 +412,18 @@ async function probeProvider(resolved, adapter, provider, { model = '', keyStore
 }
 
 /**
+ * Why a provider has nothing to probe with.
+ * @param {any} status `buildProviderStatus` result
+ * @returns {string}
+ */
+function missingCredentialText(status) {
+    if (status.cliRoute && !status.cliRoute.found) {
+        return `${status.cliRoute.label} (\`${status.cliRoute.command}\`) is not installed on this machine`;
+    }
+    return 'No credentials configured';
+}
+
+/**
  * Normalize a model listing into `{id, name}` objects.
  * @param {any} rawModels
  * @returns {any[]}
@@ -433,7 +459,7 @@ async function probeProviderModels(current, providerId, { refresh = false } = {}
     // A rejected key still counts as configured: the user has to be able to
     // re-probe after fixing it.
     if (!status.hasKey && status.authKind !== 'none') {
-        return { ok: false, available: false, error: 'No credentials configured', models: [] };
+        return { ok: false, available: false, error: missingCredentialText(status), models: [] };
     }
 
     const provider = (await current.catalogService.getProvider(providerId)) || syntheticProvider(providerId, {
@@ -484,7 +510,9 @@ async function validateKeyedProviders(current) {
     const queue = [];
     for (const id of ids) {
         const status = await buildProviderStatus(id, current.keyStore, current.catalogService).catch(() => null);
-        if (status?.hasKey && status.authKind !== 'none') {
+        // CLI routes are probed on demand: starting a ST server should not
+        // spawn every installed vendor CLI.
+        if (status?.hasKey && status.authKind !== 'none' && !status.cliRoute) {
             queue.push(id);
         }
     }
@@ -576,8 +604,11 @@ function registerProviderRoutes(router) {
         const body = req.body && typeof req.body === 'object' ? req.body : {};
         /** @type {Record<string, any>} */
         const patch = {};
-        for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'userAgentSpoof', 'singleMaxTokens']) {
+        for (const key of ['label', 'adapter', 'baseUrl', 'headers', 'extraConfig', 'custom', 'models', 'userAgentSpoof', 'singleMaxTokens', 'legacyOAuth']) {
             if (key in body) patch[key] = body[key];
+        }
+        if (patch.legacyOAuth !== undefined && patch.legacyOAuth !== null && typeof patch.legacyOAuth !== 'boolean') {
+            throw new HttpError(400, 'legacyOAuth must be a boolean', 'invalid_legacy_oauth');
         }
         if (patch.userAgentSpoof !== undefined && patch.userAgentSpoof !== null && typeof patch.userAgentSpoof !== 'boolean') {
             throw new HttpError(400, 'userAgentSpoof must be a boolean', 'invalid_user_agent_spoof');
@@ -636,7 +667,7 @@ function registerProviderRoutes(router) {
             return;
         }
         if (!status.hasKey && status.authKind !== 'none') {
-            res.json({ ok: false, error: 'Provider has no API key' });
+            res.json({ ok: false, error: missingCredentialText(status) });
             return;
         }
         const provider = (await current.catalogService.getProvider(providerId)) || syntheticProvider(providerId, {
@@ -764,6 +795,16 @@ function registerLoginRoutes(router) {
         const providerId = String(req.params.id || '');
         const policy = await loginPolicyFor(current, providerId);
         if (!policy) throw new HttpError(400, 'This provider has no login flow', 'no_login');
+        if (hasCliRoute(providerId)) {
+            const { config } = await current.keyStore.getConfigSafe(providerId);
+            if (!legacyOAuthEnabled(config)) {
+                throw new HttpError(
+                    409,
+                    'This provider runs through its official CLI; turn on the original direct OAuth sign-in before signing in here',
+                    'legacy_oauth_disabled',
+                );
+            }
+        }
         const locale = typeof req.body?.locale === 'string' ? req.body.locale : '';
         // Client ids/secrets live in the local config, not the catalog.
         const env = { ...process.env, ...loginEnv(current.keyStore.root, providerId) };
