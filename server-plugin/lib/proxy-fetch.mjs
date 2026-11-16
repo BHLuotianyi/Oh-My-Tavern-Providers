@@ -19,7 +19,7 @@ import net from 'node:net';
 import https from 'node:https';
 import tls from 'node:tls';
 import zlib from 'node:zlib';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
 import { log, logError } from './redact.mjs';
 import { isPrivateHost } from './net-hosts.mjs';
@@ -41,6 +41,12 @@ const PROXY_PROTOCOLS = new Set(['http:', 'https:', ...SOCKS_PROTOCOLS]);
 const SYSTEM_PROXY_TTL_MS = 10_000;
 /** Longest a request waits for a fresh read before using the previous one. */
 const SYSTEM_PROXY_WAIT_MS = 1_500;
+/**
+ * Longest one settings command may run. Antivirus software on Windows can
+ * hold a freshly spawned `reg.exe` well past a second; killing it early read
+ * as "no system proxy".
+ */
+const SYSTEM_PROXY_COMMAND_TIMEOUT_MS = 5_000;
 const TLS_HANDSHAKE_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 300_000;
 const DIAGNOSTIC_TIMEOUT_MS = 8_000;
@@ -578,11 +584,14 @@ function toFetchResponse(response, method) {
 /**
  * Build a fetch implementation that honours proxy environment variables.
  *
- * @param {{env?: Record<string,string|undefined> | (() => Record<string,string|undefined>), base?: typeof fetch}} [options]
+ * @param {{env?: Record<string,string|undefined> | (() => Record<string,string|undefined>), base?: typeof fetch,
+ *          handshakeTimeoutMs?: number, requestTimeoutMs?: number,
+ *          directNote?: (target: URL, env: Record<string,string|undefined>) => string}} [options]
  *        `env` may be a function, re-evaluated per request; it may be async.
+ *        `directNote` explains why a failed request went without a proxy.
  * @returns {typeof fetch}
  */
-export function createProxyFetch({ env = process.env, base = globalThis.fetch, handshakeTimeoutMs, requestTimeoutMs } = {}) {
+export function createProxyFetch({ env = process.env, base = globalThis.fetch, handshakeTimeoutMs, requestTimeoutMs, directNote } = {}) {
     /** @type {Set<string>} */
     const reported = new Set();
     const proxyFetch = async (input, init = {}) => {
@@ -596,12 +605,20 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch, h
             } catch {
                 target = null;
             }
-            const proxy = target ? proxyFor(target, typeof env === 'function' ? await env() : env) : null;
+            const effectiveEnv = target ? (typeof env === 'function' ? await env() : env) : null;
+            const proxy = target ? proxyFor(target, effectiveEnv) : null;
             const canHandleRedirects = Boolean(target) && !(current instanceof Request) && isReplayableBody(currentInit?.body);
             const directInit = canHandleRedirects ? { ...currentInit, redirect: 'manual' } : currentInit;
             let response;
             if (!canHandleRedirects || !proxy) {
-                response = await base(current, directInit);
+                try {
+                    response = await base(current, directInit);
+                } catch (error) {
+                    // "fetch failed" alone does not say the request skipped the proxy.
+                    const note = !proxy && target && directNote ? directNote(target, effectiveEnv) : '';
+                    if (note && error && typeof error === 'object') error[PROXY_FAILURE] = note;
+                    throw error;
+                }
             } else {
                 try {
                     response = await tunnelRequest(target, proxy, currentInit, { handshakeTimeoutMs, requestTimeoutMs });
@@ -746,27 +763,13 @@ export function parseScutilProxy(text) {
 /**
  * @param {string} file
  * @param {string[]} args
- * @returns {string}
- */
-function runCommand(file, args) {
-    return String(execFileSync(file, args, {
-        encoding: 'utf8',
-        timeout: 1500,
-        stdio: ['ignore', 'pipe', 'ignore'],
-        windowsHide: true,
-    }) || '');
-}
-
-/**
- * @param {string} file
- * @param {string[]} args
  * @returns {Promise<string>}
  */
-function runCommandAsync(file, args) {
+function runCommand(file, args) {
     return new Promise((resolve, reject) => {
         execFile(file, args, {
             encoding: 'utf8',
-            timeout: 1500,
+            timeout: SYSTEM_PROXY_COMMAND_TIMEOUT_MS,
             windowsHide: true,
         }, (error, stdout) => {
             if (error) reject(error);
@@ -775,25 +778,51 @@ function runCommandAsync(file, args) {
     });
 }
 
-function parseSystemProxyCommands(platform, run) {
-    if (platform === 'win32') {
-        const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
-        return Promise.resolve(run('reg', ['query', key, '/v', 'ProxyEnable'])).then((enabled) => {
-            if (!/ProxyEnable\s+REG_DWORD\s+0x1/i.test(enabled)) return {};
-            return Promise.resolve(run('reg', ['query', key, '/v', 'ProxyServer'])).then((server) => {
-                const match = server.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
-                return match ? parseWindowsProxyServer(match[1].trim()) : {};
-            });
-        });
+/**
+ * Parse `reg query` output for the Internet Settings key.
+ *
+ * A PAC script (`AutoConfigURL`, the "PAC mode" of v2rayN, Clash and
+ * Shadowsocks) cannot be evaluated here; it is reported so the panel can say
+ * why no proxy was found.
+ *
+ * @param {string} text
+ * @returns {{http?: string, https?: string, all?: string, pac?: string}}
+ */
+export function parseWindowsInternetSettings(text) {
+    /** @type {Record<string, string>} */
+    const values = {};
+    for (const line of String(text || '').split(/\r?\n/)) {
+        const match = line.match(/^\s+(\S+)\s+REG_\w+\s+(.*?)\s*$/);
+        if (match) values[match[1].toLowerCase()] = match[2];
     }
-    if (platform === 'darwin') {
-        return Promise.resolve(run('scutil', ['--proxy'])).then(parseScutilProxy);
-    }
-    if (platform === 'linux') {
-        const read = (schema, key) => Promise.resolve(run('gsettings', ['get', schema, key]))
-            .then((out) => String(out || '').trim().replace(/^'|'$/g, ''));
-        return read('org.gnome.system.proxy', 'mode').then(async (mode) => {
-            if (mode !== 'manual') return {};
+    const proxies = /^0x0*1$/i.test(values.proxyenable || '') ? parseWindowsProxyServer(values.proxyserver) : {};
+    if (Object.keys(proxies).length) return proxies;
+    return values.autoconfigurl ? { pac: values.autoconfigurl } : {};
+}
+
+/**
+ * Read the operating system's proxy settings.
+ *
+ * A system proxy (Clash, v2ray, corporate agents) is usually configured in the
+ * OS, not in the environment, so Node's fetch cannot see it at all. The read
+ * uses the platform's own tools without blocking the event loop.
+ *
+ * @param {{platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string|Promise<string>}} [options]
+ * @returns {Promise<{http?: string, https?: string, all?: string, pac?: string}|null>}
+ *          null when the settings could not be read (missing tool, timeout)
+ */
+export async function detectSystemProxy({ platform = process.platform, run = runCommand } = {}) {
+    try {
+        if (platform === 'win32') {
+            // One query for the whole key: each reg.exe spawn is slow under antivirus.
+            return parseWindowsInternetSettings(await run('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings']));
+        }
+        if (platform === 'darwin') {
+            return parseScutilProxy(await run('scutil', ['--proxy']));
+        }
+        if (platform === 'linux') {
+            const read = async (schema, key) => String(await run('gsettings', ['get', schema, key]) || '').trim().replace(/^'|'$/g, '');
+            if (await read('org.gnome.system.proxy', 'mode') !== 'manual') return {};
             /** @type {{http?: string, https?: string}} */
             const out = {};
             const [httpHost, httpPort, httpsHost, httpsPort] = await Promise.all([
@@ -805,67 +834,13 @@ function parseSystemProxyCommands(platform, run) {
             if (httpHost) out.http = `http://${httpHost}${httpPort ? `:${httpPort}` : ''}`;
             if (httpsHost) out.https = `http://${httpsHost}${httpsPort ? `:${httpsPort}` : ''}`;
             return out;
-        });
-    }
-    return Promise.resolve({});
-}
-
-/**
- * Read the operating system's proxy settings.
- *
- * A system proxy (Clash, v2ray, corporate agents) is usually configured in the
- * OS, not in the environment, so Node's fetch cannot see it at all. This is a
- * best-effort read of the platform's own settings; any failure means "no proxy".
- *
- * @param {{platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string}} [options]
- * @returns {{http?: string, https?: string, all?: string}}
- */
-export function detectSystemProxy({ platform = process.platform, run = runCommand } = {}) {
-    try {
-        if (platform === 'win32') {
-            const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
-            const enabled = run('reg', ['query', key, '/v', 'ProxyEnable']);
-            if (!/ProxyEnable\s+REG_DWORD\s+0x1/i.test(enabled)) return {};
-            const server = run('reg', ['query', key, '/v', 'ProxyServer']);
-            const match = server.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
-            return match ? parseWindowsProxyServer(match[1].trim()) : {};
         }
-        if (platform === 'darwin') {
-            return parseScutilProxy(run('scutil', ['--proxy']));
-        }
-        if (platform === 'linux') {
-            const mode = run('gsettings', ['get', 'org.gnome.system.proxy', 'mode']).trim().replace(/^'|'$/g, '');
-            if (mode !== 'manual') return {};
-            const read = (schema, key) => run('gsettings', ['get', schema, key]).trim().replace(/^'|'$/g, '');
-            /** @type {{http?: string, https?: string}} */
-            const out = {};
-            const httpHost = read('org.gnome.system.proxy.http', 'host');
-            const httpPort = read('org.gnome.system.proxy.http', 'port');
-            if (httpHost) out.http = `http://${httpHost}${httpPort ? `:${httpPort}` : ''}`;
-            const httpsHost = read('org.gnome.system.proxy.https', 'host');
-            const httpsPort = read('org.gnome.system.proxy.https', 'port');
-            if (httpsHost) out.https = `http://${httpsHost}${httpsPort ? `:${httpsPort}` : ''}`;
-            return out;
-        }
-    } catch {
-        // Missing tool, no desktop session, restricted registry: treat as none.
-    }
-    return {};
-}
-
-/**
- * Async variant of `detectSystemProxy` using non-blocking `execFile`.
- *
- * @param {{platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string|Promise<string>}} [options]
- * @returns {Promise<{http?: string, https?: string, all?: string}>}
- */
-export async function detectSystemProxyAsync({ platform = process.platform, run = runCommandAsync } = {}) {
-    try {
-        return await parseSystemProxyCommands(platform, run);
-    } catch {
         return {};
+    } catch {
+        return null;
     }
 }
+
 /**
  * Merge OS proxy settings into an env map without overriding explicit values.
  * @param {Record<string, string|undefined>} env
@@ -963,7 +938,9 @@ export function installProxyFetch({ env = process.env, force = false, system = t
     const current = globalThis.fetch;
     if (!current || wrapped.has(current)) return false;
 
+    /** @type {{http?: string, https?: string, all?: string, pac?: string}} */
     let systemProxy = {};
+    let systemReadFailed = false;
     let readAt = -Infinity;
     /** @type {Promise<void>|null} */
     let refreshing = null;
@@ -976,15 +953,25 @@ export function installProxyFetch({ env = process.env, force = false, system = t
         announced = label;
         if (proxy) log(`outbound requests use the ${label}`);
         else if (source === 'settings') log('outbound proxy turned off in the settings; requests connect directly');
-        else log('no outbound proxy configured; requests connect directly');
+        else log(`no outbound proxy configured; requests connect directly (${noProxyReason()})`);
+    };
+
+    /** Why the system route found no proxy, for logs and failed requests. */
+    const noProxyReason = () => {
+        if (systemProxy.pac) return `the system proxy is a PAC script (${systemProxy.pac}), which OMTP cannot use; choose Manual under Network proxy`;
+        if (systemReadFailed) return 'the system proxy settings could not be read; choose Manual under Network proxy';
+        return 'no HTTPS_PROXY / ALL_PROXY and no system proxy found';
     };
 
     /** Read the OS proxy; concurrent callers share one read. */
     const refresh = () => {
         if (!refreshing) {
-            refreshing = detectSystemProxyAsync({ platform, run })
+            refreshing = detectSystemProxy({ platform, run })
                 .then((next) => {
-                    systemProxy = next;
+                    // A failed read (timeout, missing tool) keeps the last
+                    // good answer instead of turning the proxy off.
+                    systemReadFailed = next === null;
+                    if (next) systemProxy = next;
                     readAt = now();
                 })
                 .finally(() => {
@@ -994,7 +981,8 @@ export function installProxyFetch({ env = process.env, force = false, system = t
         return refreshing;
     };
 
-    const route = async () => {
+    /** The route from the current settings and the last system read. */
+    const routeNow = () => {
         if (settings.mode === 'direct') return { env: { NO_PROXY: '*' }, source: 'settings' };
         if (settings.mode === 'manual') {
             return {
@@ -1004,12 +992,20 @@ export function installProxyFetch({ env = process.env, force = false, system = t
         }
         // `env` is read live: SillyTavern's requestProxy sets `all_proxy` at runtime.
         if (!system || proxyFor(PROBE_TARGET, env)) return { env, source: 'environment' };
+        return { env: withSystemProxy(env, systemProxy), source: 'system' };
+    };
+
+    /** Whether the route depends on a system read that has expired. */
+    const systemStale = () => settings.mode === 'system' && system && !proxyFor(PROBE_TARGET, env)
+        && now() - readAt >= SYSTEM_PROXY_TTL_MS;
+
+    const route = async () => {
         // Wait for a fresh read instead of answering from the last one. A
         // sign-in's token exchange is often the first request in minutes, so a
         // stale "no proxy" sent it direct right after the user had turned the
         // system proxy on. The read is asynchronous: only this request waits.
-        if (now() - readAt >= SYSTEM_PROXY_TTL_MS) await settleWithin(refresh(), SYSTEM_PROXY_WAIT_MS);
-        return { env: withSystemProxy(env, systemProxy), source: 'system' };
+        if (systemStale()) await settleWithin(refresh(), SYSTEM_PROXY_WAIT_MS);
+        return routeNow();
     };
 
     const resolveEnv = async () => {
@@ -1021,18 +1017,47 @@ export function installProxyFetch({ env = process.env, force = false, system = t
     // Warm the first read so the first request does not pay for it.
     if (system && !proxyFor(PROBE_TARGET, env)) refresh();
 
-    const proxyFetch = createProxyFetch({ env: resolveEnv, base: current });
+    const directNote = (target, effective) => {
+        const host = target.hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+        // A configured proxy skipped through NO_PROXY or a private address is intended.
+        if (isPrivateHost(host) || proxyFor(PROBE_TARGET, effective)) return '';
+        if (settings.mode === 'direct') return 'no proxy: turned off under Network proxy';
+        return `no proxy: ${noProxyReason()}`;
+    };
+
+    const proxyFetch = createProxyFetch({ env: resolveEnv, base: current, directNote });
     wrapped.add(proxyFetch);
     globalThis.fetch = proxyFetch;
     installed = {
         route,
+        routeNow: () => {
+            if (systemStale()) refresh();
+            return routeNow();
+        },
         base: current,
         detected: () => ({
             environment: proxyLabel(proxyFor(PROBE_TARGET, env)),
             system: proxyLabel(proxyFor(PROBE_TARGET, withSystemProxy({}, systemProxy))),
+            pac: systemProxy.pac || '',
+            systemReadFailed,
         }),
     };
     return Boolean(proxyFor(PROBE_TARGET, env));
+}
+
+/**
+ * Proxy variables for a child process, so the official CLIs OMTP runs take
+ * the route its own requests take. Those CLIs read `HTTPS_PROXY` but not the
+ * operating system's proxy or the settings panel. SOCKS is left out: Node's
+ * proxy support in these variables accepts only HTTP proxies.
+ * @returns {Record<string, string>}
+ */
+export function childProxyEnv() {
+    if (!installed) return {};
+    const proxy = proxyFor(PROBE_TARGET, installed.routeNow().env);
+    if (!proxy || SOCKS_PROTOCOLS.has(proxy.protocol)) return {};
+    const href = proxy.href.replace(/\/$/, '');
+    return { HTTPS_PROXY: href, https_proxy: href, HTTP_PROXY: href, http_proxy: href };
 }
 
 /**
@@ -1043,7 +1068,7 @@ export function installProxyFetch({ env = process.env, force = false, system = t
  */
 export async function getProxyStatus() {
     if (!installed) {
-        return { ...settings, installed: false, reason: notInstalledReason, effective: '', source: 'none', detected: { environment: '', system: '' } };
+        return { ...settings, installed: false, reason: notInstalledReason, effective: '', source: 'none', detected: { environment: '', system: '', pac: '', systemReadFailed: false } };
     }
     const { env, source } = await installed.route();
     const proxy = proxyFor(PROBE_TARGET, env);

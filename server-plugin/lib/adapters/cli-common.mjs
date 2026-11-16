@@ -24,6 +24,7 @@ import {
     parseDataUrl,
     usageFrame,
 } from './openai.mjs';
+import { childProxyEnv } from '../proxy-fetch.mjs';
 import { done, openAIChunk, sseHeaders } from '../sse.mjs';
 
 /** Fallback when the chat has no system prompt; the CLIs' own prompts are coding agents. */
@@ -545,13 +546,15 @@ export function catalogChatModels(ctx) {
 }
 
 /**
- * The environment a CLI runs with: SillyTavern's own, without Node debugger
- * or loader flags that would leak into a Node-based CLI.
+ * The environment a CLI runs with: SillyTavern's own plus the proxy OMTP's
+ * requests use (from the settings or the system proxy, which the CLI cannot
+ * see), without Node debugger or loader flags that would leak into a
+ * Node-based CLI.
  * @param {Record<string, string|undefined>} [extra]
  * @returns {Record<string, string|undefined>}
  */
 export function cliEnv(extra = {}) {
-    const env = { ...process.env, ...extra };
+    const env = { ...process.env, ...childProxyEnv(), ...extra };
     delete env.NODE_OPTIONS;
     delete env.NODE_INSPECT_RESUME_ON_START;
     return env;

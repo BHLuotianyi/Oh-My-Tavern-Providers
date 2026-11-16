@@ -528,6 +528,8 @@
     "omtp_proxy_status_system": "当前使用：${0}（系统代理）",
     "omtp_proxy_status_direct": "不使用代理，直接连接。",
     "omtp_proxy_status_none": "未检测到系统代理，当前为直连。请在代理软件中打开“系统代理”，或选择“手动填写”并输入代理地址。",
+    "omtp_proxy_status_pac": "系统代理处于 PAC 模式（${0}），OMTP 无法使用，当前为直连。请在代理软件中把系统代理切换为普通模式（非 PAC），或选择“手动填写”并输入代理地址。",
+    "omtp_proxy_status_unreadable": "无法读取系统代理设置，当前为直连。请选择“手动填写”并输入代理软件的地址。",
     "omtp_proxy_col_proxy": "代理",
     "omtp_proxy_col_direct": "直连",
     "omtp_proxy_result_ok": "HTTP ${0} · ${1} 毫秒",

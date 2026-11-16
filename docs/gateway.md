@@ -244,7 +244,9 @@ Node 内置的 `fetch` 不读取代理环境变量。插件启动时把全局 `f
 | `NO_PROXY` / `no_proxy` | 直连名单，支持 `*`、`*.example.com`、`.example.com`、`host:port` 与 IPv6 地址 |
 | `OMTP_DISABLE_PROXY=1` | 完全停用该实现 |
 
-没有可用的代理变量时，插件读取操作系统的代理设置：Windows 注册表、macOS `scutil --proxy`、Linux 上 GNOME 的 `gsettings`。结果缓存 10 秒，过期后的第一个请求会等这次读取完成（最多 1.5 秒），因此在 SillyTavern 启动后再打开 Clash 的“系统代理”，下一个请求就会走代理。两者都没有时直连。设置了 `OMTP_DISABLE_PROXY=1`，或 Node 24 及以上且设置了 `NODE_USE_ENV_PROXY=1` 时，插件不替换 `fetch`，“网络代理”设置不生效。
+没有可用的代理变量时，插件读取操作系统的代理设置：Windows 注册表、macOS `scutil --proxy`、Linux 上 GNOME 的 `gsettings`。结果缓存 10 秒，过期后的第一个请求会等这次读取完成（最多 1.5 秒），因此在 SillyTavern 启动后再打开 Clash 的“系统代理”，下一个请求就会走代理。读取失败（如杀毒软件拖慢 `reg.exe` 超过 5 秒）时沿用上一次的结果。Windows 的 PAC 模式（`AutoConfigURL`）无法使用，“网络代理”中会显示脚本地址并提示改用手动填写。两者都没有时直连，此时请求失败的错误信息会注明未使用代理及原因。设置了 `OMTP_DISABLE_PROXY=1`，或 Node 24 及以上且设置了 `NODE_USE_ENV_PROXY=1` 时，插件不替换 `fetch`，“网络代理”设置不生效。
+
+通过官方命令行工具（`claude`、`gemini`、`agy`）调用的服务商，插件把当前生效的 HTTP 代理以 `HTTPS_PROXY`、`HTTP_PROXY` 传给工具进程，因为这些工具读不到系统代理和面板设置。SOCKS 代理不传递。
 
 - 回环与私有网段（`127.0.0.0/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`）始终直连。
 - 隧道建立失败时改为直连，并记录一次日志；直连也失败时，错误信息同时给出代理的失败原因。请求已经写入隧道，或上游已经响应之后的失败不会重发，避免一次补全被计费两次。

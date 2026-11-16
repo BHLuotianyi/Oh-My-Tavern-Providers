@@ -5,6 +5,7 @@ import net from 'node:net';
 import zlib from 'node:zlib';
 
 import {
+    childProxyEnv,
     createProxyFetch,
     describeFetchFailure,
     detectSystemProxy,
@@ -371,19 +372,28 @@ test('macOS scutil output becomes http/https proxies only when enabled', () => {
     assert.deepEqual(parseScutilProxy('  HTTPEnable : 0\n  HTTPProxy : 127.0.0.1\n'), {});
 });
 
-test('detectSystemProxy reads the platform settings and never throws', () => {
-    const windows = detectSystemProxy({
-        platform: 'win32',
-        run: (_file, args) => {
-            const value = args[args.length - 1];
-            if (value === 'ProxyEnable') return '    ProxyEnable    REG_DWORD    0x1';
-            if (value === 'ProxyServer') return '    ProxyServer    REG_SZ    127.0.0.1:7890';
-            return '';
-        },
-    });
-    assert.deepEqual(windows, { all: '127.0.0.1:7890' });
+test('detectSystemProxy reads the platform settings and never throws', async () => {
+    const internetSettings = (lines) => [
+        '',
+        'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        ...lines.map((line) => `    ${line}`),
+        '',
+        'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\\Connections',
+        '',
+    ].join('\r\n');
+    const windows = (lines) => detectSystemProxy({ platform: 'win32', run: async () => internetSettings(lines) });
+    assert.deepEqual(
+        await windows(['ProxyEnable    REG_DWORD    0x1', 'ProxyServer    REG_SZ    127.0.0.1:7890', 'ProxyOverride    REG_SZ    <local>']),
+        { all: '127.0.0.1:7890' },
+    );
+    // Clash / v2rayN "PAC mode": the proxy switch is off and a script URL is set.
+    assert.deepEqual(
+        await windows(['ProxyEnable    REG_DWORD    0x0', 'ProxyServer    REG_SZ    127.0.0.1:7890', 'AutoConfigURL    REG_SZ    http://127.0.0.1:33331/commands/pac']),
+        { pac: 'http://127.0.0.1:33331/commands/pac' },
+    );
+    assert.deepEqual(await windows(['ProxyEnable    REG_DWORD    0x0']), {});
 
-    const linux = detectSystemProxy({
+    const linux = await detectSystemProxy({
         platform: 'linux',
         run: (_file, args) => {
             const key = args[args.length - 1];
@@ -395,8 +405,48 @@ test('detectSystemProxy reads the platform settings and never throws', () => {
     });
     assert.deepEqual(linux, { http: 'http://127.0.0.1:7890', https: 'http://127.0.0.1:7890' });
 
-    const broken = detectSystemProxy({ platform: 'linux', run: () => { throw new Error('no gsettings'); } });
-    assert.deepEqual(broken, {});
+    // A failed read is not "no proxy": the caller keeps its last answer.
+    assert.equal(await detectSystemProxy({ platform: 'linux', run: () => { throw new Error('no gsettings'); } }), null);
+});
+
+test('a read failure keeps the system proxy, and a direct failure says why no proxy was used', async () => {
+    const original = globalThis.fetch;
+    const origin = http.createServer((req, res) => res.end('via proxy'));
+    const { proxy, port } = await startProxy(await listen(origin));
+    let clock = 0;
+    let registry = `    ProxyEnable    REG_DWORD    0x1\r\n    ProxyServer    REG_SZ    127.0.0.1:${port}\r\n`;
+    try {
+        globalThis.fetch = async () => {
+            throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } });
+        };
+        installProxyFetch({
+            env: {},
+            platform: 'win32',
+            now: () => clock,
+            run: async () => {
+                if (registry === null) throw new Error('reg.exe timed out');
+                return registry;
+            },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.equal(await (await fetch('http://origin.test/')).text(), 'via proxy');
+
+        registry = null;
+        clock += 60_000;
+        assert.equal(await (await fetch('http://origin.test/')).text(), 'via proxy', 'a timed-out read must not turn the proxy off');
+        // The official CLIs cannot read the system proxy; they get it as variables.
+        assert.equal(childProxyEnv().HTTPS_PROXY, `http://127.0.0.1:${port}`);
+
+        registry = '    ProxyEnable    REG_DWORD    0x0\r\n    AutoConfigURL    REG_SZ    http://127.0.0.1:33331/pac\r\n';
+        clock += 60_000;
+        const error = await fetch('https://oauth2.googleapis.com/token').catch((caught) => caught);
+        assert.match(describeFetchFailure(error), /UND_ERR_CONNECT_TIMEOUT; no proxy: the system proxy is a PAC script \(http:\/\/127\.0\.0\.1:33331\/pac\)/);
+        assert.deepEqual(childProxyEnv(), {});
+    } finally {
+        globalThis.fetch = original;
+        await close(proxy);
+        await close(origin);
+    }
 });
 
 test('installProxyFetch falls back to the system proxy and can be restored', async () => {

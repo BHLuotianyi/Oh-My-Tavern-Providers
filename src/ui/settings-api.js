@@ -332,6 +332,12 @@ function proxyStatusText(status) {
         case 'settings':
             return tr('omtp_proxy_status_direct', 'No proxy: connecting directly.');
         default:
+            if (status.detected?.pac) {
+                return trf('omtp_proxy_status_pac', 'The system proxy is in PAC mode (${0}), which OMTP cannot use; connecting directly. Switch your proxy app to the normal system proxy mode, or choose Manual and enter its address.', status.detected.pac);
+            }
+            if (status.detected?.systemReadFailed) {
+                return tr('omtp_proxy_status_unreadable', 'The system proxy settings could not be read; connecting directly. Choose Manual and enter your proxy app\'s address.');
+            }
             return tr('omtp_proxy_status_none', 'No system proxy found; connecting directly. Turn on the system proxy in your proxy app, or choose Manual and enter its address.');
     }
 }

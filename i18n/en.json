@@ -528,6 +528,8 @@
     "omtp_proxy_status_system": "In use: ${0} (system proxy)",
     "omtp_proxy_status_direct": "No proxy: connecting directly.",
     "omtp_proxy_status_none": "No system proxy found; connecting directly. Turn on the system proxy in your proxy app, or choose Manual and enter its address.",
+    "omtp_proxy_status_pac": "The system proxy is in PAC mode (${0}), which OMTP cannot use; connecting directly. Switch your proxy app to the normal system proxy mode, or choose Manual and enter its address.",
+    "omtp_proxy_status_unreadable": "The system proxy settings could not be read; connecting directly. Choose Manual and enter your proxy app's address.",
     "omtp_proxy_col_proxy": "Proxy",
     "omtp_proxy_col_direct": "Direct",
     "omtp_proxy_result_ok": "HTTP ${0} · ${1} ms",
