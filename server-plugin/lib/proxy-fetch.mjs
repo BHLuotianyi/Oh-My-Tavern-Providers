@@ -77,7 +77,8 @@ let settings = { mode: 'system', url: '' };
  * The installed wrapper's view of its own routing; null while no wrapper is
  * installed (`OMTP_DISABLE_PROXY`, or Node handling the proxy itself).
  * @type {{route: () => Promise<{env: Record<string,string|undefined>, source: string}>,
- *         detected: () => {environment: string, system: string}, base: typeof fetch}|null}
+ *         routeNow: () => {env: Record<string,string|undefined>, source: string},
+ *         detected: () => object, direct: (url: string, init: RequestInit) => Promise<Response>}|null}
  */
 let installed = null;
 /** Why no wrapper is installed, for the settings panel. */
@@ -212,6 +213,10 @@ function openTunnel(proxy, host, port, signal, timeoutMs = TLS_HANDSHAKE_TIMEOUT
             headers,
             signal,
             timeout: timeoutMs,
+            // The proxy address is the user's own choice: SillyTavern's global
+            // agents (request proxy, private request filter) must not reroute
+            // or block the connection to it.
+            agent: false,
         });
         request.once('connect', (response, socket) => {
             if (response.statusCode !== 200) {
@@ -316,15 +321,28 @@ function openSocksTunnel(proxy, host, port, signal, timeoutMs = TLS_HANDSHAKE_TI
 }
 
 /**
- * @param {any} value
- * @returns {boolean}
+ * Turn any fetch input into a URL string plus an init whose body can be sent
+ * again on a redirect: a string, bytes or URLSearchParams. Streams, Blobs and
+ * FormData are read into bytes, with the Content-Type fetch would give them.
+ * @param {RequestInfo|URL} input
+ * @param {RequestInit} init
+ * @returns {Promise<{url: string, init: RequestInit}>}
  */
-function isReplayableBody(value) {
-    if (value === undefined || value === null) return true;
-    if (typeof value === 'string') return true;
-    if (value instanceof Uint8Array) return true;
-    if (value instanceof URLSearchParams) return true;
-    return false;
+async function materializeRequest(input, init) {
+    let url = typeof input === 'string' ? input : input instanceof URL ? input.href : String(input?.url ?? input);
+    let out = init;
+    if (input instanceof Request) {
+        const body = input.body === null ? undefined : new Uint8Array(await input.arrayBuffer());
+        out = { method: input.method, headers: input.headers, body, signal: input.signal, redirect: input.redirect, ...init };
+        url = input.url;
+    }
+    const body = out.body;
+    if (body === undefined || body === null || typeof body === 'string' || body instanceof Uint8Array || body instanceof URLSearchParams) {
+        return { url, init: out };
+    }
+    if (body instanceof ArrayBuffer) return { url, init: { ...out, body: new Uint8Array(body) } };
+    const request = new Request(url, { method: out.method || 'POST', headers: out.headers, body, duplex: 'half' });
+    return { url, init: { ...out, headers: request.headers, body: new Uint8Array(await request.arrayBuffer()) } };
 }
 
 /**
@@ -424,17 +442,17 @@ function nodeStreamToWeb(source, decoder) {
 }
 
 /**
- * Perform one request through the proxy.
+ * Open a tunnel through the proxy to the target, with TLS on top for https.
  *
  * @param {URL} target
  * @param {URL} proxy
- * @param {RequestInit} init
- * @returns {Promise<Response>}
+ * @param {AbortSignal|undefined} signal
+ * @param {number} handshakeTimeoutMs
+ * @returns {Promise<import('node:net').Socket>}
  */
-async function tunnelRequest(target, proxy, init, { handshakeTimeoutMs = TLS_HANDSHAKE_TIMEOUT_MS, requestTimeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+async function openTargetSocket(target, proxy, signal, handshakeTimeoutMs) {
     const secure = target.protocol === 'https:';
     const port = Number(target.port) || (secure ? 443 : 80);
-    const signal = init.signal || undefined;
     if (signal?.aborted) throw signal.reason || new Error('aborted');
 
     const tunnel = await openTunnel(proxy, target.hostname, port, signal, handshakeTimeoutMs);
@@ -442,80 +460,108 @@ async function tunnelRequest(target, proxy, init, { handshakeTimeoutMs = TLS_HAN
         tunnel.destroy();
         throw signal.reason || new Error('aborted');
     }
-    let socket = tunnel;
-    if (secure) {
-        socket = tls.connect({ socket: tunnel, servername: target.hostname });
-        await new Promise((resolve, reject) => {
-            let timer = null;
-            const cleanup = () => {
-                clearTimeout(timer);
-                socket.off('secureConnect', onConnect);
-                socket.off('error', onError);
-                socket.off('close', onClose);
-                signal?.removeEventListener('abort', onAbort);
-            };
-            const abortSocket = (reason) => {
-                cleanup();
-                // Keep a no-op error listener so destroying an active TLS
-                // socket never surfaces an unhandled 'error' event.
-                socket.on('error', () => {});
-                socket.destroy();
-                reject(reason);
-            };
-            const onConnect = () => {
-                cleanup();
-                resolve(undefined);
-            };
-            const onError = (error) => {
-                abortSocket(error);
-            };
-            const onClose = () => {
-                abortSocket(new Error('proxy TLS handshake closed'));
-            };
-            const onAbort = () => {
-                abortSocket(signal?.reason || new Error('aborted'));
-            };
-            timer = setTimeout(() => {
-                abortSocket(new Error('proxy TLS handshake timed out'));
-            }, handshakeTimeoutMs);
-            socket.once('secureConnect', onConnect);
-            socket.once('error', onError);
-            socket.once('close', onClose);
-            signal?.addEventListener('abort', onAbort, { once: true });
-        });
-    }
+    if (!secure) return tunnel;
+    const socket = tls.connect({ socket: tunnel, servername: target.hostname });
+    await new Promise((resolve, reject) => {
+        let timer = null;
+        const cleanup = () => {
+            clearTimeout(timer);
+            socket.off('secureConnect', onConnect);
+            socket.off('error', onError);
+            socket.off('close', onClose);
+            signal?.removeEventListener('abort', onAbort);
+        };
+        const abortSocket = (reason) => {
+            cleanup();
+            // Keep a no-op error listener so destroying an active TLS
+            // socket never surfaces an unhandled 'error' event.
+            socket.on('error', () => {});
+            socket.destroy();
+            reject(reason);
+        };
+        const onConnect = () => {
+            cleanup();
+            resolve(undefined);
+        };
+        const onError = (error) => {
+            abortSocket(error);
+        };
+        const onClose = () => {
+            abortSocket(new Error('proxy TLS handshake closed'));
+        };
+        const onAbort = () => {
+            abortSocket(signal?.reason || new Error('aborted'));
+        };
+        timer = setTimeout(() => {
+            abortSocket(new Error('proxy TLS handshake timed out'));
+        }, handshakeTimeoutMs);
+        socket.once('secureConnect', onConnect);
+        socket.once('error', onError);
+        socket.once('close', onClose);
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
+    return socket;
+}
+
+/**
+ * Send one request with Node's `http`/`https` modules and wrap the answer as
+ * a fetch `Response`. Redirects are returned, never followed.
+ *
+ * Without `socket` the request takes the module's global agent, exactly like
+ * SillyTavern's own requests (node-fetch): whatever reaches the provider from
+ * SillyTavern reaches it from here, including SillyTavern's request proxy.
+ *
+ * @param {URL} target
+ * @param {RequestInit} init body already materialized
+ * @param {{socket?: import('node:net').Socket, requestTimeoutMs?: number}} [options]
+ * @returns {Promise<Response>}
+ */
+async function nodeRequest(target, init, { socket, requestTimeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+    const secure = target.protocol === 'https:';
+    const signal = init.signal || undefined;
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
 
     const headers = headerObject(init.headers);
     // We decompress ourselves, so ask for a coding we understand; some servers
     // compress anyway and `decompressor` covers that.
     if (!headers['accept-encoding']) headers['accept-encoding'] = 'gzip, deflate, br';
-    headers.connection = 'close';
+    if (socket) headers.connection = 'close';
 
     let body = init.body;
-    if (body instanceof URLSearchParams) body = body.toString();
+    if (body instanceof URLSearchParams) {
+        body = body.toString();
+        if (!headers['content-type']) headers['content-type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+    } else if (typeof body === 'string' && !headers['content-type']) {
+        headers['content-type'] = 'text/plain;charset=UTF-8';
+    }
     if (body === null) body = undefined;
     if (body !== undefined && headers['content-length'] === undefined && headers['transfer-encoding'] === undefined) {
         headers['content-length'] = String(typeof body === 'string' ? Buffer.byteLength(body) : body.byteLength);
     }
 
-    // A one-shot agent hands the already-open socket to Node: the request must
-    // never resolve the target hostname itself (only the proxy may do that).
-    const agent = new (secure ? https.Agent : http.Agent)({ keepAlive: false, maxSockets: 1 });
-    agent.createConnection = () => socket;
+    /** @type {import('node:http').Agent|undefined} */
+    let agent;
+    if (socket) {
+        // A one-shot agent hands the already-open socket to Node: the request
+        // must never resolve the target hostname itself (only the proxy may).
+        agent = new (secure ? https.Agent : http.Agent)({ keepAlive: false, maxSockets: 1 });
+        agent.createConnection = () => socket;
+    }
 
+    const method = init.method || 'GET';
     const response = await new Promise((resolve, reject) => {
         const request = (secure ? https : http).request({
-            host: target.hostname,
-            port,
+            host: target.hostname.replace(/^\[|\]$/g, ''),
+            port: Number(target.port) || (secure ? 443 : 80),
             path: `${target.pathname}${target.search}`,
-            method: init.method || 'GET',
+            method,
             headers,
             signal,
-            agent,
+            ...(agent ? { agent } : {}),
             timeout: requestTimeoutMs,
         });
         request.once('response', resolve);
-        request.once('timeout', () => request.destroy(new Error('proxy request timed out')));
+        request.once('timeout', () => request.destroy(new Error('request timed out')));
         request.once('error', (error) => {
             // From here on the origin may have seen the request, so a replay
             // is not safe and the caller must surface the failure.
@@ -525,13 +571,43 @@ async function tunnelRequest(target, proxy, init, { handshakeTimeoutMs = TLS_HAN
         request.end(body);
     });
     try {
-        return toFetchResponse(response, init.method || 'GET');
+        return toFetchResponse(response, method);
     } catch (error) {
         // The origin has answered, so the request was delivered: a direct
         // replay could run a POST twice.
         response.destroy();
         if (error && typeof error === 'object') error[REQUEST_SENT] = true;
         throw error;
+    }
+}
+
+/**
+ * Perform one request through the proxy.
+ *
+ * @param {URL} target
+ * @param {URL} proxy
+ * @param {RequestInit} init
+ * @returns {Promise<Response>}
+ */
+async function tunnelRequest(target, proxy, init, { handshakeTimeoutMs = TLS_HANDSHAKE_TIMEOUT_MS, requestTimeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+    const socket = await openTargetSocket(target, proxy, init.signal || undefined, handshakeTimeoutMs);
+    return nodeRequest(target, init, { socket, requestTimeoutMs });
+}
+
+/**
+ * A direct request, with fetch's failure shape: an aborted signal rejects
+ * with its reason, a network error with `TypeError('fetch failed')` carrying
+ * the cause, as callers and `describeFetchFailure` expect.
+ * @param {RequestInfo|URL} input
+ * @param {RequestInit} [init] body already materialized
+ * @returns {Promise<Response>}
+ */
+async function directFetch(input, init = {}) {
+    try {
+        return await nodeRequest(new URL(String(input)), init);
+    } catch (error) {
+        if (init.signal?.aborted) throw init.signal.reason ?? error;
+        throw new TypeError('fetch failed', { cause: error });
     }
 }
 
@@ -582,40 +658,45 @@ function toFetchResponse(response, method) {
 }
 
 /**
- * Build a fetch implementation that honours proxy environment variables.
+ * Build a fetch implementation that routes http(s) requests the way the
+ * settings choose: through a proxy tunnel, or directly with Node's
+ * `http`/`https` modules like SillyTavern's own requests.
  *
- * @param {{env?: Record<string,string|undefined> | (() => Record<string,string|undefined>), base?: typeof fetch,
+ * @param {{env?: Record<string,string|undefined> | (() => Record<string,string|undefined>),
+ *          direct?: (url: string, init: RequestInit) => Promise<Response>, fallback?: typeof fetch,
  *          handshakeTimeoutMs?: number, requestTimeoutMs?: number,
  *          directNote?: (target: URL, env: Record<string,string|undefined>) => string}} [options]
  *        `env` may be a function, re-evaluated per request; it may be async.
+ *        `direct` sends one request without a proxy and never follows redirects.
+ *        `fallback` serves every other scheme (SillyTavern's fetch serves `file:`).
  *        `directNote` explains why a failed request went without a proxy.
  * @returns {typeof fetch}
  */
-export function createProxyFetch({ env = process.env, base = globalThis.fetch, handshakeTimeoutMs, requestTimeoutMs, directNote } = {}) {
+export function createProxyFetch({ env = process.env, direct = directFetch, fallback = globalThis.fetch, handshakeTimeoutMs, requestTimeoutMs, directNote } = {}) {
     /** @type {Set<string>} */
     const reported = new Set();
     const proxyFetch = async (input, init = {}) => {
-        let current = input;
-        let currentInit = init;
+        let target = null;
+        try {
+            target = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : String(input?.url));
+        } catch {
+            target = null;
+        }
+        if (!target || (target.protocol !== 'http:' && target.protocol !== 'https:')) return fallback(input, init);
+        const materialized = await materializeRequest(input, init);
+        let current = materialized.url;
+        let currentInit = materialized.init;
         for (let hop = 0; ; hop += 1) {
-            const raw = typeof current === 'string' ? current : current instanceof URL ? current.href : current?.url;
-            let target = null;
-            try {
-                target = new URL(String(raw));
-            } catch {
-                target = null;
-            }
-            const effectiveEnv = target ? (typeof env === 'function' ? await env() : env) : null;
-            const proxy = target ? proxyFor(target, effectiveEnv) : null;
-            const canHandleRedirects = Boolean(target) && !(current instanceof Request) && isReplayableBody(currentInit?.body);
-            const directInit = canHandleRedirects ? { ...currentInit, redirect: 'manual' } : currentInit;
+            const effectiveEnv = typeof env === 'function' ? await env() : env;
+            const proxy = proxyFor(target, effectiveEnv);
+            const directInit = { ...currentInit, redirect: 'manual' };
             let response;
-            if (!canHandleRedirects || !proxy) {
+            if (!proxy) {
                 try {
-                    response = await base(current, directInit);
+                    response = await direct(current, directInit);
                 } catch (error) {
                     // "fetch failed" alone does not say the request skipped the proxy.
-                    const note = !proxy && target && directNote ? directNote(target, effectiveEnv) : '';
+                    const note = directNote ? directNote(target, effectiveEnv) : '';
                     if (note && error && typeof error === 'object') error[PROXY_FAILURE] = note;
                     throw error;
                 }
@@ -633,7 +714,7 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch, h
                         logError(`proxy ${proxy.host} failed; using a direct connection`, error);
                     }
                     try {
-                        response = await base(current, directInit);
+                        response = await direct(current, directInit);
                     } catch (directError) {
                         // Both paths failed; the proxy error is the actionable one.
                         if (directError && typeof directError === 'object') {
@@ -644,7 +725,7 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch, h
                 }
             }
 
-            if (currentInit.redirect === 'manual' || !canHandleRedirects) {
+            if (currentInit.redirect === 'manual') {
                 return response;
             }
             if (currentInit.redirect === 'error' && REDIRECT_STATUS.has(response.status)) {
@@ -663,6 +744,7 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch, h
             } catch {
                 return response;
             }
+            if (next.protocol !== 'http:' && next.protocol !== 'https:') return response;
             if (response.body) {
                 try {
                     await response.body.cancel();
@@ -670,9 +752,7 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch, h
                     // Already consumed; the redirect still stands.
                 }
             }
-            const method = String(
-                currentInit.method || (current instanceof Request ? current.method : 'GET'),
-            ).toUpperCase();
+            const method = String(currentInit.method || 'GET').toUpperCase();
             const downgrade = response.status === 303
                 || ((response.status === 301 || response.status === 302) && method === 'POST');
             currentInit = { ...currentInit, method: downgrade && method !== 'HEAD' ? 'GET' : method };
@@ -694,6 +774,7 @@ export function createProxyFetch({ env = process.env, base = globalThis.fetch, h
                 currentInit.headers = headers;
             }
             current = next.href;
+            target = next;
         }
     };
     return /** @type {typeof fetch} */ (proxyFetch);
@@ -920,13 +1001,15 @@ export function setProxySettings(value) {
  * replacement covers the gateway, probes and the OAuth flows alike. The
  * settings panel's choice comes first (`setProxySettings`); in `system` mode
  * proxy variables win, and without a usable one the OS proxy is read.
+ * Without a proxy, requests use Node's `http`/`https` modules like
+ * SillyTavern's own requests; non-http(s) URLs go to the previous `fetch`.
  *
  * @param {{env?: Record<string,string|undefined>, force?: boolean, system?: boolean,
- *          platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string,
- *          now?: () => number}} [options]
+ *          platform?: NodeJS.Platform, run?: (file: string, args: string[]) => string|Promise<string>,
+ *          now?: () => number, direct?: (url: string, init: RequestInit) => Promise<Response>}} [options]
  * @returns {boolean} whether a proxy is configured right now
  */
-export function installProxyFetch({ env = process.env, force = false, system = true, platform, run, now = Date.now } = {}) {
+export function installProxyFetch({ env = process.env, force = false, system = true, platform, run, now = Date.now, direct = directFetch } = {}) {
     // Node >= 24 can route its own fetch through the environment's proxy; on
     // older runtimes the variable is inert and we must install the wrapper.
     const nodeMajor = Number(String(process.versions.node || '0').split('.')[0]) || 0;
@@ -1025,7 +1108,7 @@ export function installProxyFetch({ env = process.env, force = false, system = t
         return `no proxy: ${noProxyReason()}`;
     };
 
-    const proxyFetch = createProxyFetch({ env: resolveEnv, base: current, directNote });
+    const proxyFetch = createProxyFetch({ env: resolveEnv, direct, fallback: current, directNote });
     wrapped.add(proxyFetch);
     globalThis.fetch = proxyFetch;
     installed = {
@@ -1034,7 +1117,7 @@ export function installProxyFetch({ env = process.env, force = false, system = t
             if (systemStale()) refresh();
             return routeNow();
         },
-        base: current,
+        direct,
         detected: () => ({
             environment: proxyLabel(proxyFor(PROBE_TARGET, env)),
             system: proxyLabel(proxyFor(PROBE_TARGET, withSystemProxy({}, systemProxy))),
@@ -1087,17 +1170,17 @@ export async function getProxyStatus() {
  * names the hop that failed.
  * @param {URL} target
  * @param {URL|null} proxy
- * @param {typeof fetch} base
+ * @param {(url: string, init: RequestInit) => Promise<Response>} direct
  * @param {number} timeoutMs
  * @returns {Promise<{ok: boolean, status?: number, ms: number, error?: string}>}
  */
-async function probeRoute(target, proxy, base, timeoutMs) {
+async function probeRoute(target, proxy, direct, timeoutMs) {
     const started = Date.now();
     const init = { method: 'GET', redirect: /** @type {const} */ ('manual'), signal: AbortSignal.timeout(timeoutMs) };
     try {
         const response = proxy
             ? await tunnelRequest(target, proxy, init, { handshakeTimeoutMs: timeoutMs, requestTimeoutMs: timeoutMs })
-            : await base(target.href, init);
+            : await direct(target.href, init);
         try {
             await response.body?.cancel();
         } catch {
@@ -1120,15 +1203,15 @@ export async function diagnoseProxy({ targets = DIAGNOSTIC_TARGETS, timeoutMs = 
     const status = await getProxyStatus();
     const active = status.installed ? installed : null;
     const env = active ? (await active.route()).env : {};
-    const base = active ? active.base : globalThis.fetch;
+    const direct = active ? active.direct : directFetch;
     const results = await Promise.all(targets.map(async (href) => {
         const target = new URL(href);
         const proxy = proxyFor(target, env);
-        const [viaProxy, direct] = await Promise.all([
-            proxy ? probeRoute(target, proxy, base, timeoutMs) : null,
-            probeRoute(target, null, base, timeoutMs),
+        const [viaProxy, directResult] = await Promise.all([
+            proxy ? probeRoute(target, proxy, direct, timeoutMs) : null,
+            probeRoute(target, null, direct, timeoutMs),
         ]);
-        return { host: target.host, proxy: viaProxy, direct };
+        return { host: target.host, proxy: viaProxy, direct: directResult };
     }));
     return { ...status, results };
 }

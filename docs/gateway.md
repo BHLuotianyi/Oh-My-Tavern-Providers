@@ -224,7 +224,7 @@
 
 ## 出站代理
 
-Node 内置的 `fetch` 不读取代理环境变量。插件启动时把全局 `fetch` 换成会读取代理设置的实现（`lib/proxy-fetch.mjs`），登录、密钥校验、额度查询和网关转发都经过它。
+插件启动时把全局 `fetch` 换成 `lib/proxy-fetch.mjs` 中的实现，登录、密钥校验、额度查询和网关转发都经过它。不经代理的请求用 Node 的 `http`/`https` 模块发送，与 SillyTavern 自己调用模型的请求（node-fetch）走同一条路径：SillyTavern 能直接连上的服务商，OMTP 也能连上；`config.yaml` 中的 `requestProxy` 和私有地址过滤同样生效。Node 内置的 `fetch` 不使用这些设置，所以插件不再用它发请求。
 
 扩展设置中的“网络代理”决定走哪条路，保存在 `config.json`，立即生效：
 
@@ -232,7 +232,7 @@ Node 内置的 `fetch` 不读取代理环境变量。插件启动时把全局 `f
 |---|---|
 | 使用系统代理（默认） | 先读下表的环境变量，没有可用的再读操作系统的代理设置 |
 | 手动填写 | 只用填写的地址，支持 `http://`、`https://`、`socks5://`，可省略协议（`127.0.0.1:7890`）；`NO_PROXY` 仍然有效 |
-| 不使用代理 | 全部直连 |
+| 不使用代理 | 不经 OMTP 的代理，与 SillyTavern 自己的请求相同（`requestProxy` 仍然生效） |
 
 “测试连接”分别经当前代理和直连访问 `oauth2.googleapis.com`、`api.anthropic.com`、`auth.openai.com`、`api.github.com`，任何 HTTP 响应都算连通。操作系统的代理设置读不到时（Windows 的 PAC 模式、KDE、容器、Termux）请用手动填写。
 

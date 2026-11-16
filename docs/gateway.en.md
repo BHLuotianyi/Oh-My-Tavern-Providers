@@ -224,7 +224,7 @@ The statistics page opened by `/omtp stats` is started by `GET /stats/server`. I
 
 ## Outbound proxy
 
-Node's built-in `fetch` ignores proxy environment variables. On start the plugin replaces the global `fetch` with a proxy-aware implementation (`lib/proxy-fetch.mjs`) used by sign-in, key checks, quota queries and gateway forwarding.
+On start the plugin replaces the global `fetch` with the implementation in `lib/proxy-fetch.mjs`, used by sign-in, key checks, quota queries and gateway forwarding. Requests without a proxy are sent with Node's `http`/`https` modules, the path SillyTavern's own model requests (node-fetch) take: a provider SillyTavern reaches directly, OMTP reaches too, and `requestProxy` and the private address filter in `config.yaml` apply. Node's built-in `fetch` ignores those settings, so the plugin no longer sends requests with it.
 
 "Network proxy" in the extension settings chooses the route. It is stored in `config.json` and applies at once:
 
@@ -232,7 +232,7 @@ Node's built-in `fetch` ignores proxy environment variables. On start the plugin
 |---|---|
 | Use the system proxy (default) | The environment variables below first; without a usable one, the operating system's proxy settings |
 | Manual | Only the address entered: `http://`, `https://` or `socks5://`, scheme optional (`127.0.0.1:7890`); `NO_PROXY` still applies |
-| No proxy | Everything connects directly |
+| No proxy | No OMTP proxy; the same path as SillyTavern's own requests (`requestProxy` still applies) |
 
 "Test connection" reaches `oauth2.googleapis.com`, `api.anthropic.com`, `auth.openai.com` and `api.github.com` through the current proxy and directly; any HTTP response counts as reachable. Use Manual where the operating system's settings cannot be read (PAC mode on Windows, KDE, containers, Termux).
 

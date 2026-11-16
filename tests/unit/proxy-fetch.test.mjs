@@ -91,9 +91,54 @@ test('createProxyFetch tunnels through a CONNECT proxy and decodes gzip', async 
     }
 });
 
+test('direct requests take http.globalAgent like SillyTavern, with fetch body semantics and redirects', async () => {
+    const seen = [];
+    const origin = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+            seen.push({ url: req.url, method: req.method, type: req.headers['content-type'], body });
+            if (req.url === '/moved') {
+                res.writeHead(302, { location: '/token' });
+                res.end();
+                return;
+            }
+            res.end('ok');
+        });
+    });
+    const port = await listen(origin);
+    const original = http.globalAgent;
+    // SillyTavern's request proxy and private request filter replace this agent.
+    const agent = new http.Agent();
+    let connections = 0;
+    const createConnection = agent.createConnection.bind(agent);
+    agent.createConnection = (...args) => {
+        connections += 1;
+        return createConnection(...args);
+    };
+    http.globalAgent = agent;
+    try {
+        const doFetch = createProxyFetch({ env: {} });
+        const form = await doFetch(`http://127.0.0.1:${port}/moved`, { method: 'POST', body: new URLSearchParams({ code: 'a b' }) });
+        assert.equal(await form.text(), 'ok');
+        const streamed = await doFetch(new Request(`http://127.0.0.1:${port}/token`, { method: 'POST', body: '{"x":1}', headers: { 'content-type': 'application/json' } }));
+        assert.equal(await streamed.text(), 'ok');
+        assert.deepEqual(seen, [
+            { url: '/moved', method: 'POST', type: 'application/x-www-form-urlencoded;charset=UTF-8', body: 'code=a+b' },
+            { url: '/token', method: 'GET', type: undefined, body: '' },
+            { url: '/token', method: 'POST', type: 'application/json', body: '{"x":1}' },
+        ]);
+        assert.ok(connections > 0, 'the direct path must go through http.globalAgent');
+    } finally {
+        http.globalAgent = original;
+        agent.destroy();
+        await close(origin);
+    }
+});
+
 test('a dead proxy falls back to the direct connection instead of failing', async () => {
     const fallback = async () => new Response('direct', { status: 200 });
-    const doFetch = createProxyFetch({ env: { HTTP_PROXY: 'http://127.0.0.1:9' }, base: fallback });
+    const doFetch = createProxyFetch({ env: { HTTP_PROXY: 'http://127.0.0.1:9' }, direct: fallback });
     const response = await doFetch('http://origin.test/v1/models');
     assert.equal(await response.text(), 'direct');
 });
@@ -110,7 +155,7 @@ test('a tunnel that dies after the request is written rejects instead of falling
     try {
         const doFetch = createProxyFetch({
             env: { HTTP_PROXY: `http://127.0.0.1:${proxyPort}` },
-            base: () => {
+            direct: () => {
                 direct += 1;
                 return new Response('direct', { status: 200 });
             },
@@ -302,7 +347,7 @@ test('redirects are followed, rewriting methods and re-entering the proxy decisi
     try {
         const doFetch = createProxyFetch({
             env: { HTTP_PROXY: `http://127.0.0.1:${port}` },
-            base: (input, init) => {
+            direct: (input, init) => {
                 direct.push(String(input));
                 return directFetch(input, init);
             },
@@ -416,10 +461,11 @@ test('a read failure keeps the system proxy, and a direct failure says why no pr
     let clock = 0;
     let registry = `    ProxyEnable    REG_DWORD    0x1\r\n    ProxyServer    REG_SZ    127.0.0.1:${port}\r\n`;
     try {
-        globalThis.fetch = async () => {
+        const direct = async () => {
             throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } });
         };
         installProxyFetch({
+            direct,
             env: {},
             platform: 'win32',
             now: () => clock,
@@ -453,8 +499,8 @@ test('installProxyFetch falls back to the system proxy and can be restored', asy
     const original = globalThis.fetch;
     let probed = 0;
     try {
-        globalThis.fetch = async () => new Response('direct');
         installProxyFetch({
+            direct: async () => new Response('direct'),
             env: {},
             platform: 'darwin',
             run: () => {
@@ -511,7 +557,7 @@ test('createProxyFetch tunnels through a SOCKS5 proxy with credentials', async (
     try {
         const doFetch = createProxyFetch({
             env: { ALL_PROXY: `socks5://u:p%40ss@127.0.0.1:${socksPort}` },
-            base: () => { throw new Error('must not connect directly'); },
+            direct: () => { throw new Error('must not connect directly'); },
         });
         const response = await doFetch('http://origin.test:8080/x');
         assert.equal(await response.text(), 'origin origin.test:8080');
@@ -529,8 +575,8 @@ test('installProxyFetch picks up a system proxy enabled after startup without bl
     let clashOn = false;
     let clock = 0;
     try {
-        globalThis.fetch = async () => new Response('direct');
         const installed = installProxyFetch({
+            direct: async () => new Response('direct'),
             env: {},
             platform: 'darwin',
             now: () => clock,
@@ -563,7 +609,7 @@ test('installProxyFetch picks up a system proxy enabled after startup without bl
 test('a direct failure after a failed proxy names the proxy error', async () => {
     const doFetch = createProxyFetch({
         env: { HTTP_PROXY: 'http://127.0.0.1:9' },
-        base: async () => {
+        direct: async () => {
             throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } });
         },
     });
@@ -585,7 +631,7 @@ test('tunnel TLS handshake times out against a TLS-less blackhole server and hon
         const doFetch = createProxyFetch({
             env: { HTTPS_PROXY: `http://127.0.0.1:${proxyPort}` },
             handshakeTimeoutMs: 60,
-            base: async () => {
+            direct: async () => {
                 directCalls += 1;
                 throw new TypeError('fetch failed');
             },
@@ -605,7 +651,7 @@ test('tunnel TLS handshake times out against a TLS-less blackhole server and hon
         const plainFetch = createProxyFetch({
             env: { HTTP_PROXY: `http://127.0.0.1:${proxyPort}` },
             requestTimeoutMs: 60,
-            base: async () => {
+            direct: async () => {
                 throw new Error('should not fall back after request was written');
             },
         });
@@ -710,7 +756,7 @@ test('a proxy on an IPv6 literal is dialled without the URL brackets', async (t)
     try {
         const doFetch = createProxyFetch({
             env: { HTTP_PROXY: `http://[::1]:${proxy.address().port}` },
-            base: async () => new Response('direct'),
+            direct: async () => new Response('direct'),
         });
         assert.equal(await (await doFetch('http://origin.test/')).text(), 'via proxy');
     } finally {
@@ -732,11 +778,11 @@ test('the settings panel choice overrides the environment, and the diagnosis nam
     const origin = http.createServer((req, res) => res.end('via proxy'));
     const { proxy, port } = await startProxy(await listen(origin));
     try {
-        globalThis.fetch = async () => {
+        const direct = async () => {
             throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } });
         };
         // The environment points at a dead proxy; only the manual address works.
-        installProxyFetch({ env: { HTTP_PROXY: 'http://127.0.0.1:9' }, system: false });
+        installProxyFetch({ direct, env: { HTTP_PROXY: 'http://127.0.0.1:9' }, system: false });
         await assert.rejects(fetch('http://origin.test/'), /fetch failed/);
         assert.deepEqual(
             (({ effective, source }) => ({ effective, source }))(await getProxyStatus()),

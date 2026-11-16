@@ -4,6 +4,7 @@
 
 ### 修复
 
+- **SillyTavern 能直连的服务商，OMTP 登录却超时**：OMTP 不经代理时用的是 Node 内置的 `fetch`，SillyTavern 调用模型用的是 Node 的 `http`/`https` 模块，两者的网络路径不同，`config.yaml` 的 `requestProxy` 也只对后者生效，因此出现酒馆能用、OMTP 换取令牌却 `UND_ERR_CONNECT_TIMEOUT` 的情况。现在 OMTP 不经代理的请求也用 `http`/`https` 模块发送，与 SillyTavern 走同一条路径。连接 OMTP 代理时不再经过 SillyTavern 的全局代理或私有地址过滤。
 - **登录失败时看不出是否走了代理**：请求未经代理且失败时，错误信息现在会注明“no proxy”及原因（没有检测到系统代理、系统代理为 PAC 模式、无法读取系统代理设置、已在设置中关闭），不再只有 `fetch failed (UND_ERR_CONNECT_TIMEOUT …)`。
 - **Windows 上系统代理偶尔失效**：读取注册表的 `reg.exe` 超过 1.5 秒（常见于杀毒软件扫描新进程时）会被终止，结果被当作“没有代理”并覆盖之前读到的代理。现在只查询一次注册表、最多等 5 秒，读取失败时沿用上一次的结果。
 - **系统代理为 PAC 模式时没有提示**：v2rayN、Clash、Shadowsocks 的 PAC 模式只设置自动配置脚本，OMTP 无法使用。“网络代理”现在会显示脚本地址并提示切换到普通系统代理或手动填写；读取系统代理失败时也会单独说明。
