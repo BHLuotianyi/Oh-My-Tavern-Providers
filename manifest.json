@@ -6,8 +6,8 @@
   "js": "index.js",
   "css": "style.css",
   "author": "BHLuotianyi",
-  "version": "2.5.0",
-  "versionCode": 18,
+  "version": "2.5.1",
+  "versionCode": 19,
   "homePage": "https://github.com/BHLuotianyi/Oh-My-Tavern-Providers",
   "i18n": {
     "en": "i18n/en.json",
